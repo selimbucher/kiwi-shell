@@ -24,7 +24,7 @@ It also depends on the following [Astal](https://github.com/aylur/astal) librari
 - bluetooth
 - tray
 
-For installation, refer to the [Wiki](https://aylur.github.io/astal/). If you are on NixOS, you can use flake.nix.
+For installing astal packages, refer to the [Wiki](https://aylur.github.io/astal/). If you are on NixOS, you may find `flake.nix` useful.
 The app might crash if you're not using a laptop with keyboard backlights.
 ## Installation
 
