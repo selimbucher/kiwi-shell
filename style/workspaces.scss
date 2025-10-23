@@ -1,0 +1,65 @@
+.workspaces {
+    border: 1px rgba(35, 35, 35, 0.9) solid;
+    border-top: 1px #1f1f1f solid;
+    background-color: rgba(0, 0, 0, 0.9);
+    color: #fff;
+    // border: #141414 1px solid;
+    border-radius: 20px;
+    font-weight: 400;
+    padding: 0 10px;
+
+    .mic-access {
+        color: orange;
+        border-left: #1f1f1f 1px solid;
+        margin-left: 6px;
+        padding-left: 6px;
+        margin-top: 6px;
+        margin-bottom: 6px;
+    }
+
+    button {
+        background-color: rgba(255, 255, 255, 0);
+        border: none;
+        box-shadow: none;
+        min-width: 14px;
+        border-radius: 0;
+        padding: 0 3px;
+        
+        .tile {
+            transition: background-color 100ms ease-out;
+            min-width: 0;
+            min-height: 0;
+            margin: 13px 0;
+            background-color: #5f5f5f;
+            border-radius: 13px;
+        }
+
+        &.filled .tile {
+            min-width: 20px;
+            background-color: #cacaca;
+        }
+
+
+        &:hover {
+            // min-width: 20px;
+            .tile {
+                background-color: #fff;
+            }
+        }
+
+        &.active {
+            min-width: 20px;
+            .tile {
+                background-color: var(--primary);
+                // margin: 13px 0;
+            }
+        }
+
+        &.urgent .tile {
+            background-color: rgb(243, 62, 49);
+        }
+
+        
+    }
+    
+}
