@@ -10,7 +10,8 @@ Currently, this app assumes that the following packages are installed on the sys
 - sww
 - networkmanager
 - power-profiles-daemon
-- bluetoothd
+- bluetoothd  
+
 It also depends on the following [Astal](https://github.com/aylur/astal) libraries.
 - io
 - astal4
