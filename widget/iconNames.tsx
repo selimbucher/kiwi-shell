@@ -1,12 +1,17 @@
+export function BluetoothDeviceIcon(device: string) {
+  if (device == "audio-headphones") { return 'headphones-symbolic' }
+  return device + '-symbolic'
+}
+
 export function powerProfileIcon(profile: string) {
     if (profile == "performance") {
     return "gamepad-symbolic"
   }
   if (profile == "balanced") {
-    return "software-license-symbolic"
+    return "power-profile-balanced-symbolic"
   }
   if (profile == "power-saver") {
-    return "power-saving-symbolic"
+    return "mintupdate-type-kernel-symbolic"
   }
   return "power-profile-balanced-rtl-symbolic"
 }
@@ -28,6 +33,7 @@ return "audio-volume-muted-symbolic"
 }
 
 export function brightnessIcon(value: number, max: number) {
+  return "display-brightness-off-symbolic";
   const percentage = value / max
   if (percentage >= 2/3) {
     return "display-brightness-high-symbolic"

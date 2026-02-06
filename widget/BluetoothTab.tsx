@@ -1,6 +1,7 @@
 import { Gtk } from "ags/gtk4"
 import AstalBluetooth from "gi://AstalBluetooth"
 import { createBinding, createComputed, For } from "ags"
+import { BluetoothDeviceIcon } from "./iconNames"
 
 const bluetooth = AstalBluetooth.get_default()
 const adapter = bluetooth.adapter
@@ -82,7 +83,7 @@ function Device({device, paired}){
         <box spacing={8}>
             <Gtk.Image 
             pixelSize={16}
-            iconName={iconBinding.as(s => s+'-symbolic')}
+            iconName={iconBinding.as(s => BluetoothDeviceIcon(s))}
             />
             <label label={device.name || "Unkown Device"} hexpand={true} halign={Gtk.Align.START} />
             <label

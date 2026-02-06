@@ -13,7 +13,10 @@ export function MediaPlayer() {
       <With value={createBinding(mpris, "players")}>
         {(players) => {
           const list = Array.isArray(players) ? players : []
-          const player = list[0]
+          
+          // 1. Pick the best player: Prioritize 'PLAYING', fallback to the first available.
+          const player = list.find(p => p.playback_status === Mpris.PlaybackStatus.PLAYING) || list[0]
+          
           if (!player) return;
           
           // make fields reactive and ensure strings
@@ -29,7 +32,12 @@ export function MediaPlayer() {
           )
 
           return (
-            <box class="media-player" hexpand={true}>
+            // 2. REACTIVE FIX: Hide the whole box if the title is empty.
+            <box 
+              class="media-player" 
+              hexpand={true} 
+              visible={title.as(t => t.trim().length > 0)}
+            >
               <box class="cover-art" overflow={Gtk.Overflow.HIDDEN}>
                 <With value={cover}>
                   {(cover) => {
@@ -82,8 +90,8 @@ export function MediaPlayer() {
                         <Gtk.Image
                             pixelSize={16}
                             iconName={status.as(b => 
-                              b ? "media-playback-start-symbolic"
-                              : "media-playback-pause-symbolic"
+                              b === Mpris.PlaybackStatus.PLAYING ? "media-playback-pause-symbolic"
+                              : "media-playback-start-symbolic"
                             )}
                           /> 
                       </button>
@@ -108,7 +116,7 @@ export function MediaPlayer() {
 }
 
 function formatTime(seconds: number) {
-  if (seconds <= 0) return "0:00"
+  if (seconds <= 0 || seconds > 1000000000) return "0:00"
   const mins = Math.floor(seconds / 60)
   const secs = Math.round(seconds % 60)
   return `${mins}:${secs.toString().padStart(2, '0')}`
