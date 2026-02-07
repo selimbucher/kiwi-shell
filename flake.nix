@@ -17,7 +17,7 @@
   }: let
     system = "x86_64-linux";
     pkgs = nixpkgs.legacyPackages.${system};
-    pname = "my-shell";
+    pname = "desktop";
     entry = "app.ts";
 
     astalPackages = with ags.packages.${system}; [
@@ -48,7 +48,7 @@
         src = ./.;
 
         nativeBuildInputs = with pkgs; [
-          wrapGAppsHook
+          wrapGAppsHook4
           gobject-introspection
           ags.packages.${system}.default
         ];
