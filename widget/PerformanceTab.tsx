@@ -9,10 +9,10 @@ async function runDiagnostics() {
     await calendarService.getNextEventFromICS();
 }
 
-export default function CalendarTab({visible}) {
+export default function PerformanceTab({visible}) {
     return (
         <box visible={visible} orientation={Gtk.Orientation.VERTICAL}>
-            Upcoming Events
+            Performance Graphs
         </box>
     )
 }

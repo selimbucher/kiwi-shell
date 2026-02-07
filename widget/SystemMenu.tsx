@@ -9,7 +9,7 @@ import SystemTab from "./SystemTab"
 import NetworkTab from "./NetworkTab"
 import BluetoothTab from "./BluetoothTab"
 import ThemeTab from "./ThemeTab"
-import CalendarTab from "./CalendarTab"
+import PerformanceTab from "./PerformanceTab"
 
 import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./BluetoothTab"
 import { rescanWifi } from "./NetworkTab"
@@ -30,7 +30,7 @@ const tabs = [
   { name: "settings", icon: "prefs-tweaks-symbolic" },
   { name: "network", icon: "network-wireless-symbolic" },
   { name: "bluetooth", icon: "bluetooth-active-symbolic" },
-  { name: "calendar", icon: "calendar-month-symbolic" },
+  { name: "performance", icon: "power-profile-performance-symbolic" },
   { name: "theme", icon: "image-round-symbolic" }
 ]
 
@@ -89,7 +89,7 @@ export default function SystemMenu() {
           <SystemTab visible={activeTab(t => t === 0)} />
           <NetworkTab visible={activeTab(t => t === 1)} />
           <BluetoothTab visible={activeTab(t => t === 2)} />
-          <CalendarTab visible={activeTab(t => t === 3)} />
+          <PerformanceTab visible={activeTab(t => t === 3)} />
           <ThemeTab visible={activeTab(t => t === 4)}/>      
         </box>
       </box>
