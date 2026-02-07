@@ -61,6 +61,10 @@
           mkdir -p $out/bin
           mkdir -p $out/share
           cp -r * $out/share
+
+          rm -rf $out/share/node_modules
+          rm -rf $out/share/.git
+
           ags bundle ${entry} $out/bin/${pname} -d "SRC='$out/share'"
 
           runHook postInstall
