@@ -39,6 +39,7 @@
         pkgs.libadwaita
         pkgs.libsoup_3
         pkgs.zenity
+        pkgs.sox
       ];
   in {
     packages.${system} = {

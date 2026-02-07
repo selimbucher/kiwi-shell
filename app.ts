@@ -6,7 +6,8 @@ import { Gtk } from "ags/gtk4"
 
 const settings = Gtk.Settings.get_default()
 if (settings) {
-  settings.gtk_theme_name = "WhiteSur-Dark" // or your preferred theme
+  settings.gtk_theme_name = "WhiteSur-Dark"
+  console.log("Setting GTK theme to WhiteSur-Dark")
 }
 
 app.start({

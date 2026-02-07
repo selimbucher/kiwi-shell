@@ -2,6 +2,7 @@ import { Gtk } from "ags/gtk4"
 import { createState, createBinding, createComputed } from "ags"
 import { createPoll } from "ags/time"
 import AstalBattery from "gi://AstalBattery"
+import { exec } from "ags/process"
 
 import { CircularProgress } from "./Misc"
 
@@ -16,11 +17,18 @@ import { rescanWifi } from "./NetworkTab"
 
 import { primaryColor } from "./colors"
 
+
+
 const battery = AstalBattery.get_default()
 
 const batPercentBinding = createBinding(battery, "percentage");
 const batChargingBinding = createBinding(battery, "charging");
 
+const chargingSound = '~/.config/ags/assets/charging.mp3'
+batChargingBinding.subscribe(() => {
+  if (!battery.charging) { return }
+  exec('play '+chargingSound);
+})
 
 // Expose active tab state so other modules can react to it (e.g., Bar popover open)
 export const systemMenuTabState = createState(0)
