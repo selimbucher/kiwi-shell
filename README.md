@@ -17,10 +17,10 @@ You may want to include this in your hyprland config to match the border color o
 ### Commands
 You can display volume and brightness indicators with
 ```bash
-ags request show volume
+desktop-ctl show volume
 ```
 ```bash
-ags request show brightness
+desktop-ctl show brightness
 ```
 This will display the volume and brightness for a few seconds in a small widget at the bottom.
 These commands should be binded to the corresponding buttons on the keyboard.
