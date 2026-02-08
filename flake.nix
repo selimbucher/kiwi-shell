@@ -57,40 +57,56 @@
       ];
   in {
     packages.${system} = {
-      default = pkgs.stdenv.mkDerivation {
-        name = pname;
-        version = 0.1;
-        src = pkgs.lib.cleanSource ./.;
+  default = pkgs.stdenv.mkDerivation {
+    name = pname;
+    version = "0.1"; # Changed to string for safety
+    src = pkgs.lib.cleanSource ./.;
 
-        nativeBuildInputs = with pkgs; [
-          wrapGAppsHook4
-          gobject-introspection
-          ags.packages.${system}.default
-        ];
+    # 1. Tools needed during the BUILD process
+    nativeBuildInputs = with pkgs; [
+      wrapGAppsHook4
+      gobject-introspection
+      ags.packages.${system}.default
+      makeWrapper
+    ];
 
-        buildInputs = extraPackages ++ [pkgs.gjs];
+    # 2. Libraries needed by the App itself
+    buildInputs = extraPackages ++ [ pkgs.gjs ];
 
-        installPhase = ''
-          runHook preInstall
+    installPhase = ''
+      runHook preInstall
 
-          mkdir -p $out/bin
-          mkdir -p $out/share
-          cp -r * $out/share
+      mkdir -p $out/bin
+      mkdir -p $out/share
+      cp -r * $out/share
 
-          # --- Step 1: Create the Main App ('desktop') ---
-          # This compiles your app.ts into a fast, standalone binary
-          ags bundle ${entry} $out/bin/${pname} -d "SRC='$out/share'"
+      # --- Step A: Compile the Main App ---
+      ags bundle ${entry} $out/bin/${pname} -d "SRC='$out/share'"
 
-          # --- Step 2: Create the Controller ('desktop-ctl') ---
-          # This creates a script that runs 'ags request' using the exact AGS version from the flake
-          echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}-ctl
-          echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}-ctl
-          chmod +x $out/bin/${pname}-ctl
+      # --- Step B: Define Runtime Dependencies ---
+      # This list adds these tools to the app's internal "PATH"
+      # The user does NOT need to install these globally!
+      runtimeDeps = pkgs.lib.makeBinPath [
+        pkgs.swww           # Wallpaper daemon
+        pkgs.hyprsunset     # Blue light filter
+        pkgs.brightnessctl  # For brightness control (optional but good)
+      ];
 
-          runHook postInstall
-        '';
-      };
-    };
+      # --- Step C: Wrap the App ---
+      # We wrap the binary so it can see the tools in 'runtimeDeps'
+      wrapProgram $out/bin/${pname} \
+        --prefix PATH : "$runtimeDeps"
+
+      # --- Step D: Create the Controller Script ---
+      # This helper script allows 'desktop-ctl request ...'
+      echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}-ctl
+      echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}-ctl
+      chmod +x $out/bin/${pname}-ctl
+
+      runHook postInstall
+    '';
+  };
+};
 
     devShells.${system} = {
       default = pkgs.mkShell {
