@@ -40,7 +40,7 @@ In your system's flake.nix, add this repository to the inputs block.
 ```nix
 {
   inputs = {
-    desktop-widgets.url = "github:SlimmerCH/wayland-desktop-dotfiles";
+    desktop-widgets.url = "github:SlimmerCH/hyprland-widgets";
   };
 }
 ```
