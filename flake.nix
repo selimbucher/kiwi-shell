@@ -36,10 +36,24 @@
     extraPackages =
       astalPackages
       ++ [
+        # --- Libraries ---
         pkgs.libadwaita
         pkgs.libsoup_3
         pkgs.zenity
         pkgs.sox
+
+        # --- Fonts ---
+        pkgs.quicksand
+
+        # --- Themes & Icons ---
+        (pkgs.whitesur-gtk-theme.override {
+          altVariants = [ "normal" ];
+        })
+
+        (pkgs.whitesur-icon-theme.override {
+          alternativeIcons = true;
+          boldPanelIcons = true;
+        })
       ];
   in {
     packages.${system} = {

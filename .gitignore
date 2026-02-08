@@ -1,0 +1,5 @@
+node_modules
+@girs
+result
+.direnv
+.envrc
