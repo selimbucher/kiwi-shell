@@ -85,7 +85,6 @@
           ags bundle ${entry} $out/bin/${pname} -d "SRC='$out/share'"
 
           # --- Step 2: Wrap the App ---
-          # We insert the Nix path calculation directly here using ${ }
           wrapProgram $out/bin/${pname} \
             --prefix PATH : "${pkgs.lib.makeBinPath [
               pkgs.swww
