@@ -59,7 +59,8 @@
     packages.${system} = {
       default = pkgs.stdenv.mkDerivation {
         name = pname;
-        src = ./.;
+        version = 0.1;
+        src = pkgs.lib.cleanSource ./.;
 
         nativeBuildInputs = with pkgs; [
           wrapGAppsHook4
@@ -76,10 +77,15 @@
           mkdir -p $out/share
           cp -r * $out/share
 
-          rm -rf $out/share/node_modules
-          rm -rf $out/share/.git
-
+          # --- Step 1: Create the Main App ('desktop') ---
+          # This compiles your app.ts into a fast, standalone binary
           ags bundle ${entry} $out/bin/${pname} -d "SRC='$out/share'"
+
+          # --- Step 2: Create the Controller ('desktop-ctl') ---
+          # This creates a script that runs 'ags request' using the exact AGS version from the flake
+          echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}-ctl
+          echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}-ctl
+          chmod +x $out/bin/${pname}-ctl
 
           runHook postInstall
         '';
