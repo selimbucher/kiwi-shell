@@ -57,56 +57,51 @@
       ];
   in {
     packages.${system} = {
-  default = pkgs.stdenv.mkDerivation {
-    name = pname;
-    version = "0.1"; # Changed to string for safety
-    src = pkgs.lib.cleanSource ./.;
+      default = pkgs.stdenv.mkDerivation {
+        name = "desktop";
+        version = "0.1";
+        src = pkgs.lib.cleanSource ./.;
 
-    # 1. Tools needed during the BUILD process
-    nativeBuildInputs = with pkgs; [
-      wrapGAppsHook4
-      gobject-introspection
-      ags.packages.${system}.default
-      makeWrapper
-    ];
+        nativeBuildInputs = with pkgs; [
+          wrapGAppsHook4
+          gobject-introspection
+          ags.packages.${system}.default
+          makeWrapper # Required for wrapProgram
+        ];
 
-    # 2. Libraries needed by the App itself
-    buildInputs = extraPackages ++ [ pkgs.gjs ];
+        buildInputs = extraPackages ++ [ pkgs.gjs ];
 
-    installPhase = ''
-      runHook preInstall
+        installPhase = ''
+          runHook preInstall
 
-      mkdir -p $out/bin
-      mkdir -p $out/share
-      cp -r * $out/share
+          mkdir -p $out/bin
+          mkdir -p $out/share
+          cp -r * $out/share
 
-      # --- Step A: Compile the Main App ---
-      ags bundle ${entry} $out/bin/${pname} -d "SRC='$out/share'"
+          rm -rf $out/share/node_modules
+          rm -rf $out/share/.git
 
-      # --- Step B: Define Runtime Dependencies ---
-      # This list adds these tools to the app's internal "PATH"
-      # The user does NOT need to install these globally!
-      runtimeDeps = pkgs.lib.makeBinPath [
-        pkgs.swww           # Wallpaper daemon
-        pkgs.hyprsunset     # Blue light filter
-        pkgs.brightnessctl  # For brightness control (optional but good)
-      ];
+          # --- Step 1: Compile the Main App ---
+          ags bundle ${entry} $out/bin/${pname} -d "SRC='$out/share'"
 
-      # --- Step C: Wrap the App ---
-      # We wrap the binary so it can see the tools in 'runtimeDeps'
-      wrapProgram $out/bin/${pname} \
-        --prefix PATH : "$runtimeDeps"
+          # --- Step 2: Wrap the App ---
+          # We insert the Nix path calculation directly here using ${ }
+          wrapProgram $out/bin/${pname} \
+            --prefix PATH : "${pkgs.lib.makeBinPath [
+              pkgs.swww
+              pkgs.hyprsunset
+              pkgs.brightnessctl
+            ]}"
 
-      # --- Step D: Create the Controller Script ---
-      # This helper script allows 'desktop-ctl request ...'
-      echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}-ctl
-      echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}-ctl
-      chmod +x $out/bin/${pname}-ctl
+          # --- Step 3: Create the Controller Script ---
+          echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}-ctl
+          echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}-ctl
+          chmod +x $out/bin/${pname}-ctl
 
-      runHook postInstall
-    '';
-  };
-};
+          runHook postInstall
+        '';
+      };
+    };
 
     devShells.${system} = {
       default = pkgs.mkShell {
