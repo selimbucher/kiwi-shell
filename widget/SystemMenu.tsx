@@ -3,6 +3,7 @@ import { createState, createBinding, createComputed } from "ags"
 import { createPoll } from "ags/time"
 import AstalBattery from "gi://AstalBattery"
 import { exec } from "ags/process"
+import App from "ags/app"
 
 import { CircularProgress } from "./Misc"
 
@@ -24,7 +25,9 @@ const battery = AstalBattery.get_default()
 const batPercentBinding = createBinding(battery, "percentage");
 const batChargingBinding = createBinding(battery, "charging");
 
-const chargingSound = '~/.config/ags/assets/charging.mp3'
+const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
+
+const chargingSound = `${ROOT}/assets/charging.mp3`
 batChargingBinding.subscribe(() => {
   if (!battery.charging) { return }
   exec('play '+chargingSound);
