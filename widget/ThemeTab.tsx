@@ -37,7 +37,7 @@ function setupWallpaperPolling() {
     
     // Failed, set up retry every 2 seconds if not already polling
     if (!retryInterval) {
-        console.log("Starting wallpaper polling...")
+        console.log("Starting wallpapersw polling...")
         retryInterval = setInterval(() => {
             const path = getCurrentWallpaper()
             if (path) {
