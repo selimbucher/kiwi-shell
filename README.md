@@ -1,4 +1,4 @@
-# Wayland Desktop Dotfiles
+# Hyprland Desktop Widgets
 Desktop widgets for **Hyprland**. Based on AGS and Astal.
 
 ![Screenshot](./screenshots/screenshot1.png)
