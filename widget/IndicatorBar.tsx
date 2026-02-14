@@ -9,7 +9,7 @@ import { Accessor } from "ags"
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon } from "./iconNames"
 import { primaryColor } from "./colors"
 import { brightness } from "./polls"
-import { keyboardBrightness, max_keyboardBrightness } from "./polls"
+import { keyboardBrightness, max_keyboardBrightness, hasKbdBacklight } from "./polls"
 
 const fadeTimeout = 2500
 
@@ -78,14 +78,14 @@ timeout(500, () => {
   waiting = false
 })
 
-keyboardBrightness.subscribe(() => {
-  if (waiting) {
-    return
-  }
-  setIndicatorType('keyboardBrightness')
-  setVisibility(true);
-  resetIndicatorTimeout()
-})
+if (hasKbdBacklight) {
+  keyboardBrightness.subscribe(() => {
+    if (waiting) return;
+    setIndicatorType('keyboardBrightness');
+    setVisibility(true);
+    resetIndicatorTimeout();
+  });
+}
 
 
 export default function IndicatorBar(gdkmonitor: Gdk.Monitor) {
