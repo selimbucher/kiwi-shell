@@ -20,8 +20,8 @@ export const brightness = createPoll(0, 200, () => {
     }
 });
 
-const kbdPathRaw = exec("sh -c 'ls /sys/class/leds/*kbd*/brightness 2>/dev/null'").split('\n')[0].trim();
-const kbdMaxPathRaw = exec("sh -c 'ls /sys/class/leds/*kbd*/max_brightness 2>/dev/null'").split('\n')[0].trim();
+const kbdPathRaw = exec(`bash -c 'shopt -s nullglob; echo /sys/class/leds/*kbd*/brightness'`).trim();
+const kbdMaxPathRaw = exec(`bash -c 'shopt -s nullglob; echo /sys/class/leds/*kbd*/max_brightness'`).trim();
 
 export const hasKbdBacklight = kbdPathRaw !== "" && pathExists(kbdPathRaw);
 
