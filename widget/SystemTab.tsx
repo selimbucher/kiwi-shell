@@ -15,12 +15,17 @@ const [nightShift, setNightShift] = createState(false);
 
 const max_brightness = parseInt(exec("brightnessctl max"))
 const nightShiftTemp = 4000;
-const activePowerProfile = "power-saver"
+
+
+const hasBacklight = exec(`sh -c 'ls /sys/class/backlight/ | grep -q . && echo yes || echo no'`).trim() === 'yes';
+
+const activePowerProfile = hasBacklight ? "power-saver" : "performance"
 const defaultPowerProfile = "balanced"
 
 const wp = AstalWp.get_default()
 const mic = wp.audio.defaultMicrophone;
 const powerprofiles = AstalPowerProfiles.get_default()
+
 
 const speakerBinding = createBinding(wp.audio, "defaultSpeaker")
 const micMutedBinding = createBinding(mic, "mute")
@@ -97,11 +102,11 @@ function OptionButtons(){
         {/* main option as its own button */}
         <button
         class={powerProfileBinding.as( p =>
-          (p == activePowerProfile) ? 'option active' : 'option'
+          (p != defaultPowerProfile) ? 'option active' : 'option'
         )}
         hexpand={true}
           onClicked={() => {
-            if (powerProfileBinding.get() != activePowerProfile) {
+            if (powerProfileBinding.get() == defaultPowerProfile) {
               execAsync(`powerprofilesctl set ${activePowerProfile}`);
             } else {
               execAsync(`powerprofilesctl set ${defaultPowerProfile}`);
@@ -226,7 +231,7 @@ function Sliders() {
           )
         }}
       </With>
-      <box class="slider-container">
+      <box visible={hasBacklight} class="slider-container">
         <button class="bar-button">
           <Gtk.Image 
             class="icon brightnessIcon"

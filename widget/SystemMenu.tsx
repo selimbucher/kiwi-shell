@@ -21,17 +21,21 @@ import { primaryColor } from "./colors"
 
 
 const battery = AstalBattery.get_default()
+const hasBattery = battery.get_is_present()
 
 const batPercentBinding = createBinding(battery, "percentage");
 const batChargingBinding = createBinding(battery, "charging");
 
 const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
 
-const chargingSound = `${ROOT}/assets/charging.mp3`
-batChargingBinding.subscribe(() => {
-  if (!battery.charging) { return }
-  exec('play '+chargingSound);
-})
+if (hasBattery) {
+  const chargingSound = `${ROOT}/assets/charging.mp3`
+  batChargingBinding.subscribe(() => {
+    if (!battery.charging) { return }
+    exec('play '+chargingSound);
+  })
+}
+
 
 // Expose active tab state so other modules can react to it (e.g., Bar popover open)
 export const systemMenuTabState = createState(0)
@@ -83,7 +87,7 @@ export default function SystemMenu() {
         <box class="main-box">
               <Time />
               <box hexpand={true}/>
-              <overlay>
+              <overlay visible={hasBattery}>
                 <Gtk.Image 
                   $type="overlay"
                   pixelSize={24}

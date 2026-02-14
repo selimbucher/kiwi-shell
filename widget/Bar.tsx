@@ -21,6 +21,8 @@ const wiredBinding = createBinding(network, "wired")
 const wifiStateBinding = createBinding(wifi, "state")
 const activeAPBinding = createBinding(wifi, "activeAccessPoint")
 
+const hasBattery = battery.get_is_present()
+
 const accent = "#b38dff"
 
 import { primaryColor } from "./colors"
@@ -62,7 +64,7 @@ function MenuButtons() {
         <box class="icons">
           <PreferencesIcon />
           <NetworkIcon />
-          <BatteryIcon />
+          <BatteryIcon/>
         </box>
         <popover
           hasArrow={false}
@@ -118,6 +120,7 @@ function BatteryIcon() {
   
   return (
     <Gtk.Image 
+      visible={hasBattery}
       class="batteryIcon"
       pixelSize={16}
       iconName={createBinding(battery, "battery_icon_name")}

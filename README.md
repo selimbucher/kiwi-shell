@@ -31,6 +31,7 @@ This app requires a standard **Hyprland** setup and assumes the following servic
 - Power Profiles Daemon
 - WirePlumber
 - SWWW (for wallpapers)
+- UPower (Even on Desktops)
 
 ## Installation
 ### NixOS & Home Manager
