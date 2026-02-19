@@ -41,7 +41,7 @@ In your system's flake.nix, add this repository to the inputs block.
 ```nix
 {
   inputs = {
-    desktop-widgets.url = "github:SlimmerCH/hyprland-widgets";
+    desktop-widgets.url = "github:selimbucher/hyprland-widgets";
   };
 }
 ```
