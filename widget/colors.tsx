@@ -27,7 +27,7 @@ function getInitialColors() {
 }
 
 const config = getInitialColors()
-const borderOpacity = 0.6;
+const borderOpacity = 0.7;
 
 export const [primaryColor, setPrimaryColor] = createState(config.primary_color)
 
