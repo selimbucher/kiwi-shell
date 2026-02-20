@@ -87,7 +87,7 @@
 
           # --- Step 3: Create the Controller Script ---
           echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}-ctl
-          echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}-ctl
+          echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\" >> ~/.cache/hyprland-desktop.log 2>&1" >> $out/bin/${pname}-ctl
           chmod +x $out/bin/${pname}-ctl
 
           runHook postInstall
