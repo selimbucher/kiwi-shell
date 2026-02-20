@@ -8,6 +8,7 @@ $bg-color: #{"@theme_bg_color"};
 @use 'style/workspaces.scss';
 @use 'style/indicatorBar.scss';
 @use 'style/tray.scss';
+@use 'style/themes/glass.scss';
 
 window.Bar {
   background: transparent;
@@ -16,7 +17,7 @@ window.Bar {
 
   > .centerbox {
     margin: 8px;
-    margin-bottom: 4px;
+    margin-bottom: var(--bar-bottom-margin);
   }
 
   .networkIcon {

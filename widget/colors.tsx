@@ -2,11 +2,15 @@ import { readFile, writeFileAsync } from "ags/file"
 import { createState } from "ags"
 import { exec } from "ags/process"
 import { Gdk } from "ags/gtk4"
+import App from "ags/app"
 
 const HOME = exec('bash -c "echo $HOME"')
 const CONFIG_FOLDER = `${HOME}/.config/desktop`
-const COLOR_FILE = `${CONFIG_FOLDER}/colors.json`
+const COLOR_FILE = `${CONFIG_FOLDER}/config.json`
 const HYPR_FILE = `${CONFIG_FOLDER}/hypr.conf`
+
+const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
+const DEFAULT_CONFIG_FILE = `${ROOT}/defaultConfig.json`
 
 // --- 1. SAFE READ LOGIC ---
 // We try to read the file. If it fails (doesn't exist), we return a default object.
@@ -15,24 +19,30 @@ function getInitialColors() {
         const content = readFile(COLOR_FILE)
         return JSON.parse(content)
     } catch (error) {
-        // Return a safe default if file is missing or corrupt
-        return { primary: "rgba(179,165,231,1)" }
+        exec(`mkdir -p ${CONFIG_FOLDER}`)
+        exec(`cp ${DEFAULT_CONFIG_FILE} ${COLOR_FILE}`)
+        const content = readFile(DEFAULT_CONFIG_FILE)
+        return JSON.parse(content)
     }
 }
 
-const colors = getInitialColors()
+const config = getInitialColors()
 const borderOpacity = 0.6;
 
-export const [primaryColor, setPrimaryColor] = createState(colors.primary)
+export const [primaryColor, setPrimaryColor] = createState(config.primary_color)
+
+export const [conf, setConf] = createState(config)
 
 export async function storePrimaryColor(color: Gdk.RGBA) {
     const colorString = color.to_string()
     
     // Update state and local object
     setPrimaryColor(colorString)
-    colors.primary = colorString
+    config.primary_color = colorString
     
-    const jsonString = JSON.stringify(colors, null, 2)  
+    setConf({ ...config })
+    
+    const jsonString = JSON.stringify(config, null, 2)  
 
     // Prepare Hyprland string
     const borderColor = color.copy()

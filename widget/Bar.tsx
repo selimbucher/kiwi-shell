@@ -23,9 +23,8 @@ const activeAPBinding = createBinding(wifi, "activeAccessPoint")
 
 const hasBattery = battery.get_is_present()
 
-const accent = "#b38dff"
-
-import { primaryColor } from "./colors"
+import { conf } from "./colors"
+console.log(conf)
 
 export default function Bar(gdkmonitor: Gdk.Monitor) {
 
@@ -33,12 +32,15 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
 
   return (
     <window
-      css={primaryColor(hex => 
-        `--primary: ${hex};`
+      css={conf.as(conf => 
+        `
+        --primary: ${conf.primary_color};
+        --bar-bottom-margin: ${conf.bottom_margin}px;
+        `
       )}
       visible
       name="ags-bar"
-      class="Bar"
+      class={conf.as(conf => `Bar theme-${conf.theme}`)}
       gdkmonitor={gdkmonitor}
       exclusivity={Astal.Exclusivity.EXCLUSIVE}
       anchor={TOP | LEFT | RIGHT}

@@ -31,8 +31,6 @@ const speakerBinding = createBinding(wp.audio, "defaultSpeaker")
 const micMutedBinding = createBinding(mic, "mute")
 const powerProfileBinding = createBinding(powerprofiles, "activeProfile");
 
-const accent = "#b38dff"
-
 function powerProfileName(profile: string) {
   if (profile == "performance") {
     return "Performance"
