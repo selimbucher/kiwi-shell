@@ -1,4 +1,4 @@
-import { readFile, writeFileAsync } from "ags/file"
+import { readFile, writeFileAsync, monitorFile } from "ags/file"
 import { createState } from "ags"
 import { exec } from "ags/process"
 import { Gdk } from "ags/gtk4"
@@ -60,3 +60,13 @@ export async function storePrimaryColor(color: Gdk.RGBA) {
         console.error("Failed to save colors:", error)
     }
 }
+
+monitorFile(COLOR_FILE, () => {
+    try {
+        const newConf = JSON.parse(readFile(COLOR_FILE));
+        // Overwriting the variable triggers the UI update
+        setConf({ ...newConf })
+    } catch (e) {
+        console.error("Failed to parse updated config file:", e);
+    }
+});
