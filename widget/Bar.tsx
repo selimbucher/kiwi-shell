@@ -12,6 +12,7 @@ import Network from "gi://AstalNetwork"
 import { stopBluetoothDiscovery, startBluetoothDiscovery } from "./BluetoothTab"
 import { rescanWifi } from "./NetworkTab"
 import Tray from "./Tray"
+import { conf } from "./config"
 
 const battery = Battery.get_default()
 const network = Network.get_default()
@@ -22,9 +23,6 @@ const wifiStateBinding = createBinding(wifi, "state")
 const activeAPBinding = createBinding(wifi, "activeAccessPoint")
 
 const hasBattery = battery.get_is_present()
-
-import { conf } from "./colors"
-console.log(conf)
 
 export default function Bar(gdkmonitor: Gdk.Monitor) {
 

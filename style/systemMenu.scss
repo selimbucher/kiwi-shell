@@ -9,6 +9,24 @@
   margin-top: 10px;
   border-radius: 15px;
 
+  .theme-settings {
+    padding: 24px;
+  }
+
+  dropdown button, colorbutton * {
+    border-radius: 12px;
+  }
+  dropdown button {
+    padding-left: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #ededed;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+  }
+
   .wallpaper-preview {
     border-radius: 8px;
     margin-right: 12px;

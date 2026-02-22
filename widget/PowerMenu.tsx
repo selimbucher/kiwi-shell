@@ -2,7 +2,7 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createBinding } from "ags"
 
-import { primaryColor } from "./colors"
+import { primaryColor } from "./config"
 import { exec } from "ags/process"
 
 const buttons = [

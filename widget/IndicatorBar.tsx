@@ -7,9 +7,11 @@ import { exec } from "ags/process"
 import { Accessor } from "ags"
 
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon } from "./iconNames"
-import { primaryColor } from "./colors"
+import { primaryColor } from "./config"
 import { brightness } from "./polls"
 import { keyboardBrightness, max_keyboardBrightness, hasKbdBacklight } from "./polls"
+
+import { conf } from "./config"
 
 const fadeTimeout = 2500
 
@@ -97,7 +99,9 @@ export default function IndicatorBar(gdkmonitor: Gdk.Monitor) {
       )}
       visible={isVisible}
       name="ags-indicator"
-      class="IndicatorBar"
+      class={conf.as(conf =>
+        `IndicatorBar theme-${conf.theme}`
+      )}
       gdkmonitor={gdkmonitor}
       exclusivity={Astal.Exclusivity.NORMAL}
       anchor={

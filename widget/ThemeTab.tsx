@@ -2,7 +2,7 @@ import { createState } from "ags"
 import { Gtk, Gdk } from "ags/gtk4"
 import { exec } from "ags/process"
 
-import { primaryColor, storePrimaryColor } from "./colors"
+import { conf, setConf, primaryColor, storePrimaryColor, writeConf } from "./config"
 
 // Helper function to safely get the current wallpaper
 function getCurrentWallpaper(): string | null {
@@ -102,8 +102,64 @@ export default function ThemeTab({visible}) {
                     </box>
                 )}
             </box>
-            <ColorPicker />
+            <box class="large-header">
+                Theme
+            </box>
+            <box
+                class="theme-settings"
+                orientation={Gtk.Orientation.VERTICAL}
+                spacing={6}
+            >
+                <box halign={Gtk.Align.CENTER}>
+                <ThemeSelector /> <ColorPicker />
+                </box>
+            </box>
         </box>
+    )
+}
+
+function ThemeSelector() {
+    const options = ["Dark", "Glass"];
+    const myOptions = Gtk.StringList.new(options);
+
+    // Ermittelt den Index des aktuellen Themes aus der Konfiguration.
+    // Fallback auf 0 ("Default"), falls der Wert nicht im Array existiert.
+    const currentTheme = conf().theme || "default";
+    const foundIndex = options.findIndex(opt => opt.toLowerCase() === currentTheme);
+    const defaultIndex = foundIndex !== -1 ? foundIndex : 0;
+
+    return (
+        <Gtk.DropDown
+            model={myOptions}
+            selected={defaultIndex} // Setzt den dynamisch berechneten Index
+            enableSearch={false}
+            onNotifySelected={(self) => {
+                const selectedItem = self.get_selected_item();
+                
+                // Kurzer Sicherheitscheck, falls das Item noch nicht geladen ist
+                if (!selectedItem) return; 
+                
+                const textValue = selectedItem.get_string();
+                
+                print(`Selected Theme: ${textValue}`);
+                setConf({ 
+                    ...conf(), 
+                    theme: textValue.toLowerCase()
+                });
+                
+                writeConf();
+
+                let parent = self.get_parent();
+                while (parent && !(parent instanceof Gtk.Popover)) {
+                    parent = parent.get_parent();
+                }
+                
+                if (parent) {
+                    parent.popdown();
+                    parent.popup();
+                }
+            }}
+        />
     )
 }
 

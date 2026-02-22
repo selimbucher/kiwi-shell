@@ -71,11 +71,11 @@
           rm -rf $out/share/.git
 
           # --- Step 1: Compile the Main App ---
-          # We bundle it into a hidden file first (e.g., .desktop-core) [cite: 11]
+          # We bundle it into a hidden file first (e.g., .desktop-core)
           ags bundle ${entry} $out/bin/.${pname}-core -d "SRC='$out/share'"
 
           # --- Step 2: Wrap the App ---
-          # Wrap the hidden binary with the necessary dependencies [cite: 11, 12]
+          # Wrap the hidden binary with the necessary dependencies
           wrapProgram $out/bin/.${pname}-core \
             --prefix PATH : "${pkgs.lib.makeBinPath [
               pkgs.swww
@@ -89,7 +89,7 @@
 
           # --- Step 3: Create the Logging Wrapper ---
           # This becomes the main executable your system runs.
-          # It safely redirects all stdout and stderr to a log file.
+          # It uses 'tee' to output to both the console and the log file.
           cat << 'EOF' > $out/bin/${pname}
           #!/usr/bin/env bash
           LOG_FILE="$HOME/.cache/hyprland-desktop.log"
@@ -97,10 +97,10 @@
           # Ensure the directory exists
           mkdir -p "$(dirname "$LOG_FILE")"
           
-          echo "--- Starting Desktop Shell at $(date) ---" >> "$LOG_FILE"
+          echo "--- Starting Desktop Shell at $(date) ---" | tee -a "$LOG_FILE"
           
-          # Execute the actual AGS app and push all output to the log
-          exec BIN_PATH_PLACEHOLDER "$@" >> "$LOG_FILE" 2>&1
+          # Execute the actual AGS app and push all output to the log AND console
+          BIN_PATH_PLACEHOLDER "$@" 2>&1 | tee -a "$LOG_FILE"
           EOF
           
           # Replace the placeholder with the exact Nix store path
@@ -108,7 +108,6 @@
           chmod +x $out/bin/${pname}
 
           # --- Step 4: Create the Controller Script ---
-          # Preserved exactly as you had it [cite: 12, 13]
           echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}-ctl
           echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}-ctl
           chmod +x $out/bin/${pname}-ctl

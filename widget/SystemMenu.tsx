@@ -16,7 +16,7 @@ import PerformanceTab from "./PerformanceTab"
 import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./BluetoothTab"
 import { rescanWifi } from "./NetworkTab"
 
-import { primaryColor } from "./colors"
+import { primaryColor } from "./config"
 
 
 

@@ -1,10 +1,20 @@
 window.Bar.theme-glass {
-    .MenuButtons, .Tray, .power-popover contents, .system-menu-popover contents, .tray-menu > arrow, .tray-menu contents, .workspaces {
+    .MenuButtons, .Tray, .power-popover contents, .system-menu-popover contents, .tray-menu > arrow, .tray-menu contents,
+    .workspaces {
     background-color: rgba(0, 0, 0, 0.9);
     box-shadow:
       rgba(255, 255, 255, 0.05) 0px 6px 24px 0px,
       rgba(255, 255, 255, 0.08) 0px 0px 0px 1px;
     background-color: rgba(107, 107, 107, 0.11);
-    border: none;
+    border-color: #ffffff00;
     }
+}
+
+.theme-glass .indicator-bar .indicator-box {
+  background-color: rgba(0, 0, 0, 0.9);
+    box-shadow:
+      rgba(255, 255, 255, 0.05) 0px 6px 24px 0px,
+      rgba(255, 255, 255, 0.08) 0px 0px 0px 1px;
+    background-color: rgba(107, 107, 107, 0.11);
+    border-color: #ffffff00;
 }
