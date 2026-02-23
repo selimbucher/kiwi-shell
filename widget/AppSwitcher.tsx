@@ -5,6 +5,7 @@ import { monitorFile } from "ags/file"
 import Hyprland from "gi://AstalHyprland"
 import { primaryColor, conf } from "./config"
 import { initWindowCacher } from "./clientCachingService"
+import filterApp from "./filterAppIcons"
 
 export const [isVisible, setVisibility] = createState(false)
 
@@ -199,7 +200,7 @@ export function WindowPreview({ client }: { client: any }) {
             class="window-preview"
         >
             <scrolledwindow hscrollbarPolicy={Gtk.PolicyType.EXTERNAL} vscrollbarPolicy={Gtk.PolicyType.NEVER}>
-                  <label label={client.get_title()} />
+                  <box><AppIcon client={client}/> <label label={client.get_title()} /></box>
             </scrolledwindow>
             
             <box>
@@ -232,4 +233,18 @@ export function WindowPreview({ client }: { client: any }) {
     })
 
     return container
+}
+
+export function AppIcon({ client }: { client: any }) {
+    if (!client) return null
+
+    const appClass = client.get_class()
+
+    const iconName = appClass ? appClass : "application-x-executable"
+    return (
+        <Gtk.Image
+            iconName={filterApp(iconName)}
+            pixelSize={24}
+        />
+    )
 }
