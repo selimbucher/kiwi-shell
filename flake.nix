@@ -31,17 +31,18 @@
       powerprofiles
       bluetooth
       tray
+      apps
     ];
 
     extraPackages =
       astalPackages
       ++ [
-        # --- Libraries ---
         pkgs.libadwaita
         pkgs.libsoup_3
        
-        # --- Fonts ---
         pkgs.quicksand
+
+        pkgs.grimblast
 
       ];
   in {

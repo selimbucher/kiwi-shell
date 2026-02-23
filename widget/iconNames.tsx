@@ -34,6 +34,7 @@ return "audio-volume-muted-symbolic"
 
 export function brightnessIcon(value: number, max: number) {
   return "display-brightness-off-symbolic";
+  /*
   const percentage = value / max
   if (percentage >= 2/3) {
     return "display-brightness-high-symbolic"
@@ -45,6 +46,7 @@ export function brightnessIcon(value: number, max: number) {
   } else {
 return "display-brightness-off-symbolic"
   }
+*/
 }
 
 export function keyboardBrightnessIcon(percentage: number) {

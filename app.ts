@@ -2,12 +2,13 @@ import app from "ags/gtk4/app"
 import style from "./style.scss"
 import Bar from "./widget/Bar"
 import IndicatorBar, { showIndicator } from "./widget/IndicatorBar"
+import AppSwitcher, { toggleAppSwitcher } from "./widget/AppSwitcher"
 import { Gtk } from "ags/gtk4"
 
 const settings = Gtk.Settings.get_default()
 if (settings) {
   settings.gtk_theme_name = "WhiteSur-Dark"
-  console.log("Setting GTK theme to WhiteSur-Dark")
+  //console.log("Setting GTK theme to WhiteSur-Dark")
 }
 
 app.start({
@@ -16,13 +17,18 @@ app.start({
     if (cmd == "show") {
       showIndicator(arg)
       response(``)
-      return
+    } else if (cmd == "apps") {
+      toggleAppSwitcher(arg)
+      response(``)
+    } else {
+      response(`Unknown command: ${cmd}`)
     }
-    response(`Unknown command: ${cmd}`)
+    
   },
   css: style,
   main() {
     app.get_monitors().map(Bar)
     app.get_monitors().map(IndicatorBar)
+    app.get_monitors().map(AppSwitcher)
   },
 })

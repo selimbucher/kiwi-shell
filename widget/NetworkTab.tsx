@@ -13,33 +13,33 @@ export function rescanWifi(){
 
 export default function NetworkTab({ visible }) {
     const accessPointsBinding = createComputed((get) => {
-    const aps = get(createBinding(wifi, "accessPoints"))
-    const activeAP = get(createBinding(wifi, "activeAccessPoint"))
-    
-    // Filter out hidden networks
-    const visibleAPs = aps.filter(ap => ap.ssid && ap.ssid.trim() !== "")
-    
-    // Group by SSID and keep only the strongest AP for each network
-    const uniqueNetworks = visibleAPs.reduce((acc, ap) => {
-      const existing = acc.get(ap.ssid)
-      if (!existing || ap.strength > existing.strength) {
-        acc.set(ap.ssid, ap)
-      }
-      return acc
-    }, new Map())
+      const aps = get(createBinding(wifi, "accessPoints"))
+      const activeAP = get(createBinding(wifi, "activeAccessPoint"))
+      
+      // Filter out hidden networks
+      const visibleAPs = aps.filter(ap => ap.ssid && ap.ssid.trim() !== "")
+      
+      // Group by SSID and keep only the strongest AP for each network
+      const uniqueNetworks = visibleAPs.reduce((acc, ap) => {
+        const existing = acc.get(ap.ssid)
+        if (!existing || ap.strength > existing.strength) {
+          acc.set(ap.ssid, ap)
+        }
+        return acc
+      }, new Map())
 
-    // Sort: active network first, then by strength
-    return Array.from(uniqueNetworks.values())
-      .sort((a, b) => {
-        const aIsActive = activeAP?.ssid === a.ssid
-        const bIsActive = activeAP?.ssid === b.ssid
-        
-        if (aIsActive && !bIsActive) return -1
-        if (!aIsActive && bIsActive) return 1
-        
-        return b.strength - a.strength
-      })
-  })
+      // Sort: active network first, then by strength
+      return Array.from(uniqueNetworks.values())
+        .sort((a, b) => {
+          const aIsActive = activeAP?.ssid === a.ssid
+          const bIsActive = activeAP?.ssid === b.ssid
+          
+          if (aIsActive && !bIsActive) return -1
+          if (!aIsActive && bIsActive) return 1
+          
+          return b.strength - a.strength
+        })
+    })
 
   const [rotation, setRotation] = createState(0)
   return (
