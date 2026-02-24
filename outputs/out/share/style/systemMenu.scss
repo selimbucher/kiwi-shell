@@ -1,0 +1,247 @@
+.system-menu-popover contents {
+  background-color: rgba(0, 0, 0, 0.9);
+  border: none;
+  border-top: #1a1a1a 2px solid;
+  box-shadow: unset;
+  min-width: 300px;
+  padding: 12px;
+  margin-right: 0;
+  margin-top: 10px;
+  border-radius: 15px;
+
+  .theme-settings {
+    padding: 24px;
+  }
+
+  dropdown button, colorbutton * {
+    border-radius: 12px;
+  }
+  dropdown button {
+    padding-left: 12px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #ededed;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+  }
+
+  .wallpaper-preview {
+    border-radius: 8px;
+    margin-right: 12px;
+  }
+
+  .wallpaper-buttons {
+    padding: 34px;
+    button {
+      border: none;
+      background: rgba(255, 255, 255, 0.09);
+      box-shadow: none;
+      border-radius: 12px;
+      font-size: 12px;
+      padding: 2px 8px;
+      color: #ededed;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.15);
+        color: #ffffff;
+      }
+      label {
+        // margin-right: 6px;
+      }
+    }
+  }
+
+  .unkown-devices {
+    padding-bottom: 12px;
+  }
+
+  .option-buttons {
+
+    .dropdown {
+      margin-bottom: -4px;
+    }
+    
+    button {
+      background: rgba(255, 255, 255, 0.1);
+      box-shadow: none;
+      border: none;
+      padding: 8px 10px;
+      font-size: 17px;
+      font-weight: lighter;
+      color: #fff;
+      border-radius: 14px;
+      label {
+        margin-right: 4px;
+      }
+      image {
+        padding: 4px;
+      }
+      box > image {
+        margin-right: 8px;
+      }
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.15);
+      }
+      &.active {
+        background: var(--primary);
+        color: #000;
+      }
+    }
+    
+  }
+
+  .time {
+    font-size: 64px;
+    font-weight: 30;
+  }
+
+  .donut-overlay {
+    font-size: 14px;
+    font-weight: bold;
+  }
+
+  .main-box {
+    margin-bottom: 12px;
+  }
+
+  .tab-button {
+      background: none;
+      border: none;
+      box-shadow: none;
+
+      &.active {
+        color: var(--primary);
+      }
+      padding: 0 6px;
+    }
+
+  .network-item, .bluetooth-item {
+    margin: 0;
+    background: none;
+    box-shadow: none;
+    border: none;
+    &.active {
+      color: #fff;
+    }
+  }
+
+  .network-item.active {
+    margin-top: 2px;
+    margin-bottom: 8px;
+  }
+
+  .refresh-button {
+    background: none;
+    box-shadow: none;
+    border: none;
+    padding: 0;
+    margin: -5px 0;
+    margin-left: 8px;
+    transition: transform 500ms ease;
+    color: #727272;
+    &:hover {
+      color: #868686;
+    }
+  }
+
+  .quick-toggles {
+    background: rgba(255, 255, 255, 0.2);
+    min-height: 65px;
+    min-width: 65px;
+    margin-right: 5px;
+    border-radius: 10px;
+    button {
+      margin: 4px;
+    }
+  }
+
+  .tab-bar {
+    margin: 10px;
+  }
+
+  .tab-container {
+    border-top: #222222 1px solid;
+    
+    padding-top: 14px;
+    min-height: 130px;
+
+    .section-header {
+      font-size: 14px;
+      margin-bottom: 8px;
+      &.mt {
+        margin-top: 24px;
+      }
+    }
+
+    .large-header {
+      font-size: 14px;
+    }
+
+    .sliders {
+      .bar-button {
+        padding: 0;
+        padding-right: 6px;
+        box-shadow: none;
+        border: none;
+        background: none;
+      }
+      padding: 2px 6px;
+      border-radius: 8px;
+      .icon {
+        
+      }
+      > :not(:last-child) {
+        margin-bottom: 2px;
+      }
+    }
+
+      .media-player {
+      padding: 12px;
+      background-color: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      .cover-art {
+        border-radius: 6px;
+        margin-right: 12px;
+        
+        .generic-container {
+          background: rgba(255, 255, 255, 0.1);
+          padding: 16px;
+        }
+        
+      }
+      .playback-info {
+        margin-bottom: 0;
+        scrolledwindow {
+        }
+        .title {
+          font-weight: bold;
+          font-size: 18px;
+        }
+        .bottom-bar {
+          margin-bottom: -4px;
+
+        }
+        .control-bar {
+          button {
+            background: none;
+            border: none;
+            box-shadow: none;
+            padding: 0 6px;
+          }
+          
+        }
+        
+        scale {
+          padding: 0;
+          highlight {
+            background-color: #fff;
+          }
+        }
+      }
+    }
+    
+
+  }
+}

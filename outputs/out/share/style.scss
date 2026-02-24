@@ -1,0 +1,68 @@
+// https://gitlab.gnome.org/GNOME/gtk/-/blob/gtk-3-24/gtk/theme/Adwaita/_colors-public.scss
+$fg-color: #{"@theme_fg_color"};
+$bg-color: #{"@theme_bg_color"};
+
+@use 'style/global.scss';
+@use 'style/powerMenu.scss';
+@use 'style/systemMenu.scss';
+@use 'style/workspaces.scss';
+@use 'style/indicatorBar.scss';
+@use 'style/tray.scss';
+@use 'style/appSwitcher.scss';
+
+@use 'style/themes/glass.scss';
+
+window.Bar {
+  background: transparent;
+  color: $fg-color;
+  font-family: 'Quicksand';
+
+  > .centerbox {
+    margin: 8px;
+    margin-bottom: var(--bar-bottom-margin);
+  }
+
+  .networkIcon {
+    transform: translateY(-1px);
+  }
+
+  .MenuButtons, .Tray {
+    background-color: rgba(0, 0, 0, 0.9);
+    color: #fff;
+    border: #111111 1px solid;
+    border-top-color: #1c1c1c;
+    border-radius: 20px;
+    padding: 4px;
+    font-weight: 400;
+    font-size: 12px;
+
+    
+
+    .toggle-powermenu {
+      > button {
+        padding: 0;
+        background: transparent;
+        &:hover {
+          background-color: rgba(255, 255, 255, 0.082)
+        }
+        &:checked {
+          background-color: rgba(255, 255, 255, 0.12)
+        }
+        padding: 0 0px;
+        border-radius: 12px;
+        box-shadow: none;
+      }
+
+      .icons {
+        color: #ededed;
+        padding: 0 6px;
+        > * {
+          margin: 0 4px;
+        }
+      }
+    }
+    .time {
+      padding: 0 6px;
+    }
+  }
+}

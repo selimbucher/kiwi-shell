@@ -1,0 +1,71 @@
+.Bar, .IndicatorBar, .PowerMenu {
+
+  button {
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    box-shadow: none;
+  }
+
+  scale {
+    trough {
+      min-height: 10px;
+      border-radius: 8px;
+      background-color: rgba(255,255,255,0.2); // Background color
+    }
+    
+    highlight {
+      border-radius: 8px;
+      margin: 0px;
+      background-color: var(--primary); // Fill/progress color
+    }
+    
+    slider {
+      background: none;
+      border: none;
+      box-shadow: none;
+    }
+  }
+
+}
+
+.colorchooser {
+  background: rgba(20,20,20.8);
+  headerbar {
+  background: rgba(255,255,255,0.08);
+  }
+  button {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  box-shadow: none;
+  border-radius: 8px;
+  &.suggested-action {
+    background: rgba(255, 255, 255, 0.85);
+    color: #000;
+    &:hover {
+    background: rgba(255, 255, 255, 1);
+  }
+  }
+  
+  }
+  scale trough {
+
+  min-width: 10px;
+  border-radius: 8px;
+  }
+
+  slider {
+  min-width: 16px;
+  min-height: 16px;
+  background: #fff;
+  border: 2px #ddd solid;
+  }
+}
+
+
+.MenuButtons, .Tray, .power-popover contents, .system-menu-popover contents, .tray-menu > arrow, .tray-menu contents, .workspaces {
+  transition: background 0.5s;
+}
+
+.indicator-bar .indicator-box {
+  transition: background 0.5s;
+}

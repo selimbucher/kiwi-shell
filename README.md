@@ -39,7 +39,7 @@ In your Home Manager configuration file (usually home.nix), add the package to y
 #### Step 1
 Clone this repository to a convinient location.
 #### Step 2
-Install the following dependencies:
+In addition to the services in the system requirements section, install the following dependencies:
 - zenity
 - sox
 - imagemagick

@@ -1,0 +1,27 @@
+{
+  "nix": {
+    "astal": [
+      "io", "astal4", "battery", "network", "hyprland",
+      "wireplumber", "mpris", "powerprofiles", "bluetooth",
+      "tray", "apps"
+    ],
+    "extraBuildInputs": [
+      "libadwaita", "libsoup_3"
+    ],
+    "runtimeInputs": [
+      "swww", "hyprsunset", "brightnessctl", "zenity", "imagemagick", "sox", "psmisc",
+      "quicksand", "whitesur-icon-theme"
+    ]
+  },
+  "arch": {
+    "pacman": [
+      "jq", "libadwaita", "libsoup3", "gjs", "brightnessctl", "zenity", "imagemagick", "sox", "psmisc", "esbuild", "typescript", "npm"
+    ],
+    "aur": [
+      "aylurs-gtk-shell", "ttf-quicksand", "swww", "hyprsunset",
+      "astal-gjs", "astal-io", "astal-battery", "astal-network", "astal-hyprland", 
+      "astal-wireplumber", "astal-mpris", "astal-powerprofiles", "astal-bluetooth", 
+      "astal-tray", "astal-apps"
+    ]
+  }
+}

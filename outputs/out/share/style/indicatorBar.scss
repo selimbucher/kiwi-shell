@@ -1,0 +1,22 @@
+.indicator-bar {
+    transition: opacity 1s ease-out;
+    .indicator-icon {
+        margin-right: 6px;
+    }
+    .indicator-box {
+        background-color: rgba(0, 0, 0, 0.85);
+        padding: 10px 15px;
+        border-radius: 10px;
+    }
+    margin-bottom: 20px;
+    scale {
+        min-width: 120px;
+        trough {
+            min-height: 6px; 
+        }
+    }
+
+    .keyboard-brightness-symbolic {
+        transform: translateY(1px);
+    }
+}
