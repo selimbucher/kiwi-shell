@@ -9,7 +9,6 @@ This app requires a standard **Hyprland** setup and assumes the following servic
 - BlueZ (Bluetooth)
 - Power Profiles Daemon
 - WirePlumber
-- SWWW (for wallpapers)
 - UPower (optional but recommended)
 
 ## Installation

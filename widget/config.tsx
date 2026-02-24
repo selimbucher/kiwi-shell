@@ -11,6 +11,7 @@ const HYPR_FILE = `${CONFIG_FOLDER}/hypr.conf`
 
 const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
 const DEFAULT_CONFIG_FILE = `${ROOT}/defaultConfig.json`
+const NIXOS_CONFIG_FILE = `${CONFIG_FOLDER}/initial-config.json`
 
 // Ensure config directory exists once at startup
 exec(`mkdir -p ${CONFIG_FOLDER}`)
@@ -20,9 +21,14 @@ function loadConfig() {
         const content = readFile(CONFIG_FILE)
         return JSON.parse(content)
     } catch (error) {
-        exec(`cp ${DEFAULT_CONFIG_FILE} ${CONFIG_FILE}`)
-        const content = readFile(DEFAULT_CONFIG_FILE)
-        return JSON.parse(content)
+        try {
+            const content = readFile(NIXOS_CONFIG_FILE)
+            return JSON.parse(content)
+        } catch (error) {
+            exec(`cp ${DEFAULT_CONFIG_FILE} ${CONFIG_FILE}`)
+            const content = readFile(DEFAULT_CONFIG_FILE)
+            return JSON.parse(content)
+        }
     }
 }
 

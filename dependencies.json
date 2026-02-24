@@ -1,18 +1,4 @@
 {
-  "nix": {
-    "astal": [
-      "io", "astal4", "battery", "network", "hyprland",
-      "wireplumber", "mpris", "powerprofiles", "bluetooth",
-      "tray", "apps"
-    ],
-    "extraBuildInputs": [
-      "libadwaita", "libsoup_3"
-    ],
-    "runtimeInputs": [
-      "swww", "hyprsunset", "brightnessctl", "zenity", "imagemagick", "sox", "psmisc",
-      "quicksand", "whitesur-icon-theme"
-    ]
-  },
   "arch": {
     "pacman": [
       "jq", "libadwaita", "libsoup3", "gjs", "brightnessctl", "zenity", "imagemagick", "sox", "psmisc", "esbuild", "typescript", "npm"

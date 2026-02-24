@@ -39,8 +39,6 @@
       ++ [
         pkgs.libadwaita
         pkgs.libsoup_3
-        pkgs.quicksand
-        pkgs.grimblast
       ];
 
     # packet definition
@@ -81,6 +79,10 @@
           pkgs.imagemagick
           pkgs.sox
           pkgs.psmisc
+          pkgs.grim
+          pkgs.quicksand
+          pkgs.whitesur-icon-theme
+          pkgs.whitesur-gtk-theme
         ]}"
 
         # Logging Wrapper
@@ -130,13 +132,13 @@
         enable = lib.mkEnableOption "Desktop Shell for Hyprland";
 
         settings = lib.mkOption {
-          description = "Configuration written to ~/.config/desktop/config.json";
+          description = "Configuration written to ~/.config/desktop/initial-config.json";
           default = {};
           type = lib.types.submodule {
             options = {
               primary_color = lib.mkOption {
                 type = lib.types.str;
-                default = "rgb(169,206,195)";
+                default = "rgb(109, 154, 219)";
               };
               bottom_margin = lib.mkOption {
                 type = lib.types.int;
@@ -153,7 +155,7 @@
 
       config = lib.mkIf cfg.enable {
         # create the config
-        xdg.configFile."desktop/config.json".text = builtins.toJSON cfg.settings;
+        xdg.configFile."desktop/initial-config.json".text = builtins.toJSON cfg.settings;
 
         home.packages = [self.packages.${system}.default];
       };

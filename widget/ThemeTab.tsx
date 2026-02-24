@@ -1,6 +1,6 @@
 import { createState } from "ags"
 import { Gtk, Gdk } from "ags/gtk4"
-import { exec } from "ags/process"
+import { exec, execAsync } from "ags/process"
 
 import { conf, setConf, primaryColor, storePrimaryColor, writeConf } from "./config"
 
@@ -12,7 +12,9 @@ function getCurrentWallpaper(): string | null {
             return output.split("image: ")[1].trim()
         }
     } catch (error) {
-        console.log("swww daemon not running or query failed")
+        // Use execAsync so the daemon runs in the background without blocking the GTK thread
+        execAsync("swww-daemon").catch(() => {})
+        console.log("swww daemon not running or query failed, starting daemon...")
     }
     return null
 }
@@ -37,7 +39,7 @@ function setupWallpaperPolling() {
     
     // Failed, set up retry every 2 seconds if not already polling
     if (!retryInterval) {
-        console.log("Starting wallpapersw polling...")
+        console.log("Starting wallpaper polling...")
         retryInterval = setInterval(() => {
             const path = getCurrentWallpaper()
             if (path) {
@@ -187,46 +189,48 @@ function rgbaToHex(rgba: any): string {
 }
 
 function promptWallpaper() {
-    const path = exec(`zenity --file-selection \
+    // Use execAsync for zenity so it doesn't freeze the AGS UI while the window is open
+    execAsync(["bash", "-c", `zenity --file-selection \
         --title="Select a Wallpaper" \
         --file-filter="Image files | *.jpg *.jpeg *.png *.gif *.pnm *.tga *.tiff *.tif *.webp *.bmp *.farbfeld *.ff *.svg" \
         --file-filter="All files | *" \
-        2>/dev/null`).trim()
-    
-    if (path) {
-        // Try to set wallpaper, but handle if swww isn't running
-        try {
-            exec(`swww img "${path}" --transition-type wipe --transition-fps 120`)
-            storeWallpaperPath(path)
-            // If this succeeds and we were polling, stop it
-            if (retryInterval) {
-                clearInterval(retryInterval)
-                retryInterval = null
-            }
-        } catch (error) {
-            console.error("Failed to set wallpaper with swww:", error)
-            // Try to initialize swww
+        2>/dev/null`])
+        .then((path) => {
+            const cleanPath = path.trim()
+            if (!cleanPath) return;
+
+            // Try to set wallpaper, but handle if swww isn't running
             try {
+                exec(`swww img "${cleanPath}" --transition-type wipe --transition-fps 120`)
+                storeWallpaperPath(cleanPath)
+                // If this succeeds and we were polling, stop it
+                if (retryInterval) {
+                    clearInterval(retryInterval)
+                    retryInterval = null
+                }
+            } catch (error) {
+                console.error("Failed to set wallpaper with swww:", error)
+                // Try to initialize swww daemon asynchronously
                 console.log("Attempting to start swww daemon...")
-                exec("swww init")
+                execAsync("swww-daemon").catch(() => {})
+                
                 // Wait a bit for daemon to start, then try setting wallpaper again
                 setTimeout(() => {
                     try {
-                        exec(`swww img "${path}" --transition-type wipe --transition-fps 120`)
-                        storeWallpaperPath(path)
+                        exec(`swww img "${cleanPath}" --transition-type wipe --transition-fps 120`)
+                        storeWallpaperPath(cleanPath)
                     } catch (e) {
                         console.error("Still failed after starting daemon:", e)
                         // Store the path anyway for when daemon becomes available
-                        storeWallpaperPath(path)
+                        storeWallpaperPath(cleanPath)
                     }
                 }, 500)
-            } catch (initError) {
-                console.error("Failed to start swww daemon:", initError)
-                // Store the path anyway
-                storeWallpaperPath(path)
             }
-        }
-    }
+        })
+        .catch((err) => {
+            // This catches when the user hits "Cancel" in zenity or if zenity fails
+            console.log("Wallpaper selection cancelled or failed.")
+        })
 }
 
 function getAverageColor(imagePath: string): Gdk.RGBA {
