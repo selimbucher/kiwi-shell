@@ -18,11 +18,11 @@ exec(`mkdir -p ${CONFIG_FOLDER}`)
 
 function loadConfig() {
     try {
-        const content = readFile(CONFIG_FILE)
+        const content = readFile(NIXOS_CONFIG_FILE)
         return JSON.parse(content)
     } catch (error) {
         try {
-            const content = readFile(NIXOS_CONFIG_FILE)
+            const content = readFile(CONFIG_FILE)
             return JSON.parse(content)
         } catch (error) {
             exec(`cp ${DEFAULT_CONFIG_FILE} ${CONFIG_FILE}`)
