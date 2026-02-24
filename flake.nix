@@ -138,7 +138,7 @@
             options = {
               primary_color = lib.mkOption {
                 type = lib.types.str;
-                default = "rgb(109, 154, 219)";
+                default = "rgb(190,157,241)";
               };
               bottom_margin = lib.mkOption {
                 type = lib.types.int;
