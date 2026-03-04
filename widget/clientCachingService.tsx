@@ -40,8 +40,8 @@ async function cacheActiveWindow(isVisible: () => boolean) {
 export function initWindowCacher(isVisible: () => boolean) {
     // Take a screenshot 500ms after a window gains focus
     hyprland.connect("notify::focused-client", () => {
-        timeout(500, () => cacheActiveWindow(isVisible))
+        timeout(10, () => cacheActiveWindow(isVisible))
     })
 
-    interval(3000, () => cacheActiveWindow(isVisible))
+    interval(5000, () => cacheActiveWindow(isVisible))
 }
