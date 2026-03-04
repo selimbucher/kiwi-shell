@@ -17,7 +17,7 @@ export const [displayedClients, setDisplayedClients] = createState<any[]>([])
 
 const hyprland = Hyprland.get_default()
 
-// --- MRU (Most Recently Used) Tracking ---
+// MRU (Most Recently Used) Tracking
 let mruAddresses: string[] = []
 
 hyprland.connect("notify::focused-client", () => {
@@ -33,7 +33,6 @@ hyprland.connect("notify::focused-client", () => {
         }
     }
 })
-// -----------------------------------------
 
 // Start the background service
 initWindowCacher(isVisible)
@@ -72,12 +71,10 @@ export function toggleAppSwitcher(cmd: string) {
 function showAppSwitcher() {
   const clients = hyprland.get_clients()
   
-  // Sortiere die aktuellen Fenster anhand der MRU-Historie
   const sortedClients = [...clients].sort((a, b) => {
       const indexA = mruAddresses.indexOf(a.get_address())
       const indexB = mruAddresses.indexOf(b.get_address())
       
-      // Wenn ein Fenster noch nie fokussiert wurde, ans Ende der Liste setzen
       const posA = indexA === -1 ? 9999 : indexA
       const posB = indexB === -1 ? 9999 : indexB
       
@@ -161,8 +158,6 @@ export default function AppSwitcher(gdkmonitor: Gdk.Monitor) {
 }
 
 function Windows() {
-    // Nutzt nun den statischen State anstatt des direkten Live-Bindings,
-    // damit die Reihenfolge stabil bleibt, solange das Menü offen ist.
     return (
         <centerbox class="app-switch-menu">
             <box $type="center" class="app-switch-container" spacing={4}>
