@@ -14,17 +14,22 @@ async function cacheActiveWindow(isVisible: () => boolean) {
     // Don't capture if the switcher is already open or no window is focused
     if (isVisible() || !activeClient) return
 
-    const address = activeClient.get_address()
-    const x = activeClient.get_x()
-    const y = activeClient.get_y()
-    const w = activeClient.get_width()
-    const h = activeClient.get_height()
-    
+    const address = activeClient.get_address()    
     const path = `/tmp/win-cache-${address}.png`
     
     try {
+        // 1. Fetch the raw JSON for the active window to get the brand new 'stableId'
+        const winDataRaw = await execAsync("hyprctl -j activewindow")
+        const winData = JSON.parse(winDataRaw)
+        
+        // 2. Safely extract the stableId
+        const stableId = winData?.stableId
+        if (!stableId) {
+            console.warn(`[Cacher] No stableId found for window ${address}`)
+            return
+        }
         // Capture to a temporary file first
-        await execAsync(`grim -g "${x},${y} ${w}x${h}" ${path}.tmp`)
+        await execAsync(`grim -T ${stableId} ${path}.tmp`)
         // Move it to the final path (atomic operation)
         await execAsync(`mv ${path}.tmp ${path}`)
     } catch (err) {
