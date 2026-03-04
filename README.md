@@ -11,7 +11,7 @@ This app requires a standard **Hyprland** setup and assumes the following servic
 - BlueZ (Bluetooth)
 - Power Profiles Daemon
 - WirePlumber
-- UPower (optional but recommended)
+- UPower (optional but recommended for laptops)
 
 ## Installation
 ### NixOS & Home Manager
