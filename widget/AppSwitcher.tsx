@@ -133,7 +133,7 @@ function executeSelectedAndClose() {
     const selectedClient = clients.find(c => c.get_address() === currentAddr)
     
     if (selectedClient) {
-        console.log(`Selected Client: ${selectedClient.get_title()} (Address: ${currentAddr})`)
+        // console.log(`Selected Client: ${selectedClient.get_title()} (Address: ${currentAddr})`)
         selectedClient.focus()
     }
     
