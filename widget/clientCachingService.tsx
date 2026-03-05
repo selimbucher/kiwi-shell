@@ -1,6 +1,9 @@
 import { execAsync } from "ags/process"
 import Hyprland from "gi://AstalHyprland"
 import { timeout, interval } from "ags/time"
+import Gio from "gi://Gio";
+
+Gio._promisify(Hyprland.Hyprland.prototype, "message_async", "message_finish");
 
 const hyprland = Hyprland.get_default()
 const capturing = new Set<string>()
@@ -8,37 +11,30 @@ const capturing = new Set<string>()
 // Track the previously focused window's address
 let previousAddress: string | null = null
 
-async function cacheWindowByAddress(address: string) {
-    if (!address) return
-    if (capturing.has(address)) return
+async function getStableId(targetAddress) {
     
-    capturing.add(address)
+    // HIGH PERFORMANCE: Talks directly to the UNIX socket in C
+    const rawJson = await hyprland.message_async("j/clients"); 
+    const clients = JSON.parse(rawJson);
     
-    const path = `/tmp/win-cache-${address}.png`
-    const tempPath = `${path}.tmp` 
+    // Astal addresses usually start with "0x", Hyprland JSON might omit it depending on the version.
+    // Make sure you clean the address if needed: targetAddress.replace("0x", "")
+    const client = clients.find(c => c.address.includes(targetAddress.replace("0x", "")));
     
-    try {
-        const clientsRaw = await execAsync("hyprctl -j clients")
-        const clients = JSON.parse(clientsRaw)
+    return client? client.stableId : null;
+}
+
+async function cacheWindow(address) {
+    const stableId = await getStableId(address);
+    
+    if (stableId) {
+        const tempPath = `/tmp/win-cache-${address}.tmp.png`;
+        const finalPath = `/tmp/win-cache-${address}.png`;
         
-        // We strip '0x' just in case)
-        const cleanAddress = address.replace("0x", "")
-        const winData = clients.find((c: any) => c.address.includes(cleanAddress))
-        
-        const stableId = winData?.stableId
-        if (!stableId) return // Silently abort: window was probably closed
-        
-        await execAsync(`grim -T ${stableId} ${tempPath}`)
-        await execAsync(`mv ${tempPath} ${path}`)
-        
-    } catch (err) {
-        const errorMsg = String(err)
-        const isExpected = errorMsg.includes("cannot stat") || errorMsg.includes("not found") || errorMsg.includes("invalid")
-        if (!isExpected) {
-            console.error(`[Cacher] Failed to cache window ${address}:`, err)
-        }
-    } finally {
-        capturing.delete(address)
+        // We still have to spawn grim, but we completely eliminated 
+        // the hyprctl and jq subprocesses shown in the community workaround
+        await execAsync(`grim -T ${stableId} ${tempPath}`);
+        await execAsync(`mv ${tempPath} ${finalPath}`);
     }
 }
 
@@ -47,7 +43,7 @@ export function initWindowCacher(isVisible: () => boolean) {
         if (!client) return
         
         const address = client.get_address()
-        timeout(250, () => cacheWindowByAddress(address))
+        timeout(250, () => cacheWindow(address))
     })
     
     hyprland.connect("notify::focused-client", () => {
@@ -56,17 +52,17 @@ export function initWindowCacher(isVisible: () => boolean) {
 
         if (previousAddress && previousAddress !== currentAddress) {
             let a = previousAddress
-            timeout(10, () => cacheWindowByAddress(a))
+            timeout(10, () => cacheWindow(a))
         }
 
         if (currentAddress) {
-            timeout(100, () => cacheWindowByAddress(currentAddress))
+            timeout(100, () => cacheWindow(currentAddress))
             previousAddress = currentAddress
         }
     })
 
     interval(8000, () => {
         const active = hyprland.get_focused_client()
-        if (active && !isVisible()) cacheWindowByAddress(active.get_address())
+        if (active && !isVisible()) cacheWindow(active.get_address())
     })
 }
