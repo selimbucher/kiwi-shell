@@ -2,8 +2,10 @@ import { execAsync } from "ags/process"
 import Hyprland from "gi://AstalHyprland"
 import { timeout, interval } from "ags/time"
 import Gio from "gi://Gio";
+import { Gdk } from "ags/gtk4"
 
 Gio._promisify(Hyprland.Hyprland.prototype, "message_async", "message_finish");
+Gio._promisify(Gio.Subprocess.prototype, "communicate_async", "communicate_finish");
 
 const hyprland = Hyprland.get_default()
 const capturing = new Set<string>()
@@ -11,7 +13,7 @@ const capturing = new Set<string>()
 // Track the previously focused window's address
 let previousAddress: string | null = null
 
-async function getStableId(targetAddress) {
+export async function getStableId(targetAddress) {
     
     // HIGH PERFORMANCE: Talks directly to the UNIX socket in C
     const rawJson = await hyprland.message_async("j/clients"); 
@@ -38,31 +40,25 @@ async function cacheWindow(address) {
     }
 }
 
-export function initWindowCacher(isVisible: () => boolean) {
-    hyprland.connect("client-added", (_, client) => {
-        if (!client) return
-        
-        const address = client.get_address()
-        timeout(250, () => cacheWindow(address))
-    })
-    
-    hyprland.connect("notify::focused-client", () => {
-        const currentClient = hyprland.get_focused_client()
-        const currentAddress = currentClient ? currentClient.get_address() : null
+export async function captureWindowToTexture(stableId: string) {
+    if (!stableId) return null;
 
-        if (previousAddress && previousAddress !== currentAddress) {
-            let a = previousAddress
-            timeout(10, () => cacheWindow(a))
+    try {
+        // Spawn grim: -T targets the stableId, - outputs to stdout
+        const proc = Gio.Subprocess.new(
+            ["grim", "-T", stableId, "-"], 
+            Gio.SubprocessFlags.STDOUT_PIPE
+        );
+
+        // communicate_async returns [stdoutBytes, stderrBytes]
+        const [stdoutBytes] = await (proc as any).communicate_async(null, null);
+
+        if (stdoutBytes && stdoutBytes.get_size() > 0) {
+            // Create a GTK4 texture directly from the PNG bytes in memory
+            return Gdk.Texture.new_from_bytes(stdoutBytes);
         }
-
-        if (currentAddress) {
-            timeout(100, () => cacheWindow(currentAddress))
-            previousAddress = currentAddress
-        }
-    })
-
-    interval(8000, () => {
-        const active = hyprland.get_focused_client()
-        if (active && !isVisible()) cacheWindow(active.get_address())
-    })
+    } catch (e) {
+        console.error(`Failed to capture: ${e}`);
+    }
+    return null;
 }

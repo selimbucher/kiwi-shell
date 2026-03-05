@@ -4,7 +4,7 @@ import { createState, createEffect, For } from "ags"
 import { monitorFile } from "ags/file"
 import Hyprland from "gi://AstalHyprland"
 import { primaryColor, conf } from "./config"
-import { initWindowCacher } from "./clientCachingService"
+import { getStableId, captureWindowToTexture } from "./clientCachingService"
 import filterApp from "./filterAppIcons"
 
 export const [isVisible, setVisibility] = createState(false)
@@ -35,7 +35,7 @@ hyprland.connect("notify::focused-client", () => {
 })
 
 // Start the background service
-initWindowCacher(isVisible)
+// initWindowCacher(isVisible)
 
 export function toggleAppSwitcher(cmd: string) {
     switch (cmd) {
@@ -173,20 +173,30 @@ export function WindowPreview({ client }: { client: any }) {
     if (!client) return null
 
     const address = client.get_address()
-    const path = `/tmp/win-cache-${address}.png`
     
+    // We keep your texture state
     const [texture, setTexture] = createState<Gdk.Texture | null>(null)
 
-    const updateTexture = () => {
-        try {
-            setTexture(Gdk.Texture.new_from_filename(path))
-        } catch (e) {
-            // Silent catch if file isn't ready
+    // Replace Gdk.Texture.new_from_filename with our memory capture
+    const updateTexture = async () => {
+        const stableId = await getStableId(address);
+        if (stableId) {
+            const memoryTexture = await captureWindowToTexture(stableId);
+            if (memoryTexture) {
+                setTexture(memoryTexture);
+            }
         }
     }
 
-    updateTexture()
-    monitorFile(path, updateTexture)
+    // Wrap the call in an effect that watches `isVisible`
+    createEffect(() => {
+        // This will now run every time `isVisible()` changes to true
+        if (isVisible()) {
+            updateTexture()
+        }
+    })
+
+    // 🛑 monitorFile(path, updateTexture) is COMPLETELY REMOVED!
 
     const container = (
         <box 
@@ -212,7 +222,7 @@ export function WindowPreview({ client }: { client: any }) {
                         contentFit={Gtk.ContentFit.CONTAIN}
                         heightRequest={150}
                         widthRequest={-1} 
-                        paintable={texture}
+                        paintable={texture} // The paintable now receives the memory texture directly
                     />
                 </Gtk.ScrolledWindow>
             </box>
