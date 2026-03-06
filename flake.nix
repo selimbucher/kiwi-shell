@@ -20,6 +20,35 @@
     pname = "desktop";
     entry = "app.ts";
 
+    # ─── app-capture C library ───────────────────────────────────────────────
+    # Compiles app-capture.c into libappcapture.so and generates the
+    # AppCapture-1.0.typelib that GJS imports via  gi://AppCapture
+    app-capture = pkgs.stdenv.mkDerivation {
+      pname = "app-capture";
+      version = "1.0";
+
+      # Point at the app-capture subdirectory inside your repo
+      src = ./app-capture;
+
+      nativeBuildInputs = with pkgs; [
+        meson
+        ninja
+        pkg-config                  # needed so meson can find all deps
+        wayland-scanner             # generates C bindings from XML protocols
+        gobject-introspection       # provides g-ir-scanner + g-ir-compiler
+        wrapGAppsHook4
+      ];
+
+      buildInputs = with pkgs; [
+        wayland                     # wayland-client (pkg name in nixpkgs)
+        wayland-protocols           # the XML protocol definitions
+        gtk4                        # gtk4 runtime
+        gtk4.dev                    # gdk-wayland-4.0 pkg-config file lives here
+        glib                        # gobject-2.0
+        glib.dev                    # pkg-config files for gobject-2.0
+      ];
+    };
+
     astalPackages = with ags.packages.${system}; [
       io
       astal4
@@ -39,9 +68,11 @@
       ++ [
         pkgs.libadwaita
         pkgs.libsoup_3
+        app-capture                 # ← add our library here so wrapGAppsHook4
+                                    #   puts the typelib on GJS_PATH automatically
       ];
 
-    # packet definition
+    # ─── Desktop shell package ───────────────────────────────────────────────
     desktop-package = pkgs.stdenv.mkDerivation {
       name = pname;
       version = "0.2";
@@ -79,11 +110,13 @@
           pkgs.imagemagick
           pkgs.sox
           pkgs.psmisc
-          pkgs.grim
           pkgs.quicksand
           pkgs.whitesur-icon-theme
           pkgs.whitesur-gtk-theme
-        ]}"
+          # grim removed — no longer needed once app-capture is working
+        ]}" \
+          --prefix GI_TYPELIB_PATH : "${app-capture}/lib/girepository-1.0" \
+          --prefix LD_LIBRARY_PATH : "${app-capture}/lib"
 
         # Logging Wrapper
         cat << 'EOF' > $out/bin/${pname}
@@ -93,7 +126,7 @@
         echo "--- Starting Desktop Shell at $(date) ---" | tee -a "$LOG_FILE"
         BIN_PATH_PLACEHOLDER "$@" 2>&1 | tee -a "$LOG_FILE"
         EOF
-        
+
         sed -i "s|BIN_PATH_PLACEHOLDER|$out/bin/.${pname}-core|" $out/bin/${pname}
         chmod +x $out/bin/${pname}
 
@@ -106,20 +139,33 @@
       '';
     };
   in {
-    # the actual package
-    packages.${system}.default = desktop-package;
+    packages.${system} = {
+      default = desktop-package;
+      app-capture = app-capture;
+    };
 
-    # the development shell
+    # ─── Dev shell ───────────────────────────────────────────────────────────
+    # Enter with: nix develop
+    # Then cd app-capture && meson setup build && meson compile -C build
     devShells.${system}.default = pkgs.mkShell {
       buildInputs = [
         (ags.packages.${system}.default.override {
           inherit extraPackages;
         })
         pkgs.nodejs
+        pkgs.pkg-config             # was missing — meson needs this in PATH
+        pkgs.wayland-scanner
+        pkgs.wayland-protocols
+        pkgs.wayland                # was pkgs.wayland-client — wrong name
+        pkgs.gtk4
+        pkgs.glib
+        pkgs.gobject-introspection
+        pkgs.meson
+        pkgs.ninja                  # meson's default backend
+        pkgs.gjs
       ];
     };
 
-    # module for the deterministic config
     homeManagerModules.default = {
       config,
       lib,
@@ -154,9 +200,7 @@
       };
 
       config = lib.mkIf cfg.enable {
-        # create the config
         xdg.configFile."desktop/initial-config.json".text = builtins.toJSON cfg.settings;
-
         home.packages = [self.packages.${system}.default];
       };
     };

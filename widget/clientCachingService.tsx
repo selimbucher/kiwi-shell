@@ -1,64 +1,77 @@
-import { execAsync } from "ags/process"
-import Hyprland from "gi://AstalHyprland"
-import { timeout, interval } from "ags/time"
-import Gio from "gi://Gio";
 import { Gdk } from "ags/gtk4"
+import AppCapture from "gi://AppCapture?version=1.0"
 
-Gio._promisify(Hyprland.Hyprland.prototype, "message_async", "message_finish");
-Gio._promisify(Gio.Subprocess.prototype, "communicate_async", "communicate_finish");
+// ─── Shared capturer instance ─────────────────────────────────────────────────
+// One instance per process. Initialises on construction: binds Wayland globals,
+// enumerates all live windows, and maps each to its 64-bit Hyprland address.
+const capturer = new AppCapture.Capture()
 
-const hyprland = Hyprland.get_default()
-const capturing = new Set<string>()
+// ─── Concurrency queue ────────────────────────────────────────────────────────
+// Only one capture runs at a time. Prevents simultaneous memfd allocations
+// from piling up faster than SpiderMonkey's GC can reclaim them.
+let activeCapture = false
+const captureQueue: Array<() => void> = []
 
-// Track the previously focused window's address
-let previousAddress: string | null = null
-
-export async function getStableId(targetAddress) {
-    
-    // HIGH PERFORMANCE: Talks directly to the UNIX socket in C
-    const rawJson = await hyprland.message_async("j/clients"); 
-    const clients = JSON.parse(rawJson);
-    
-    // Astal addresses usually start with "0x", Hyprland JSON might omit it depending on the version.
-    // Make sure you clean the address if needed: targetAddress.replace("0x", "")
-    const client = clients.find(c => c.address.includes(targetAddress.replace("0x", "")));
-    
-    return client? client.stableId : null;
+function drainQueue() {
+    if (activeCapture || captureQueue.length === 0) return
+    const next = captureQueue.shift()!
+    next()
 }
 
-async function cacheWindow(address) {
-    const stableId = await getStableId(address);
-    
-    if (stableId) {
-        const tempPath = `/tmp/win-cache-${address}.tmp.png`;
-        const finalPath = `/tmp/win-cache-${address}.png`;
-        
-        // We still have to spawn grim, but we completely eliminated 
-        // the hyprctl and jq subprocesses shown in the community workaround
-        await execAsync(`grim -T ${stableId} ${tempPath}`);
-        await execAsync(`mv ${tempPath} ${finalPath}`);
-    }
+// ─── captureWindowToTexture ───────────────────────────────────────────────────
+// Pass the raw Hyprland address string from client.get_address().
+// Accepts "0x564f60266bd0" or "564f60266bd0" — the C side handles both.
+// Returns a GdkTexture on success, or null on failure / timeout.
+export function captureWindowToTexture(address: string): Promise<Gdk.Texture | null> {
+    return new Promise((resolve) => {
+        captureQueue.push(() => {
+            activeCapture = true
+            let signalId: number | null = null
+
+            const finish = (result: Gdk.Texture | null) => {
+                activeCapture = false
+                resolve(result)
+                Promise.resolve().then(drainQueue)
+            }
+
+            const timeoutId = setTimeout(() => {
+                if (signalId !== null) capturer.disconnect(signalId)
+                console.error(`AppCapture: timeout for address ${address}`)
+                finish(null)
+            }, 2000)
+
+            signalId = capturer.connect(
+                "frame-ready",
+                (_obj: any, bytes: any, width: number, height: number, stride: number) => {
+                    capturer.disconnect(signalId!)
+                    clearTimeout(timeoutId)
+                    let texture: Gdk.Texture | null = null
+                    try {
+                        texture = buildTexture(bytes, width, height, stride)
+                    } catch (e) {
+                        console.error(`AppCapture: buildTexture failed: ${e}`)
+                    }
+                    finish(texture)
+                }
+            )
+
+            // Pass address as-is — C accepts both "0x..." and bare hex
+            capturer.capture_by_handle(address)
+        })
+        drainQueue()
+    })
 }
 
-export async function captureWindowToTexture(stableId: string) {
-    if (!stableId) return null;
-
-    try {
-        // Spawn grim: -T targets the stableId, - outputs to stdout
-        const proc = Gio.Subprocess.new(
-            ["grim", "-T", stableId, "-"], 
-            Gio.SubprocessFlags.STDOUT_PIPE
-        );
-
-        // communicate_async returns [stdoutBytes, stderrBytes]
-        const [stdoutBytes] = await (proc as any).communicate_async(null, null);
-
-        if (stdoutBytes && stdoutBytes.get_size() > 0) {
-            // Create a GTK4 texture directly from the PNG bytes in memory
-            return Gdk.Texture.new_from_bytes(stdoutBytes);
-        }
-    } catch (e) {
-        console.error(`Failed to capture: ${e}`);
-    }
-    return null;
+// ─── buildTexture ─────────────────────────────────────────────────────────────
+function buildTexture(bytes: any, width: number, height: number, stride: number): Gdk.Texture {
+    const builder = new Gdk.MemoryTextureBuilder()
+    builder.set_bytes(bytes)
+    builder.set_width(width)
+    builder.set_height(height)
+    builder.set_stride(stride)
+    // Hyprland exports WL_SHM_FORMAT_XRGB8888.
+    // On little-endian x86 this is B-G-R-X in memory.
+    // If previews look colour-inverted, swap to R8G8B8A8_PREMULTIPLIED.
+    builder.set_format(Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED)
+    return builder.build()
 }
