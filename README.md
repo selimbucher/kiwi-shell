@@ -102,6 +102,9 @@ desktop-ctl apps confirm
 ```bash
 desktop-ctl apps close
 ```
+
+Recreating the usual keybinds for an app switcher can be a bit tricky. Check out this short [guide](./docs/AppSwitcherKeybinds.md).
+
 ## Icon Theme and Font
 To recreate the clean look in the screenshots you need to install:
 - **Quicksand** (Font)
