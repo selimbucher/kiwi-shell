@@ -71,7 +71,6 @@ function buildTexture(bytes: any, width: number, height: number, stride: number)
     builder.set_stride(stride)
     // Hyprland exports WL_SHM_FORMAT_XRGB8888.
     // On little-endian x86 this is B-G-R-X in memory.
-    // If previews look colour-inverted, swap to R8G8B8A8_PREMULTIPLIED.
     builder.set_format(Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED)
     return builder.build()
 }
