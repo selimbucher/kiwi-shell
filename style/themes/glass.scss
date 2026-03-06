@@ -10,7 +10,7 @@ window.Bar.theme-glass {
     }
 }
 
-.theme-glass .indicator-bar .indicator-box {
+.theme-glass .indicator-bar .indicator-box, .theme-glass .app-switch-container {
   background-color: rgba(0, 0, 0, 0.9);
     box-shadow:
       rgba(255, 255, 255, 0.05) 0px 6px 24px 0px,
