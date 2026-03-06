@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, createEffect, For } from "ags"
+import { createState, createEffect, For, createBinding } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { primaryColor, conf } from "./config"
 import { captureWindowToTexture } from "./clientCachingService"
@@ -140,6 +140,8 @@ export function WindowPreview({ client }: { client: any }) {
         })
     })
 
+    const titleBinding = createBinding(client, "title")
+
     const container = (
         <box
             orientation={Gtk.Orientation.VERTICAL}
@@ -152,7 +154,7 @@ export function WindowPreview({ client }: { client: any }) {
             >
                 <box>
                     <AppIcon client={client} />
-                    <label label={client.get_title()} />
+                    <label label={titleBinding} />
                 </box>
             </scrolledwindow>
 
@@ -193,6 +195,7 @@ export function AppIcon({ client }: { client: any }) {
         <Gtk.Image
             iconName={filterApp(iconName)}
             pixelSize={24}
+            class="switcher-preview-icon"
         />
     )
 }
