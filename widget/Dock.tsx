@@ -136,40 +136,56 @@ export function EdgeSensor(gdkmonitor: Gdk.Monitor) {
 }
 
 function DockBar(){
+  const pinnedBinding = createComputed(get => get(list))
+  
   const unpinnedList = createComputed(get => {
     const clients = get(createBinding(hyprland, "clients"))
+    const pinnedEntries = new Set(get(list).map(app => app.entry))
+    
     const unpinnedClients = clients.filter(client => {
-      const pinned = get(list).map(app => app.entry)
-      return !pinned.includes(client["initial-class"]+".desktop")
+      return !pinnedEntries.has(client["initial-class"] + ".desktop")
     })
+    
     const seen = new Set()
-    const unpinnedApps = unpinnedClients.reduce((acc, client) => {
+    return unpinnedClients.reduce((acc, client) => {
       const icon = filterApp(client["initial-class"])
       if (seen.has(icon)) return acc
       seen.add(icon)
       acc.push({
-        "entry": (client["initial-class"]+".desktop"),
+        "entry": (client["initial-class"] + ".desktop"),
         "icon": icon,
         "name": client.title.split("- ").at(-1),
         "pinned": false
       })
       return acc
     }, [])
-    return unpinnedApps;
   })
+
   return (
-      <box class="dock-bar">
-        <box $type="center" class="dock-box" orientation={Gtk.Orientation.HORIZONTAL}>
-          <For each={list}>
-              {(app) => <AppIcon app={app} />}
+    <box class="dock-bar">
+      <box $type="center" class="dock-box" orientation={Gtk.Orientation.HORIZONTAL}>
+        <box>
+          <For each={pinnedBinding}>
+            {(app) => <AppIcon app={app} />}
           </For>
-          <box vexpand={true} class="dock-spacer" visible={unpinnedList.as(list => list.length > 0)}/>
+        </box>
+        <box
+          vexpand={true}
+          class="dock-spacer"
+          visible={unpinnedList.as(list => list.length > 0)}
+        />
+        <box>
           <For each={unpinnedList}>
-              {(app) => <AppIcon app={app} />}
+            {(app) => <AppIcon app={app} />}
           </For>
         </box>
       </box>
-    )
+    </box>
+  )
+}
+
+function DockSpacer(){
+  
 }
 
 function AppIcon({ app }){
