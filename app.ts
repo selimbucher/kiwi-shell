@@ -2,7 +2,7 @@ import app from "ags/gtk4/app"
 import style from "./style.scss"
 import Bar from "./widget/Bar"
 import IndicatorBar, { showIndicator } from "./widget/IndicatorBar"
-// import AppSwitcher, { toggleAppSwitcher } from "./widget/AppSwitcher"
+import AppSwitcher, { toggleAppSwitcher } from "./widget/AppSwitcher"
 import Dock, { EdgeSensor } from "./widget/Dock"
 import { Gtk } from "ags/gtk4"
 
