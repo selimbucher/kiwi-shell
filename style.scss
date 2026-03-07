@@ -9,6 +9,7 @@ $bg-color: #{"@theme_bg_color"};
 @use 'style/indicatorBar.scss';
 @use 'style/tray.scss';
 @use 'style/appSwitcher.scss';
+@use 'style/dock.scss';
 
 @use 'style/themes/glass.scss';
 
@@ -18,7 +19,7 @@ window.Bar {
   font-family: 'Quicksand';
 
   > .centerbox {
-    margin: 8px;
+    margin: 4px;
     margin-bottom: var(--bar-bottom-margin);
   }
 

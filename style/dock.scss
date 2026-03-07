@@ -1,0 +1,103 @@
+.Dock {
+    padding-top: 2px;
+}
+
+.dock-box {
+    background: rgba(39, 39, 39, 0.7);
+    padding: 8px;
+    border-radius: 18px;
+    margin-bottom: 5px;
+
+    box-shadow:
+      rgba(0, 0, 0, 0.5) 0px 10px 18px 0px,
+}
+
+.dock-app-icon {
+    padding: 0;
+    filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3));
+}
+
+.app-launch-button {
+    padding: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
+
+    &:hover {
+        $shift: -6px;
+        .dock-app-icon {
+            transform: translateY($shift);
+            filter: drop-shadow(0 6px 5px rgba(0, 0, 0, 0.3));
+        }
+    }
+}
+
+.dock-app-icon, .app-context-menu {
+    transition: all 180ms ease-out;
+}
+
+.client-dots {
+    transform: translateY(4px);
+}
+
+.active-client-dot {
+    padding: 2.5px;
+    border-radius: 100%;
+    background-color: #fff;
+}
+
+.app-context-menu {
+    margin-bottom: 4.5px;
+    > arrow {
+        background-color: rgba(0, 0, 0, 0.93);
+        border: none;
+    }
+    contents {
+        background-color: rgba(0, 0, 0, 0.93);
+        border: none;
+        border-top: #1a1a1a 2px solid;
+        box-shadow: unset;
+        padding: 6px 4px;
+        margin-right: 0;
+        
+        border-radius: 10px;
+    }
+
+    button {
+        font-weight: normal;
+        background: none;
+        border: none;
+        box-shadow: none;
+        border-radius: 4px;
+        padding: 2px 4px;
+        padding-right: 8px;
+
+        &:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        label {
+            // transform: translateY(1px);
+            margin-left: 2px;
+        }
+    }
+
+    .dock-context-icon {
+        margin: 0 6px;
+    }
+}
+
+.menu-spacer {
+    border-bottom: 1px rgba(255, 255, 255, 0.2) solid;
+    margin: 6px;
+    margin-top: 0;
+    margin-bottom: 4px;
+    padding-top: 4px;
+
+}
+
+.dock-spacer {
+    border-right: 1px rgba(255, 255, 255, 0.1) solid;
+    margin-right: 4px;
+    padding-right: 4px;
+}

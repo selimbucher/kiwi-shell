@@ -113,10 +113,57 @@ export default function ThemeTab({visible}) {
                 spacing={6}
             >
                 <box halign={Gtk.Align.CENTER}>
-                <ThemeSelector /> <ColorPicker />
+                    <ThemeSelector /> <ColorPicker />
+                </box>
+            </box>
+            <box class="large-header">
+                Dock Style
+            </box>
+                <box
+                class="theme-settings"
+                orientation={Gtk.Orientation.VERTICAL}
+                spacing={6}
+                >
+                <box halign={Gtk.Align.CENTER}>
+                    <DockSelector />
                 </box>
             </box>
         </box>
+    )
+}
+
+function DockSelector() {
+    const options = ["Disabled", "Default", "Auto-Hide"];
+    const myOptions = Gtk.StringList.new(options);
+
+    // Ermittelt den Index des aktuellen Themes aus der Konfiguration.
+    // Fallback auf 0 ("Default"), falls der Wert nicht im Array existiert.
+    const currentTheme = conf().dock || "default";
+    const foundIndex = options.findIndex(opt => opt.toLowerCase() === currentTheme);
+    const defaultIndex = foundIndex !== -1 ? foundIndex : 0;
+
+    return (
+        <Gtk.DropDown
+            model={myOptions}
+            selected={defaultIndex} // Setzt den dynamisch berechneten Index
+            enableSearch={false}
+            onNotifySelected={(self) => {
+                const selectedItem = self.get_selected_item();
+                
+                // Kurzer Sicherheitscheck, falls das Item noch nicht geladen ist
+                if (!selectedItem) return; 
+                
+                const textValue = selectedItem.get_string();
+                
+                print(`Selected Dock: ${textValue}`);
+                setConf({ 
+                    ...conf(), 
+                    dock: textValue.toLowerCase()
+                });
+                
+                writeConf();
+            }}
+        />
     )
 }
 

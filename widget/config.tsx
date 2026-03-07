@@ -3,8 +3,9 @@ import { createState } from "ags"
 import { exec } from "ags/process"
 import { Gdk } from "ags/gtk4"
 import App from "ags/app"
+import GLib from "gi://GLib"
 
-const HOME = exec('bash -c "echo $HOME"')
+const HOME = GLib.getenv("HOME")
 const CONFIG_FOLDER = `${HOME}/.config/desktop`
 const CONFIG_FILE = `${CONFIG_FOLDER}/config.json`
 const HYPR_FILE = `${CONFIG_FOLDER}/hypr.conf`
