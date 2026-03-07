@@ -1,7 +1,7 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createBinding, For } from "ags"
-import { readFile, writeFileAsync, monitorFile } from "ags/file"
+import { readFile, writeFileAsync } from "ags/file"
 import { conf, primaryColor } from "./config"
 import GLib from "gi://GLib"
 import GioUnix from "gi://GioUnix"
@@ -11,13 +11,16 @@ import filterApp from "./filterAppIcons"
 import Apps from "gi://AstalApps"
 import Hyprland from "gi://AstalHyprland"
 
+const DOCK_HIDE_TIMEOUT = 600
+const DOCK_HIDE_TIMEOUT_EDGE = 1200
+
 const hyprland = Hyprland.get_default()
 
 const HOME = GLib.getenv("HOME")
 const APPLIST_FILE = `${HOME}/.config/desktop/dock-apps.json`
 
 const initialAppList = JSON.parse(readFile(APPLIST_FILE))
-export const [list, setList] = createState(initialAppList)
+const [list, setList] = createState(initialAppList)
 
 async function saveList() {
     const currentList = list()
@@ -32,6 +35,31 @@ async function saveList() {
     }
 }
 
+const [dockTrigger, setDockTrigger] = createState(false)
+const [dockHovered, setDockHovered] = createState(false)
+let hideTimeout: number | null = null
+let leaveTimeout: number | null = null
+
+const showDock = createComputed(get => {
+  const config = get(conf)
+  const mode = config.dock
+  const trigger = get(dockTrigger)
+  const hovered = get(dockHovered)
+
+  if (mode == "disabled") return false
+  if (mode != "auto-hide") return true
+  if (trigger || hovered) return true
+
+  const clients = get(createBinding(hyprland, "clients"))
+  const activeWorkspace = get(createBinding(hyprland, "focusedWorkspace"))
+  const activeId = activeWorkspace?.id
+
+  const hastiledWindow = clients.some(client =>
+    client.workspace.id === activeId && !client.floating
+  )
+
+  return !hastiledWindow
+})
 
 export default function Dock(gdkmonitor: Gdk.Monitor) {
 
@@ -48,16 +76,61 @@ export default function Dock(gdkmonitor: Gdk.Monitor) {
       exclusivity={conf.as(conf =>
         conf.dock == "auto-hide" ? Astal.Exclusivity.NORMAL : Astal.Exclusivity.EXCLUSIVE
       )}
-      anchor={
-        Astal.WindowAnchor.BOTTOM | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT
-      }
-      visible={conf.as(conf =>
-        conf.dock != "disabled"
-    )}
+      anchor={Astal.WindowAnchor.BOTTOM}
+      visible={showDock}
       application={app}
       layer={Astal.Layer.TOP}
+      $={(self) => {
+        const motionController = new Gtk.EventControllerMotion()
+        motionController.connect("enter", () => {
+          if (leaveTimeout) {
+            clearTimeout(leaveTimeout)
+            leaveTimeout = null
+          }
+          setDockHovered(true)
+        })
+        motionController.connect("leave", () => {
+          leaveTimeout = setTimeout(() => {
+            setDockHovered(false)
+            leaveTimeout = null
+          }, DOCK_HIDE_TIMEOUT)
+        })
+        self.add_controller(motionController)
+      }}
     >
       <DockBar />
+    </window>
+  )
+}
+
+export function EdgeSensor(gdkmonitor: Gdk.Monitor) {
+  return (
+    <window
+      name="ags-dock-sensor"
+      class="edge-sensor-bottom"
+      gdkmonitor={gdkmonitor}
+      anchor={Astal.WindowAnchor.LEFT | Astal.WindowAnchor.BOTTOM | Astal.WindowAnchor.RIGHT}
+      exclusivity={Astal.Exclusivity.NORMAL}
+      layer={Astal.Layer.OVERLAY}
+      application={app}
+      visible={true}
+      $={(self) => {
+        const motionController = new Gtk.EventControllerMotion()
+        motionController.connect("enter", () => {
+          if (hideTimeout) {
+            clearTimeout(hideTimeout)
+            hideTimeout = null
+          }
+          setDockTrigger(true)
+          hideTimeout = setTimeout(() => {
+            setDockTrigger(false)
+            hideTimeout = null
+          }, DOCK_HIDE_TIMEOUT_EDGE)
+        })
+        self.add_controller(motionController)
+      }}
+    >
+      <box css="min-height: 1px;" ></box>
     </window>
   )
 }
@@ -85,7 +158,7 @@ function DockBar(){
     return unpinnedApps;
   })
   return (
-      <centerbox class="dock-bar">
+      <box class="dock-bar">
         <box $type="center" class="dock-box" orientation={Gtk.Orientation.HORIZONTAL}>
           <For each={list}>
               {(app) => <AppIcon app={app} />}
@@ -95,7 +168,7 @@ function DockBar(){
               {(app) => <AppIcon app={app} />}
           </For>
         </box>
-      </centerbox>
+      </box>
     )
 }
 

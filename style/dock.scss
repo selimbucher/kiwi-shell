@@ -2,6 +2,10 @@
     padding-top: 2px;
 }
 
+.dock-bar {
+    padding: 0 12px;
+}
+
 .dock-box {
     background: rgba(39, 39, 39, 0.7);
     padding: 8px;
@@ -9,7 +13,7 @@
     margin-bottom: 5px;
 
     box-shadow:
-      rgba(0, 0, 0, 0.5) 0px 10px 18px 0px,
+      rgba(0, 0, 0, 0.5) 0px 8px 12px 0px,
 }
 
 .dock-app-icon {
@@ -30,6 +34,10 @@
             filter: drop-shadow(0 6px 5px rgba(0, 0, 0, 0.3));
         }
     }
+}
+
+.edge-sensor-bottom {
+    background: red;
 }
 
 .dock-app-icon, .app-context-menu {
