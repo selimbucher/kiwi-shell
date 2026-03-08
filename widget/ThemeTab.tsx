@@ -133,7 +133,7 @@ export default function ThemeTab({visible}) {
             <label label="Home Folder" $type="start"/>
             <Gtk.Switch
                 $type="end"
-                active={conf().dock_home !== false}
+                active={conf().dock_home === true}
                 onNotifyActive={(self) => {
                     setConf({ ...conf(), dock_home: self.active })
                     writeConf()
@@ -146,7 +146,7 @@ export default function ThemeTab({visible}) {
             <label label="Trash" $type="start"/>
             <Gtk.Switch
                 $type="end"
-                active={conf().dock_trash !== false}
+                active={conf().dock_trash === true}
                 onNotifyActive={(self) => {
                     setConf({ ...conf(), dock_trash: self.active })
                     writeConf()
