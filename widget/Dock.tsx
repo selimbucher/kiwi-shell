@@ -246,7 +246,9 @@ function DockBar() {
                 <box
                     vexpand={true}
                     class="dock-spacer"
-                    visible={unpinnedList.as(list => list.length > 0)}
+                    visible={createComputed(get =>
+                        get(list).length > 0 && get(unpinnedList).length > 0
+                    )}
                 />
                 <box>
                     <For each={unpinnedList}>
@@ -256,7 +258,9 @@ function DockBar() {
                 <box
                     vexpand={true}
                     class="dock-spacer"
-                    visible={conf.as(conf => conf.dock_home == true || conf.dock_trash == true)}
+                    visible={createComputed(get =>
+                        (get(list).length > 0 || get(unpinnedList).length > 0) && (get(conf).dock_home == true || get(conf).dock_trash == true)
+                    )}
                 />
                 <HomeFolderButton />
                 <TrashButton />
