@@ -70,6 +70,9 @@ const [menuOpen, setMenuOpen] = createState(false)
 let hideTimeout: number | null = null
 let leaveTimeout: number | null = null
 
+const clients = createBinding(hyprland, "clients")
+const activeWorkspace = createBinding(hyprland, "focusedWorkspace")
+
 const showDock = createComputed(get => {
     const config = get(conf)
     const mode = config.dock
@@ -81,11 +84,11 @@ const showDock = createComputed(get => {
     if (mode != "auto-hide") return true
     if (trigger || hovered || hasMenu) return true
 
-    const clients = get(createBinding(hyprland, "clients"))
-    const activeWorkspace = get(createBinding(hyprland, "focusedWorkspace"))
-    const activeId = activeWorkspace?.id
+    
+    
+    const activeId = get(activeWorkspace)?.id
 
-    const hastiledWindow = clients.some(client => {
+    const hastiledWindow = get(clients).some(client => {
         const floating = get(createBinding(client, "floating"))
         return client.workspace.id === activeId && !floating
     })
