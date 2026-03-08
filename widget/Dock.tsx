@@ -20,7 +20,14 @@ const hyprland = Hyprland.get_default()
 const HOME = GLib.getenv("HOME")
 const APPLIST_FILE = `${HOME}/.config/desktop/dock-apps.json`
 
-const initialAppList = JSON.parse(readFile(APPLIST_FILE))
+let initialAppList
+
+try {
+    initialAppList = JSON.parse(readFile(APPLIST_FILE))
+} catch (error) {
+    initialAppList = []
+}
+
 const [list, setList] = createState(initialAppList)
 
 async function saveList() {
@@ -33,6 +40,29 @@ async function saveList() {
         console.error("Failed to save config:", error)
     }
 }
+
+const unpinnedList = createComputed(get => {
+    const clients = get(createBinding(hyprland, "clients"))
+    const pinnedEntries = new Set(get(list).map(app => app.entry))
+
+    const unpinnedClients = clients.filter(client => {
+        return !pinnedEntries.has(client["initial-class"] + ".desktop")
+    })
+
+    const seen = new Set()
+    return unpinnedClients.reduce((acc, client) => {
+        const icon = filterApp(client["initial-class"])
+        if (seen.has(icon)) return acc
+        seen.add(icon)
+        acc.push({
+            "entry": (client["initial-class"] + ".desktop"),
+            "icon": icon,
+            "name": client.title.split("- ").at(-1),
+            "pinned": false
+        })
+        return acc
+    }, [])
+})
 
 function openUri(uri: string) {
     GLib.spawn_command_line_async(`nautilus --new-window ${uri}`)
@@ -75,6 +105,9 @@ const activeWorkspace = createBinding(hyprland, "focusedWorkspace")
 
 const showDock = createComputed(get => {
     const config = get(conf)
+    if (get(list).length + get(unpinnedList).length == 0)
+        return false
+
     const mode = config.dock
     const trigger = get(dockTrigger)
     const hovered = get(dockHovered)
@@ -201,29 +234,6 @@ export function EdgeSensor(gdkmonitor: Gdk.Monitor) {
 
 function DockBar() {
     const pinnedBinding = createComputed(get => get(list))
-
-    const unpinnedList = createComputed(get => {
-        const clients = get(createBinding(hyprland, "clients"))
-        const pinnedEntries = new Set(get(list).map(app => app.entry))
-
-        const unpinnedClients = clients.filter(client => {
-            return !pinnedEntries.has(client["initial-class"] + ".desktop")
-        })
-
-        const seen = new Set()
-        return unpinnedClients.reduce((acc, client) => {
-            const icon = filterApp(client["initial-class"])
-            if (seen.has(icon)) return acc
-            seen.add(icon)
-            acc.push({
-                "entry": (client["initial-class"] + ".desktop"),
-                "icon": icon,
-                "name": client.title.split("- ").at(-1),
-                "pinned": false
-            })
-            return acc
-        }, [])
-    })
 
     return (
         <box class="dock-bar">
