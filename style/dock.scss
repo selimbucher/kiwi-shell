@@ -105,3 +105,14 @@
     margin-right: 4px;
     padding-right: 4px;
 }
+
+.edge-sensor-bottom {
+    background: rgba(0, 0, 0, 0.01);
+}
+
+.app-launch-button.drag-hover {
+    .dock-app-icon {
+        // transform: translateY(-8px);
+        filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.8));
+    }
+}

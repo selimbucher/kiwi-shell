@@ -119,14 +119,42 @@ export default function ThemeTab({visible}) {
             <box class="large-header">
                 Dock Style
             </box>
-                <box
+            <box
                 class="theme-settings"
                 orientation={Gtk.Orientation.VERTICAL}
                 spacing={6}
-                >
+            >
                 <box halign={Gtk.Align.CENTER}>
                     <DockSelector />
                 </box>
+                <box halign={Gtk.Align.FILL} spacing={12} orientation={Gtk.Orientation.VERTICAL} hexpand={true}>
+    <box spacing={6} class="option-row" hexpand={true}>
+        <centerbox hexpand={true}>
+            <label label="Home Folder" $type="start"/>
+            <Gtk.Switch
+                $type="end"
+                active={conf().dock_home !== false}
+                onNotifyActive={(self) => {
+                    setConf({ ...conf(), dock_home: self.active })
+                    writeConf()
+                }}
+            />
+        </centerbox>
+    </box>
+    <box spacing={6} class="option-row" hexpand={true}>
+        <centerbox hexpand={true}>
+            <label label="Trash" $type="start"/>
+            <Gtk.Switch
+                $type="end"
+                active={conf().dock_trash !== false}
+                onNotifyActive={(self) => {
+                    setConf({ ...conf(), dock_trash: self.active })
+                    writeConf()
+                }}
+            />
+        </centerbox>
+    </box>
+</box>
             </box>
         </box>
     )

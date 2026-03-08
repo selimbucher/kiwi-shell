@@ -2,5 +2,7 @@
   "primary_color": "rgb(190,157,241)",
   "bottom_margin": 2,
   "theme": "dark",
-  "dock": "default"
+  "dock": "default",
+  "dock_home": true,
+  "dock_trash": true
 }
