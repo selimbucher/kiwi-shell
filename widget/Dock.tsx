@@ -124,7 +124,7 @@ const showDock = createComputed(get => {
 
     const hastiledWindow = get(clients).some(client => {
         const floating = get(createBinding(client, "floating"))
-        return client.workspace.id === activeId && !floating
+        return client.workspace.id === activeId /* && !floating */
     })
 
     return !hastiledWindow
