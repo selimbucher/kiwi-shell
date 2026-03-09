@@ -6,12 +6,12 @@ import App from "ags/app"
 import GLib from "gi://GLib"
 
 const HOME = GLib.getenv("HOME")
-const CONFIG_FOLDER = `${HOME}/.config/desktop`
+const CONFIG_FOLDER = `${HOME}/.config/kiwi-shell`
 const CONFIG_FILE = `${CONFIG_FOLDER}/config.json`
 const HYPR_FILE = `${CONFIG_FOLDER}/hypr.conf`
 
 const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
-const DEFAULT_CONFIG_FILE = `${ROOT}/defaultConfig.json`
+const DEFAULT_CONFIG_FILE = `${ROOT}/src/kiwi-shell/defaultConfig.json`
 const NIXOS_CONFIG_FILE = `${CONFIG_FOLDER}/initial-config.json`
 
 // Ensure config directory exists once at startup
