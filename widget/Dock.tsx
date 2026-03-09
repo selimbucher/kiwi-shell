@@ -14,6 +14,7 @@ import Hyprland from "gi://AstalHyprland"
 
 const DOCK_HIDE_TIMEOUT = 600
 const DOCK_HIDE_TIMEOUT_EDGE = 1200
+const JUMP_ANIMATION_CLASS_TIMEOUT = 400
 
 const hyprland = Hyprland.get_default()
 
@@ -133,7 +134,10 @@ export default function Dock(gdkmonitor: Gdk.Monitor) {
     return (
         <window
             css={primaryColor(hex =>
-                `--primary: ${hex};`
+                `
+                --primary: ${hex};
+                --jumptime: ${JUMP_ANIMATION_CLASS_TIMEOUT}ms;
+                `
             )}
             name="ags-dock"
             class={conf.as(conf =>
@@ -282,6 +286,7 @@ function HomeFolderButton() {
     ].filter(d => GLib.file_test(d.path, GLib.FileTest.IS_DIR))
 
     let popover: Gtk.Popover
+    const [jumping, setJumping] = createState(false)
 
     const menu = (
         <popover
@@ -313,8 +318,12 @@ function HomeFolderButton() {
     return (
         <button
             visible={conf.as(conf => conf.dock_home == true)}
-            class="app-launch-button"
-            onclicked={() => openPath(HOME)}
+            class={jumping.as(isJumping => isJumping ? "app-launch-button jumping" : "app-launch-button")}
+            onclicked={() => {
+                setJumping(true)
+                setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT+100)
+                openPath(HOME)
+            }}
             $={(self) => {
                 const gesture = new Gtk.GestureClick()
                 gesture.set_button(3)
@@ -350,6 +359,7 @@ function TrashButton() {
     }
 
     const [trashEmpty, setTrashEmpty] = createState(isTrashEmpty())
+    const [jumping, setJumping] = createState(false)
 
     const trashDir = Gio.File.new_for_path(TRASH_FILES)
     const monitor = trashDir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
@@ -401,8 +411,12 @@ function TrashButton() {
     return (
         <button
             visible={conf.as(conf => conf.dock_trash == true)}
-            class="app-launch-button"
-            onclicked={() => openUri("trash:///")}
+            class={jumping.as(isJumping => isJumping ? "app-launch-button jumping" : "app-launch-button")}
+            onclicked={() => {
+                setJumping(true)
+                setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT+100)
+                openUri("trash:///")
+            }}
             $={(self) => {
                 const gesture = new Gtk.GestureClick()
                 gesture.set_button(3)
@@ -455,6 +469,7 @@ function AppIcon({ app }) {
     const application = GioUnix.DesktopAppInfo.new(app.entry)
 
     const [pinned, setPinned] = createState(app.pinned !== false)
+    const [jumping, setJumping] = createState(false)
 
     const clientsBinding = createComputed((get => {
         const clients = get(createBinding(hyprland, "clients"))
@@ -482,10 +497,13 @@ function AppIcon({ app }) {
     return (
         <button
             onclicked={() => {
+
                 const client = clientsBinding()[0]
                 if (client)
                     client.focus()
                 else
+                    setJumping(true)
+                    setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT+100)
                     application.launch([], null)
             }}
             $={(self) => {
@@ -496,7 +514,7 @@ function AppIcon({ app }) {
                 })
                 self.add_controller(gesture)
             }}
-            class="app-launch-button"
+            class={jumping.as(isJumping => isJumping ? "app-launch-button jumping" : "app-launch-button")}
         >
             <box orientation={Gtk.Orientation.VERTICAL}>
                 {menu}

@@ -116,3 +116,15 @@
         filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.8));
     }
 }
+
+@keyframes dock-jump {
+    0%   { transform: translateY(0); }
+    50%  { transform: translateY(-4px); }
+    100% { transform: translateY(0); }
+}
+
+$jumptime: var(--jumptime);
+
+.jumping {
+    animation: dock-jump $jumptime forwards;
+}
