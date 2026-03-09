@@ -501,10 +501,12 @@ function AppIcon({ app }) {
                 const client = clientsBinding()[0]
                 if (client)
                     client.focus()
-                else
+                else {
                     setJumping(true)
                     setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT+100)
                     application.launch([], null)
+                }
+                    
             }}
             $={(self) => {
                 const gesture = new Gtk.GestureClick()
