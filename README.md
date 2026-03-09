@@ -82,17 +82,8 @@ $primaryColor = rgba(179,165,231,0.6)
 ```
 You may want to include this in your hyprland config to match the border color of active windows.
 ### Commands
-You can display volume and brightness indicators with
-```bash
-kiwictl show volume
-```
-```bash
-kiwictl show brightness
-```
-This will display the volume and brightness for a few seconds in a small widget at the bottom.
-These commands should be binded to the corresponding buttons on the keyboard.
 
-For controling the Alt+Tab menu, you can use the following commands:
+To controll the Alt+Tab menu, you can use the following commands:
 ```bash
 kiwictl apps open-next
 ```
