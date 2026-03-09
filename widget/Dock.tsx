@@ -65,12 +65,33 @@ const unpinnedList = createComputed(get => {
     }, [])
 })
 
+const FILE_MANAGERS = [
+    { bin: "nautilus", flag: "" },
+    { bin: "dolphin",  flag: "" },
+    { bin: "nemo",     flag: "" },
+    { bin: "thunar",   flag: "" },
+    { bin: "pcmanfm",  flag: "" },
+]
+
+function resolveFileManager(): { bin: string; flag: string } {
+    const configured = conf().file_manager
+    if (configured && configured !== "auto") {
+        const flag = FILE_MANAGERS.find(f => f.bin === configured)?.flag ?? ""
+        return { bin: configured, flag }
+    }
+    // auto-detect: just PATH lookups, essentially free
+    return FILE_MANAGERS.find(fm => !!GLib.find_program_in_path(fm.bin))
+        ?? { bin: "xdg-open", flag: "" }
+}
+
 function openUri(uri: string) {
-    GLib.spawn_command_line_async(`nautilus --new-window ${uri}`)
+    const { bin, flag } = resolveFileManager()
+    GLib.spawn_command_line_async([bin, flag, uri].filter(Boolean).join(" "))
 }
 
 function openPath(path: string) {
-    GLib.spawn_command_line_async(`nautilus --new-window ${path}`)
+    const { bin, flag } = resolveFileManager()
+    GLib.spawn_command_line_async([bin, flag, path].filter(Boolean).join(" "))
 }
 
 function emptyTrash() {
