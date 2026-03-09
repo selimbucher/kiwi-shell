@@ -7,7 +7,7 @@
     "lib": ["ES2023"],
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
-    "jsxImportSource": "ags/lib/gtk4",
+    "jsxImportSource": "ags/gtk4",
     "paths": {
       "gi://*": ["./node_modules/ags/@girs/*"],
       "ags/*": ["./node_modules/ags/lib/*"],
