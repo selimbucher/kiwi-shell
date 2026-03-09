@@ -1,5 +1,6 @@
 node_modules
 outputs
+experiments
 @girs
 result
 .direnv
