@@ -12,7 +12,7 @@ const pathExists = (path: string) => {
 };
 
 // --- Screen Brightness ---
-export const brightness = createPoll(0, 200, () => {
+export const brightness: number = createPoll(0, 200, () => {
     try {
         return parseInt(exec("brightnessctl get")) || 0;
     } catch {
@@ -30,7 +30,7 @@ export const max_keyboardBrightness = hasKbdBacklight
     ? parseInt(readFile(kbdMaxPathRaw)) 
     : 1; // Default to 1 to avoid Division by Zero in your UI
 
-export const keyboardBrightness = createPoll(
+export const keyboardBrightness: number = createPoll(
     0, 
     hasKbdBacklight ? 200 : 1000000, // Poll extremely slowly if no hardware exists
     () => {
