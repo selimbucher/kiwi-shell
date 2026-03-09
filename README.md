@@ -1,5 +1,5 @@
-# Hyprland Desktop Widgets
-Desktop widgets for **Hyprland**. Based on AGS and Astal.
+# Kiwi Shell for Hyprland
+Desktop UI for **Hyprland**. Based on AGS and Astal.
 
 ![Screenshot](./docs/screenshots/screenshot1.png)
 
@@ -21,7 +21,7 @@ In your system's flake.nix, add this repository to the inputs block.
 ```nix
 {
   inputs = {
-    desktop-widgets.url = "github:selimbucher/hyprland-widgets";
+    kiwi-shell.url = "github:selimbucher/hyprland-widgets";
   };
 }
 ```
@@ -32,7 +32,7 @@ In your Home Manager configuration file (usually home.nix), add the package to y
 
 {
   home.packages = [
-    inputs.desktop-widgets.packages.${pkgs.system}.default
+    inputs.kiwi-shell.packages.${pkgs.system}.default
   ];
 }
 ```
@@ -72,11 +72,11 @@ Note: There is a script **install.sh** that builds everything into a binary, but
 ## Usage
 Run the following.
 ```bash
-desktop
+kiwi
 ```
 You might want to execute this automatically on login.
 
-When changing the theme color using this app, the file `~/.conf/desktop/hypr.conf` is created.
+When changing the theme color using this app, the file `~/.conf/kiwi-shell/hypr.conf` is created.
 ```conf
 $primaryColor = rgba(179,165,231,0.6)
 ```
@@ -84,23 +84,23 @@ You may want to include this in your hyprland config to match the border color o
 ### Commands
 You can display volume and brightness indicators with
 ```bash
-desktop-ctl show volume
+kiwictl show volume
 ```
 ```bash
-desktop-ctl show brightness
+kiwictl show brightness
 ```
 This will display the volume and brightness for a few seconds in a small widget at the bottom.
 These commands should be binded to the corresponding buttons on the keyboard.
 
 For controling the Alt+Tab menu, you can use the following commands:
 ```bash
-desktop-ctl apps open-next
+kiwictl apps open-next
 ```
 ```bash
-desktop-ctl apps confirm
+kiwictl apps confirm
 ```
 ```bash
-desktop-ctl apps close
+kiwictl apps close
 ```
 
 Recreating the usual keybinds for an app switcher can be a bit tricky. Check out this short [guide](./docs/AppSwitcherKeybinds.md).

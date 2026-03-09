@@ -1,5 +1,5 @@
 {
-  description = "Desktop Shell for Hyprland";
+  description = "Kiwi Shell for Hyprland";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
@@ -17,8 +17,8 @@
   }: let
     system = "x86_64-linux";
     pkgs = nixpkgs.legacyPackages.${system};
-    pname = "desktop";
-    entry = "src/desktop/app.ts";
+    pname = "kiwi";
+    entry = "src/kiwi-shell/app.ts";
 
     # ─── app-capture C library ───────────────────────────────────────────────
     # Compiles app-capture.c into libappcapture.so and generates the
@@ -70,8 +70,8 @@
         app-capture
       ];
 
-    # ─── Desktop shell package ───────────────────────────────────────────────
-    desktop-package = pkgs.stdenv.mkDerivation {
+    # ─── Kiwi Shell package ───────────────────────────────────────────────
+    kiwi-package = pkgs.stdenv.mkDerivation {
       name = pname;
       version = "0.2";
       src = pkgs.lib.cleanSource ./.;
@@ -118,9 +118,9 @@
         # Logging Wrapper
         cat << 'EOF' > $out/bin/${pname}
         #!/usr/bin/env bash
-        LOG_FILE="$HOME/.cache/hyprland-desktop.log"
+        LOG_FILE="$HOME/.cache/kiwi-shell.log"
         mkdir -p "$(dirname "$LOG_FILE")"
-        echo "--- Starting Desktop Shell at $(date) ---" | tee -a "$LOG_FILE"
+        echo "--- Starting Kiwi Shell at $(date) ---" | tee -a "$LOG_FILE"
         BIN_PATH_PLACEHOLDER "$@" 2>&1 | tee -a "$LOG_FILE"
         EOF
 
@@ -128,16 +128,16 @@
         chmod +x $out/bin/${pname}
 
         # Controller Script
-        echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}-ctl
-        echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}-ctl
-        chmod +x $out/bin/${pname}-ctl
+        echo "#!${pkgs.bash}/bin/bash" > $out/bin/${pname}ctl
+        echo "exec ${ags.packages.${system}.default}/bin/ags request \"\$@\"" >> $out/bin/${pname}ctl
+        chmod +x $out/bin/${pname}ctl
 
         runHook postInstall
       '';
     };
   in {
     packages.${system} = {
-      default = desktop-package;
+      default = kiwi-package;
       app-capture = app-capture;
     };
 
@@ -168,13 +168,13 @@
       pkgs,
       ...
     }: let
-      cfg = config.services.desktop-shell;
+      cfg = config.services.kiwi-shell;
     in {
-      options.services.desktop-shell = {
-        enable = lib.mkEnableOption "Desktop Shell for Hyprland";
+      options.services.kiwi-shell = {
+        enable = lib.mkEnableOption "Kiwi Shell for Hyprland";
 
         settings = lib.mkOption {
-          description = "Configuration written to ~/.config/desktop/initial-config.json";
+          description = "Configuration written to ~/.config/kiwi-shell/initial-config.json";
           default = {};
           type = lib.types.submodule {
             options = {
@@ -196,7 +196,7 @@
       };
 
       config = lib.mkIf cfg.enable {
-        xdg.configFile."desktop/initial-config.json".text = builtins.toJSON cfg.settings;
+        xdg.configFile."kiwi-shell/initial-config.json".text = builtins.toJSON cfg.settings;
         home.packages = [self.packages.${system}.default];
       };
     };
