@@ -8,7 +8,7 @@ import AstalPowerProfiles from "gi://AstalPowerProfiles"
 
 import { MediaPlayer } from "../../../Misc"
 import { powerProfileIcon, volumeIcon, brightnessIcon } from "../../../iconNames"
-import { brightness } from "../../../polls"
+import { brightness, setBrightnessLevel } from "../../../brightness"
 
 const [nightShift, setNightShift] = createState(false);
 
@@ -234,19 +234,19 @@ function Sliders() {
             pixelSize={16}
             iconName={
               createComputed(
-                (get) => brightnessIcon(get(brightness), max_brightness)
+                (get) => brightnessIcon(get(brightness))
               )}
           />
         </button>
         <slider
           hexpand={true}
           draw_value={false}
-          min={10}
-          max={max_brightness}
-          step={1}
+          min={0}
+          max={1}
+          step={0.01}
           value={brightness}
           onChangeValue={(self) => {
-            exec(`brightnessctl set ${self.value}`)
+            setBrightnessLevel(self.value)
           }}
         />
       </box>

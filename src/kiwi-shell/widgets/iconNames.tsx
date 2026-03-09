@@ -32,7 +32,7 @@ return "audio-volume-muted-symbolic"
   }
 }
 
-export function brightnessIcon(value: number, max: number) {
+export function brightnessIcon(value: number) {
   return "display-brightness-off-symbolic";
   /*
   const percentage = value / max

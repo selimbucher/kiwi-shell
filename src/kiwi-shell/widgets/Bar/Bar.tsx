@@ -9,8 +9,6 @@ import Network from "gi://AstalNetwork"
 import SystemMenu, { systemMenuTabState } from "./SystemMenu/SystemMenu"
 import Workspaces from "./Workspaces"
 import PowerMenu from "./PowerMenu"
-import { stopBluetoothDiscovery, startBluetoothDiscovery } from "./SystemMenu/tabs/BluetoothTab"
-import { rescanWifi } from "./SystemMenu/tabs/NetworkTab"
 import Tray from "./Tray"
 import { conf } from "../config"
 
@@ -66,33 +64,7 @@ function MenuButtons() {
           <NetworkIcon />
           <BatteryIcon/>
         </box>
-        <popover
-          hasArrow={false}
-          class="system-menu-popover"
-          autohide={true}
-          onShow={() => {
-            const [activeTab] = systemMenuTabState
-            if (activeTab.get() === 1) {
-              rescanWifi()
-            }
-            if (activeTab.get() === 2) {
-              try{
-                startBluetoothDiscovery()
-                console.log("Started Bluetooth Discovery")
-              } catch {}
-              
-            }
-          }}
-          onClosed={() => {
-            try {
-              stopBluetoothDiscovery()
-              console.log("Stopped Bluetooth Discovery")
-            } catch {}
-            
-          }}
-        >
-          <SystemMenu />
-        </popover>
+        <SystemMenu />
       </menubutton>
       <label class="time" label={time} />
       <menubutton

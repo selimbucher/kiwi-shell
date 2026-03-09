@@ -16,8 +16,6 @@ import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./tabs/Bluetoot
 
 import { primaryColor } from "../../config"
 
-
-
 const battery = AstalBattery.get_default()
 const hasBattery = battery.get_is_present()
 
@@ -36,9 +34,14 @@ if (hasBattery) {
 
 
 
-
 // Expose active tab state so other modules can react to it (e.g., Bar popover open)
-export const systemMenuTabState = createState(0)
+const [systemMenuOpen, setSystemMenuOpen] = createState(false)
+
+const [activeTab, setActiveTab] = createState(0)
+
+export const systemTabOpen = createComputed(get => {
+  return get(activeTab) === 0 && get(systemMenuOpen)
+})
 
 // Define your tabs
 const tabs = [
@@ -50,8 +53,39 @@ const tabs = [
 ]
 
 export default function SystemMenu() {
-    // Use the shared state instead of a local state
-    const [activeTab, setActiveTab] = systemMenuTabState
+  return (
+    <popover
+      hasArrow={false}
+      class="system-menu-popover"
+      autohide={true}
+      onShow={() => {
+        setSystemMenuOpen(true)
+        if (activeTab.get() === 1) {
+          rescanWifi()
+        }
+        if (activeTab.get() === 2) {
+          try{
+            startBluetoothDiscovery()
+            console.log("Started Bluetooth Discovery")
+          } catch {}
+          
+        }
+      }}
+      onClosed={() => {
+        setSystemMenuOpen(false)
+        try {
+          stopBluetoothDiscovery()
+          console.log("Stopped Bluetooth Discovery")
+        } catch {}
+        
+      }}
+    >
+      <SystemMenuContent />
+    </popover>
+  )
+}
+
+function SystemMenuContent() {
 
     const TabButton = (index: number, tab: typeof tabs[0]) => (
       <button 

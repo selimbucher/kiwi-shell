@@ -1,15 +1,16 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, createComputed, createBinding } from "ags"
+import { Accessor, createState, createComputed, createBinding } from "ags"
 import AstalWp from "gi://AstalWp"
 import { timeout } from "ags/time"
 import { exec } from "ags/process"
-import { Accessor } from "ags"
+import { readFile } from "ags/file"
 
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon } from "../iconNames"
 import { conf, primaryColor } from "../config"
-import { brightness } from "../polls"
+import { brightness, setBrightnessLevel } from "../brightness"
 import { keyboardBrightness, max_keyboardBrightness, hasKbdBacklight } from "../polls"
+import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 
 const fadeTimeout = 2500
 
@@ -19,13 +20,18 @@ const muteBinding = createBinding(wp.audio.defaultSpeaker, 'mute')
 const max_brightness = parseInt(exec("brightnessctl max"))
 const min_brightness = 10;
 
+volumeBinding.subscribe(() => showIndicator('volume'))
+muteBinding.subscribe(() => showIndicator('volume'))
+
+brightness.subscribe(() => showIndicator('brightness'))
+
 const [indicatorType, setIndicatorType] = createState('brightness')
 const indicatorValue = createComputed(get => {
   switch (get(indicatorType)) {
     case 'volume':
       return get(volumeBinding);
     case 'brightness':
-      return percentageBrightness(get(brightness));
+      return get(brightness);
     case 'keyboardBrightness':
       return get(keyboardBrightness)/max_keyboardBrightness;
     default:
@@ -63,8 +69,10 @@ const [isVisible, setVisibility] = createState(false)
 let timer;
 export function showIndicator(type: string){
   setIndicatorType(type)
-  setVisibility(true);
-  resetIndicatorTimeout() 
+  if (!systemTabOpen()) {
+    setVisibility(true);
+    resetIndicatorTimeout() 
+  }
 }
 function resetIndicatorTimeout() {
   if (timer) {
@@ -120,7 +128,7 @@ function indicatorChange(value: number) {
       wp.audio.defaultSpeaker.volume = value;
       return;
     case 'brightness':
-      exec(`brightnessctl set ${absoluteBrightness(value)}`)
+      setBrightnessLevel(value)
       return;
     default:
       return;
