@@ -6,9 +6,13 @@
     "target": "ES2020",
     "lib": ["ES2023"],
     "moduleResolution": "Bundler",
-    // "checkJs": true,
-    // "allowJs": true,
     "jsx": "react-jsx",
-    "jsxImportSource": "ags/gtk4"
+    "jsxImportSource": "ags/lib/gtk4",
+    "paths": {
+      "gi://*": ["./node_modules/ags/@girs/*"],
+      "ags/*": ["./node_modules/ags/lib/*"],
+      "gnim": ["./node_modules/gnim/dist/index.d.ts"],
+      "gnim/*": ["./node_modules/gnim/dist/*"]
+    }
   }
 }
