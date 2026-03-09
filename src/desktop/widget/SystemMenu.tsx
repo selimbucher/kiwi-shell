@@ -37,6 +37,8 @@ if (hasBattery) {
 }
 
 
+
+
 // Expose active tab state so other modules can react to it (e.g., Bar popover open)
 export const systemMenuTabState = createState(0)
 

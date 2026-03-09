@@ -18,7 +18,7 @@
     system = "x86_64-linux";
     pkgs = nixpkgs.legacyPackages.${system};
     pname = "desktop";
-    entry = "app.ts";
+    entry = "src/desktop/app.ts";
 
     # ─── app-capture C library ───────────────────────────────────────────────
     # Compiles app-capture.c into libappcapture.so and generates the
@@ -27,8 +27,7 @@
       pname = "app-capture";
       version = "1.0";
 
-      # Point at the app-capture subdirectory inside your repo
-      src = ./app-capture;
+      src = ./src/app-capture;
 
       nativeBuildInputs = with pkgs; [
         meson
@@ -68,8 +67,7 @@
       ++ [
         pkgs.libadwaita
         pkgs.libsoup_3
-        app-capture                 # ← add our library here so wrapGAppsHook4
-                                    #   puts the typelib on GJS_PATH automatically
+        app-capture
       ];
 
     # ─── Desktop shell package ───────────────────────────────────────────────
@@ -113,7 +111,6 @@
           pkgs.quicksand
           pkgs.whitesur-icon-theme
           pkgs.whitesur-gtk-theme
-          # grim removed — no longer needed once app-capture is working
         ]}" \
           --prefix GI_TYPELIB_PATH : "${app-capture}/lib/girepository-1.0" \
           --prefix LD_LIBRARY_PATH : "${app-capture}/lib"
@@ -146,22 +143,21 @@
 
     # ─── Dev shell ───────────────────────────────────────────────────────────
     # Enter with: nix develop
-    # Then cd app-capture && meson setup build && meson compile -C build
     devShells.${system}.default = pkgs.mkShell {
       buildInputs = [
         (ags.packages.${system}.default.override {
           inherit extraPackages;
         })
         pkgs.nodejs
-        pkgs.pkg-config             # was missing — meson needs this in PATH
+        pkgs.pkg-config
         pkgs.wayland-scanner
         pkgs.wayland-protocols
-        pkgs.wayland                # was pkgs.wayland-client — wrong name
+        pkgs.wayland
         pkgs.gtk4
         pkgs.glib
         pkgs.gobject-introspection
         pkgs.meson
-        pkgs.ninja                  # meson's default backend
+        pkgs.ninja
         pkgs.gjs
       ];
     };

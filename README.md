@@ -1,9 +1,9 @@
 # Hyprland Desktop Widgets
 Desktop widgets for **Hyprland**. Based on AGS and Astal.
 
-![Screenshot](./screenshots/screenshot1.png)
+![Screenshot](./docs/screenshots/screenshot1.png)
 
-You can view more screenshots [here](./docs/screenshots.md).
+You can view more screenshots [here](./docs/screenshots/screenshots.md).
 
 ## System Requirements
 This app requires a standard **Hyprland** setup and assumes the following services running.
