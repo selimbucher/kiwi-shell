@@ -5,3 +5,4 @@ experiments
 result
 .direnv
 .envrc
+package-lock.json
