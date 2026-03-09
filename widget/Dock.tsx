@@ -247,7 +247,7 @@ function DockBar() {
     const pinnedBinding = createComputed(get => get(list))
 
     return (
-        <box class="dock-bar">
+        <box class="dock-bar" halign={Gtk.Align.CENTER}>
             <box $type="center" class="dock-box" orientation={Gtk.Orientation.HORIZONTAL}>
                 <box>
                     <For each={pinnedBinding}>
