@@ -108,6 +108,7 @@
           pkgs.imagemagick
           pkgs.sox
           pkgs.psmisc
+          pkgs.glib.bin
           pkgs.quicksand
           pkgs.whitesur-icon-theme
           pkgs.whitesur-gtk-theme
