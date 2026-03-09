@@ -96,21 +96,7 @@ function openPath(path: string) {
 
 function emptyTrash() {
     try {
-        const filesDir = Gio.File.new_for_path(`${GLib.get_user_data_dir()}/Trash/files`)
-        const infoDir = Gio.File.new_for_path(`${GLib.get_user_data_dir()}/Trash/info`)
-
-        for (const dir of [filesDir, infoDir]) {
-            try {
-                const enumerator = dir.enumerate_children("standard::name", Gio.FileQueryInfoFlags.NONE, null)
-                let info
-                while ((info = enumerator.next_file(null)) !== null) {
-                    const child = dir.get_child(info.get_name())
-                    child.delete(null)
-                }
-            } catch {
-                // directory may not exist
-            }
-        }
+        GLib.spawn_command_line_async("gio trash --empty")
     } catch (error) {
         console.error("Failed to empty trash:", error)
     }
@@ -366,6 +352,8 @@ function HomeFolderButton() {
     )
 }
 
+let _trashMonitor: Gio.FileMonitor | null = null
+
 function TrashButton() {
     const TRASH_FILES = `${GLib.get_user_data_dir()}/Trash/files`
 
@@ -383,8 +371,8 @@ function TrashButton() {
     const [jumping, setJumping] = createState(false)
 
     const trashDir = Gio.File.new_for_path(TRASH_FILES)
-    const monitor = trashDir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
-    monitor.connect("changed", () => {
+    _trashMonitor = trashDir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
+    _trashMonitor.connect("changed", () => {
         setTrashEmpty(isTrashEmpty())
     })
 
@@ -435,7 +423,7 @@ function TrashButton() {
             class={jumping.as(isJumping => isJumping ? "app-launch-button jumping" : "app-launch-button")}
             onclicked={() => {
                 setJumping(true)
-                setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT+100)
+                setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT + 100)
                 openUri("trash:///")
             }}
             $={(self) => {
