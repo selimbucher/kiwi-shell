@@ -97,7 +97,6 @@ function OptionButtons(){
   return (
     <box orientation={Gtk.Orientation.VERTICAL} class="option-buttons" spacing={spacing}>
       <box class="row dropdown" spacing={spacing}>
-        {/* main option as its own button */}
         <button
         class={powerProfileBinding.as( p =>
           (p != defaultPowerProfile) ? 'option active' : 'option'
@@ -118,13 +117,13 @@ function OptionButtons(){
           </box>
         </button>
 
-        {/* separate arrow button (not nested) */}
         <button
           class="bar-button"
           onClicked={() => setPpOpen(v => !v)}
         >
           <Gtk.Image
-            iconName={ppOpen(v => v ? "arrow-up-symbolic" : "arrow-down-tiny-symbolic")}
+            class="arrow-button"
+            iconName={ppOpen(v => v ? "up-symbolic" : "down-symbolic")}
             pixelSize={16}
             hexpand={false}
           />
