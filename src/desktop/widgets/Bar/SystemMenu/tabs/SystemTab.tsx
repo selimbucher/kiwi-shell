@@ -1,15 +1,14 @@
 import { Gtk } from "ags/gtk4"
-import { MediaPlayer } from "./Misc"
 import { exec, execAsync } from "ags/process"
 import { createState, createBinding, createComputed, With } from "ags"
 import { createPoll } from "ags/time"
 
-
 import AstalWp from "gi://AstalWp"
 import AstalPowerProfiles from "gi://AstalPowerProfiles"
 
-import { powerProfileIcon, volumeIcon, brightnessIcon } from "./iconNames"
-import { brightness } from "./polls"
+import { MediaPlayer } from "../../../Misc"
+import { powerProfileIcon, volumeIcon, brightnessIcon } from "../../../iconNames"
+import { brightness } from "../../../polls"
 
 const [nightShift, setNightShift] = createState(false);
 

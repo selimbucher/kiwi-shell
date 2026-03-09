@@ -1,18 +1,18 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import SystemMenu, { systemMenuTabState } from "./SystemMenu"
 import { createPoll } from "ags/time"
-import Workspaces from "./Workspaces"
 import { createBinding, createComputed } from "ags"
-import PowerMenu from "./PowerMenu"
 
 import Battery from "gi://AstalBattery"
 import Network from "gi://AstalNetwork"
 
-import { stopBluetoothDiscovery, startBluetoothDiscovery } from "./BluetoothTab"
-import { rescanWifi } from "./NetworkTab"
+import SystemMenu, { systemMenuTabState } from "./SystemMenu/SystemMenu"
+import Workspaces from "./Workspaces"
+import PowerMenu from "./PowerMenu"
+import { stopBluetoothDiscovery, startBluetoothDiscovery } from "./SystemMenu/tabs/BluetoothTab"
+import { rescanWifi } from "./SystemMenu/tabs/NetworkTab"
 import Tray from "./Tray"
-import { conf } from "./config"
+import { conf } from "../config"
 
 const battery = Battery.get_default()
 const network = Network.get_default()

@@ -1,9 +1,9 @@
 import app from "ags/gtk4/app"
 import style from "./style.scss"
-import Bar from "./widget/Bar"
-import IndicatorBar, { showIndicator } from "./widget/IndicatorBar"
-// import AppSwitcher, { toggleAppSwitcher } from "./widget/AppSwitcher"
-import Dock, { EdgeSensor } from "./widget/Dock"
+import Bar from "./widgets/Bar/Bar"
+import IndicatorBar, { showIndicator } from "./widgets/IndicatorBar/IndicatorBar"
+// import AppSwitcher, { toggleAppSwitcher } from "./widget/AppSwitcher/AppSwitcher"
+import Dock, { EdgeSensor } from "./widgets/Dock/Dock"
 import { Gtk } from "ags/gtk4"
 
 const settings = Gtk.Settings.get_default()

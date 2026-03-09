@@ -2,7 +2,7 @@ import { createState } from "ags"
 import { Gtk, Gdk } from "ags/gtk4"
 import { exec, execAsync } from "ags/process"
 
-import { conf, setConf, primaryColor, storePrimaryColor, writeConf } from "./config"
+import { conf, setConf, primaryColor, storePrimaryColor, writeConf } from "../../../config"
 
 // Helper function to safely get the current wallpaper
 function getCurrentWallpaper(): string | null {

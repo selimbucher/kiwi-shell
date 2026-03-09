@@ -5,18 +5,16 @@ import AstalBattery from "gi://AstalBattery"
 import { exec } from "ags/process"
 import App from "ags/app"
 
-import { CircularProgress } from "./Misc"
+import { CircularProgress } from "../../Misc"
 
-import SystemTab from "./SystemTab"
-import NetworkTab from "./NetworkTab"
-import BluetoothTab from "./BluetoothTab"
-import ThemeTab from "./ThemeTab"
-import PerformanceTab from "./PerformanceTab"
+import SystemTab from "./tabs/SystemTab"
+import NetworkTab, { rescanWifi } from "./tabs/NetworkTab"
+import BluetoothTab from "./tabs/BluetoothTab"
+import ThemeTab from "./tabs/ThemeTab"
+import PerformanceTab from "./tabs/PerformanceTab"
+import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./tabs/BluetoothTab"
 
-import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./BluetoothTab"
-import { rescanWifi } from "./NetworkTab"
-
-import { primaryColor } from "./config"
+import { primaryColor } from "../../config"
 
 
 

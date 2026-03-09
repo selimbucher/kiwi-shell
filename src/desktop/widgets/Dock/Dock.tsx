@@ -2,13 +2,13 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createBinding, For } from "ags"
 import { readFile, writeFileAsync } from "ags/file"
-import { conf, primaryColor } from "./config"
+import { conf, primaryColor } from "../config"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
 import GObject from "gi://GObject"
 
-import filterApp from "./filterAppIcons"
+import filterApp from "../filterAppIcons"
 
 import Hyprland from "gi://AstalHyprland"
 

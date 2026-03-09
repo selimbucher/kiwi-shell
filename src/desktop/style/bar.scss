@@ -1,0 +1,54 @@
+window.Bar {
+  background: transparent;
+  color: #fff;
+  font-family: 'Quicksand';
+
+  > .centerbox {
+    margin: 4px;
+    margin-bottom: var(--bar-bottom-margin);
+  }
+
+  .networkIcon {
+    transform: translateY(-1px);
+  }
+
+  .MenuButtons, .Tray {
+    background-color: rgba(0, 0, 0, 0.9);
+    color: #fff;
+    border: #111111 1px solid;
+    border-top-color: #1c1c1c;
+    border-radius: 20px;
+    padding: 4px;
+    font-weight: 400;
+    font-size: 12px;
+
+    
+
+    .toggle-powermenu {
+      > button {
+        padding: 0;
+        background: transparent;
+        &:hover {
+          background-color: rgba(255, 255, 255, 0.082)
+        }
+        &:checked {
+          background-color: rgba(255, 255, 255, 0.12)
+        }
+        padding: 0 0px;
+        border-radius: 12px;
+        box-shadow: none;
+      }
+
+      .icons {
+        color: #ededed;
+        padding: 0 6px;
+        > * {
+          margin: 0 4px;
+        }
+      }
+    }
+    .time {
+      padding: 0 6px;
+    }
+  }
+}

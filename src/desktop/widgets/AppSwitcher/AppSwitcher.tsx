@@ -2,9 +2,9 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createEffect, For, createBinding } from "ags"
 import Hyprland from "gi://AstalHyprland"
-import { primaryColor, conf } from "./config"
+import { primaryColor, conf } from "../config"
 import { captureWindowToTexture } from "./clientCachingService"
-import filterApp from "./filterAppIcons"
+import filterApp from "../filterAppIcons"
 
 export const [isVisible, setVisibility] = createState(false)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)

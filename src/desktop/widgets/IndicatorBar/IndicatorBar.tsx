@@ -6,12 +6,10 @@ import { timeout } from "ags/time"
 import { exec } from "ags/process"
 import { Accessor } from "ags"
 
-import { volumeIcon, brightnessIcon, keyboardBrightnessIcon } from "./iconNames"
-import { primaryColor } from "./config"
-import { brightness } from "./polls"
-import { keyboardBrightness, max_keyboardBrightness, hasKbdBacklight } from "./polls"
-
-import { conf } from "./config"
+import { volumeIcon, brightnessIcon, keyboardBrightnessIcon } from "../iconNames"
+import { conf, primaryColor } from "../config"
+import { brightness } from "../polls"
+import { keyboardBrightness, max_keyboardBrightness, hasKbdBacklight } from "../polls"
 
 const fadeTimeout = 2500
 
