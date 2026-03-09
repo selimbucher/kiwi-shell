@@ -19,7 +19,7 @@ const JUMP_ANIMATION_CLASS_TIMEOUT = 400
 const hyprland = Hyprland.get_default()
 
 const HOME = GLib.getenv("HOME")
-const APPLIST_FILE = `${HOME}/.config/desktop/dock-apps.json`
+const APPLIST_FILE = `${HOME}/.config/kiwi-shell/dock-apps.json`
 
 let initialAppList
 
