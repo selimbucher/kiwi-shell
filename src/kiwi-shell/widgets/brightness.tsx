@@ -8,6 +8,7 @@ const brightnessFile = `/sys/class/backlight/${iface}/brightness`
 
 const getCurrent = () => Number(readFile(brightnessFile).trim()) / max
 
+// @ts-ignore
 export const [brightness, setBrightness] = createState(getCurrent())
 
 monitorFile(brightnessFile, () => {
