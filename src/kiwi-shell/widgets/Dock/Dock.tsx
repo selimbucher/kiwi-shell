@@ -8,8 +8,6 @@ import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
 import GObject from "gi://GObject"
 
-import filterApp from "../filterAppIcons"
-
 import Hyprland from "gi://AstalHyprland"
 
 const DOCK_HIDE_TIMEOUT = 600
@@ -21,48 +19,36 @@ const hyprland = Hyprland.get_default()
 const HOME = GLib.getenv("HOME")
 const APPLIST_FILE = `${HOME}/.config/kiwi-shell/dock-apps.json`
 
-let initialAppList
+let initialAppList: string[]
 
 try {
     initialAppList = JSON.parse(readFile(APPLIST_FILE))
-} catch (error) {
+} catch {
     initialAppList = []
 }
 
-const [list, setList] = createState(initialAppList)
+const [list, setList] = createState<string[]>(initialAppList)
 
 async function saveList() {
-    const currentList = list()
-        .map(({ pinned, ...rest }) => rest)
-    const jsonString = JSON.stringify(currentList, null, 2)
     try {
-        await writeFileAsync(APPLIST_FILE, jsonString)
+        await writeFileAsync(APPLIST_FILE, JSON.stringify(list(), null, 2))
     } catch (error) {
-        console.error("Failed to save config:", error)
+        console.error("Failed to save dock apps:", error)
     }
 }
 
 const unpinnedList = createComputed(get => {
     const clients = get(createBinding(hyprland, "clients"))
-    const pinnedEntries = new Set(get(list).map(app => app.entry))
+    const pinned = new Set(get(list))
 
-    const unpinnedClients = clients.filter(client => {
-        return !pinnedEntries.has(client["initial-class"] + ".desktop")
-    })
-
-    const seen = new Set()
-    return unpinnedClients.reduce((acc, client) => {
-        const icon = filterApp(client["initial-class"])
-        if (seen.has(icon)) return acc
-        seen.add(icon)
-        acc.push({
-            "entry": (client["initial-class"] + ".desktop"),
-            "icon": icon,
-            "name": client.title.split("- ").at(-1),
-            "pinned": false
-        })
+    const seen = new Set<string>()
+    return clients.reduce((acc, client) => {
+        const entry = client["initial-class"] + ".desktop"
+        if (pinned.has(entry) || seen.has(entry)) return acc
+        seen.add(entry)
+        acc.push(entry)
         return acc
-    }, [])
+    }, [] as string[])
 })
 
 const FILE_MANAGERS = [
@@ -79,7 +65,6 @@ function resolveFileManager(): { bin: string; flag: string } {
         const flag = FILE_MANAGERS.find(f => f.bin === configured)?.flag ?? ""
         return { bin: configured, flag }
     }
-    // auto-detect: just PATH lookups, essentially free
     return FILE_MANAGERS.find(fm => !!GLib.find_program_in_path(fm.bin))
         ?? { bin: "xdg-open", flag: "" }
 }
@@ -125,8 +110,6 @@ const showDock = createComputed(get => {
     if (mode != "auto-hide") return true
     if (trigger || hovered || hasMenu) return true
 
-    
-    
     const activeId = get(activeWorkspace)?.id
 
     const hastiledWindow = get(clients).some(client => {
@@ -251,7 +234,7 @@ function DockBar() {
             <box $type="center" class="dock-box" orientation={Gtk.Orientation.HORIZONTAL}>
                 <box>
                     <For each={pinnedBinding}>
-                        {(app) => <AppIcon app={app} />}
+                        {(entry) => <AppIcon entry={entry} />}
                     </For>
                 </box>
                 <box
@@ -263,14 +246,15 @@ function DockBar() {
                 />
                 <box>
                     <For each={unpinnedList}>
-                        {(app) => <AppIcon app={app} />}
+                        {(entry) => <AppIcon entry={entry} />}
                     </For>
                 </box>
                 <box
                     vexpand={true}
                     class="dock-spacer"
                     visible={createComputed(get =>
-                        (get(list).length > 0 || get(unpinnedList).length > 0) && (get(conf).dock_home == true || get(conf).dock_trash == true)
+                        (get(list).length > 0 || get(unpinnedList).length > 0) &&
+                        (get(conf).dock_home == true || get(conf).dock_trash == true)
                     )}
                 />
                 <HomeFolderButton />
@@ -282,14 +266,14 @@ function DockBar() {
 
 function HomeFolderButton() {
     const commonDirs = [
-        { name: "Home", path: HOME, icon: "user-home" },
-        { name: "Desktop", path: `${HOME}/Desktop`, icon: "user-desktop" },
+        { name: "Home",      path: `${HOME}`,           icon: "user-home" },
+        { name: "Desktop",   path: `${HOME}/Desktop`,   icon: "user-desktop" },
         { name: "Documents", path: `${HOME}/Documents`, icon: "folder-documents" },
         { name: "Downloads", path: `${HOME}/Downloads`, icon: "folder-download" },
-        { name: "Music", path: `${HOME}/Music`, icon: "folder-music" },
-        { name: "Pictures", path: `${HOME}/Pictures`, icon: "folder-pictures" },
-        { name: "Videos", path: `${HOME}/Videos`, icon: "folder-videos" },
-        { name: "Public", path: `${HOME}/Public`, icon: "folder-publicshare" },
+        { name: "Music",     path: `${HOME}/Music`,     icon: "folder-music" },
+        { name: "Pictures",  path: `${HOME}/Pictures`,  icon: "folder-pictures" },
+        { name: "Videos",    path: `${HOME}/Videos`,    icon: "folder-videos" },
+        { name: "Public",    path: `${HOME}/Public`,    icon: "folder-publicshare" },
     ].filter(d => GLib.file_test(d.path, GLib.FileTest.IS_DIR))
 
     let popover: Gtk.Popover
@@ -328,7 +312,7 @@ function HomeFolderButton() {
             class={jumping.as(isJumping => isJumping ? "app-launch-button jumping" : "app-launch-button")}
             onclicked={() => {
                 setJumping(true)
-                setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT+100)
+                setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT + 100)
                 openPath(HOME)
             }}
             $={(self) => {
@@ -473,55 +457,49 @@ function TrashButton() {
     )
 }
 
-function AppIcon({ app }) {
-    const initClass = app.entry.split(".").slice(0, -1).join(".")
-    const application = GioUnix.DesktopAppInfo.new(app.entry)
+function AppIcon({ entry }: { entry: string }) {
+    const initClass = entry.replace(/\.desktop$/, "")
+    const application = GioUnix.DesktopAppInfo.new(entry)
+    const icon = application?.get_icon()?.to_string() ?? initClass
+    const name = application?.get_name() ?? initClass
 
-    const [pinned, setPinned] = createState(app.pinned !== false)
+    const [pinned, setPinned] = createState(list().includes(entry))
     const [jumping, setJumping] = createState(false)
 
-    const clientsBinding = createComputed((get => {
-        const clients = get(createBinding(hyprland, "clients"))
-        const matchingClients = clients.filter(client => client["initial-class"] == initClass)
-        return matchingClients
-    }))
+    const clientsBinding = createComputed(get => {
+        const allClients = get(createBinding(hyprland, "clients"))
+        return allClients.filter(client => client["initial-class"] === initClass)
+    })
 
     const onPinChange = (newPinned: boolean) => {
         setPinned(newPinned)
-        app.pinned = newPinned
-
         if (newPinned) {
-            const newList = [...list(), app]
-            setList(newList)
-            saveList()
+            setList([...list(), entry])
         } else {
-            const newList = list().filter(a => a.entry !== app.entry)
-            setList(newList)
-            saveList()
+            setList(list().filter(e => e !== entry))
         }
+        saveList()
     }
 
-    const menu = AppContextMenu(app, clientsBinding, application, pinned, onPinChange)
+    const menu = AppContextMenu(entry, clientsBinding, application, icon, name, pinned, onPinChange)
 
     return (
         <button
             onclicked={() => {
-
                 const client = clientsBinding()[0]
-                if (client)
+                if (client) {
                     client.focus()
-                else {
+                } else {
                     setJumping(true)
-                    setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT+100)
+                    setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT + 100)
                     application.launch([], null)
                 }
-                    
             }}
             $={(self) => {
                 const gesture = new Gtk.GestureClick()
                 gesture.set_button(3)
                 gesture.connect("released", () => {
-                    menu.popup(app)
+                    menu.popup()
                 })
                 self.add_controller(gesture)
             }}
@@ -531,7 +509,7 @@ function AppIcon({ app }) {
                 {menu}
                 <overlay>
                     <Gtk.Image
-                        iconName={app.icon}
+                        iconName={icon}
                         pixelSize={56}
                         class="dock-app-icon"
                     />
@@ -539,7 +517,7 @@ function AppIcon({ app }) {
                         <box vexpand={true}></box>
                         <box class="client-dots" halign={Gtk.Align.CENTER} spacing={3}>
                             <For each={clientsBinding}>
-                                {(client) => <ActiveClientDot />}
+                                {(_client) => <ActiveClientDot />}
                             </For>
                         </box>
                     </box>
@@ -555,7 +533,7 @@ function ActiveClientDot() {
     )
 }
 
-function AppContextMenu(app, clientsBinding, application, pinned, onPinChange) {
+function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, onPinChange) {
     let popover: Gtk.Popover
 
     return (
@@ -577,8 +555,8 @@ function AppContextMenu(app, clientsBinding, application, pinned, onPinChange) {
                     }}
                 >
                     <box>
-                        <DockContextIcon icon={app.icon} />
-                        <label halign={Gtk.Align.START} label={app.name} />
+                        <DockContextIcon icon={icon} />
+                        <label halign={Gtk.Align.START} label={name} />
                     </box>
                 </button>
 
