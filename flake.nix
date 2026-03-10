@@ -90,13 +90,10 @@
 
         mkdir -p $out/bin
         mkdir -p $out/share
-        cp -r * $out/share
-
-        rm -rf $out/share/node_modules
-        rm -rf $out/share/.git
+        cp -r src/kiwi-shell $out/share/
 
         # Compilation
-        ags bundle ${entry} $out/bin/.${pname}-core -d "SRC='$out/share'"
+        ags bundle ${entry} $out/bin/.${pname}-core -d "SRC='$out/share/kiwi-shell'"
 
         # Runtime Dependencies Wrapper
         wrapProgram $out/bin/.${pname}-core \
