@@ -8,8 +8,7 @@ import { readFile } from "ags/file"
 
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon } from "../iconNames"
 import { conf, primaryColor } from "../config"
-import { brightness, setBrightnessLevel } from "../brightness"
-import { keyboardBrightness, max_keyboardBrightness, hasKbdBacklight } from "../polls"
+import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 
 const fadeTimeout = 2500
@@ -20,10 +19,28 @@ const muteBinding = createBinding(wp.audio.defaultSpeaker, 'mute')
 const max_brightness = parseInt(exec("brightnessctl max"))
 const min_brightness = 10;
 
+let waiting = true;
+timeout(600, () => {
+  waiting = false
+})
+
 volumeBinding.subscribe(() => showIndicator('volume'))
 muteBinding.subscribe(() => showIndicator('volume'))
 
 brightness.subscribe(() => showIndicator('brightness'))
+
+if (kbdAvailable) {
+  kbdBrightness.subscribe(() => showIndicator('keyboardBrightness'))
+}
+
+export function showIndicator(type: string){
+  if (waiting) return;
+  setIndicatorType(type)
+  if (!systemTabOpen() || !['volume', 'brightness'].includes(type)) {
+    setVisibility(true);
+    resetIndicatorTimeout() 
+  }
+}
 
 const [indicatorType, setIndicatorType] = createState('brightness')
 const indicatorValue = createComputed(get => {
@@ -33,7 +50,7 @@ const indicatorValue = createComputed(get => {
     case 'brightness':
       return get(brightness);
     case 'keyboardBrightness':
-      return get(keyboardBrightness)/max_keyboardBrightness;
+      return get(kbdBrightness);
     default:
       return 0;
   }
@@ -44,9 +61,9 @@ const indicatorIcon = createComputed(get => {
     case 'volume':
       return volumeIcon(get(volumeBinding), get(muteBinding));
     case 'brightness':
-      return brightnessIcon(get(brightness), max_brightness);
+      return brightnessIcon(get(brightness));
     case 'keyboardBrightness':
-      return keyboardBrightnessIcon(get(keyboardBrightness)/max_keyboardBrightness)
+      return keyboardBrightnessIcon(get(kbdBrightness))
     default:
       return 'question-round-symbolic';
   }
@@ -67,32 +84,12 @@ const isSensitive = createComputed(get => {
 const [isVisible, setVisibility] = createState(false)
 
 let timer;
-export function showIndicator(type: string){
-  setIndicatorType(type)
-  if (!systemTabOpen()) {
-    setVisibility(true);
-    resetIndicatorTimeout() 
-  }
-}
+
 function resetIndicatorTimeout() {
   if (timer) {
     timer.cancel();
   }
   timer = timeout(fadeTimeout, () => setVisibility(false));
-}
-
-let waiting = true;
-timeout(500, () => {
-  waiting = false
-})
-
-if (hasKbdBacklight) {
-  keyboardBrightness.subscribe(() => {
-    if (waiting) return;
-    setIndicatorType('keyboardBrightness');
-    setVisibility(true);
-    resetIndicatorTimeout();
-  });
 }
 
 
