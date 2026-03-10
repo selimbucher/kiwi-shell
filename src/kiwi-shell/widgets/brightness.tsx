@@ -37,6 +37,7 @@ const getKbdCurrent = () => {
     return Number(readFile(kbdFile).trim()) / kbdMax
 }
 
+// @ts-ignore
 export const kbdBrightness = kbdAvailable
     ? createPoll(getKbdCurrent(), 200, getKbdCurrent)
     : (() => 0)
