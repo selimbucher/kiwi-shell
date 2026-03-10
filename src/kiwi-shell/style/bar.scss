@@ -15,8 +15,7 @@ window.Bar {
   .MenuButtons, .Tray {
     background-color: rgba(0, 0, 0, 0.9);
     color: #fff;
-    border: #111111 1px solid;
-    border-top-color: #1c1c1c;
+    border: 1px rgba(56, 56, 56, 0.9) solid;
     border-radius: 20px;
     padding: 4px;
     font-weight: 400;
