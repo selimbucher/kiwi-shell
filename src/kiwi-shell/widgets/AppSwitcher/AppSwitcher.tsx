@@ -4,7 +4,7 @@ import { createState, createEffect, For, createBinding } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { primaryColor, conf } from "../config"
 import { captureWindowToTexture } from "./clientCachingService"
-import filterApp from "../filterAppIcons"
+import GioUnix from "gi://GioUnix"
 
 export const [isVisible, setVisibility] = createState(false)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)
@@ -188,12 +188,18 @@ export function WindowPreview({ client }: { client: any }) {
     return container
 }
 
+import GioUnix from "gi://GioUnix"
+
 export function AppIcon({ client }: { client: any }) {
     if (!client) return null
-    const iconName = client.get_class() || "application-x-executable"
+    const initClass = client.get_class()
+    const entry = initClass + ".desktop"
+    const appInfo = GioUnix.DesktopAppInfo.new(entry)
+    const icon = appInfo?.get_icon()?.to_string() ?? initClass
+
     return (
         <Gtk.Image
-            iconName={filterApp(iconName)}
+            iconName={icon}
             pixelSize={24}
             class="switcher-preview-icon"
         />
