@@ -76,6 +76,7 @@ optdepends=(
     'power-profiles-daemon: power profile switching'
     'wireplumber: audio control'
     'pipewire: audio support'
+    'upower: battery status'
 )
 source=("$pkgname-$pkgver.tar.gz::https://github.com/selimbucher/kiwi-shell/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('c093b959afdeee133f54fd3106270244912aece933e993fbb129b711f5d13dde')
