@@ -1,6 +1,7 @@
 {
   "primary_color": "rgb(190,157,241)",
-  "bottom_margin": 2,
+  "bar_margin": 4,
+  "dock_margin": 4,
   "theme": "dark",
   "dock": "default",
   "dock_home": true,

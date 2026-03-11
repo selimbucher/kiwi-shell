@@ -125,9 +125,10 @@ const showDock = createComputed(get => {
 export default function Dock(gdkmonitor: Gdk.Monitor) {
     return (
         <window
-            css={primaryColor(hex =>
+            css={conf.as(conf => 
                 `
-                --primary: ${hex};
+                --primary: ${conf.primary_color};
+                --dock-margin: ${conf.dock_margin}px;
                 --jumptime: ${JUMP_ANIMATION_CLASS_TIMEOUT}ms;
                 `
             )}

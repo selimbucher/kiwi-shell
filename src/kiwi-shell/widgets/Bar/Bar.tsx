@@ -32,7 +32,7 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
       css={conf.as(conf => 
         `
         --primary: ${conf.primary_color};
-        --bar-bottom-margin: ${conf.bottom_margin}px;
+        --bar-margin: ${conf.bar_margin}px;
         `
       )}
       visible

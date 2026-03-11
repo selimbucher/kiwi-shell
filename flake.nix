@@ -177,7 +177,11 @@
                 type = lib.types.str;
                 default = "rgb(190,157,241)";
               };
-              bottom_margin = lib.mkOption {
+              bar_margin = lib.mkOption {
+                type = lib.types.int;
+                default = 4;
+              };
+              dock_margin = lib.mkOption {
                 type = lib.types.int;
                 default = 4;
               };
