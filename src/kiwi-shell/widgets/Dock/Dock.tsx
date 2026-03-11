@@ -266,7 +266,7 @@ function DockBar() {
 
 function HomeFolderButton() {
     const commonDirs = [
-        { name: "Home",      path: `${HOME}`,           icon: "user-home" },
+        // { name: "Home",      path: `${HOME}`,           icon: "user-home" },
         { name: "Desktop",   path: `${HOME}/Desktop`,   icon: "user-desktop" },
         { name: "Documents", path: `${HOME}/Documents`, icon: "folder-documents" },
         { name: "Downloads", path: `${HOME}/Downloads`, icon: "folder-download" },
