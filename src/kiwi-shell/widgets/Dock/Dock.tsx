@@ -10,6 +10,7 @@ import GObject from "gi://GObject"
 
 import Hyprland from "gi://AstalHyprland"
 import { Icon } from "../iconNames"
+import { playSound } from "../sound";
 
 const DOCK_HIDE_TIMEOUT = 600
 const DOCK_HIDE_TIMEOUT_EDGE = 1200
@@ -388,8 +389,11 @@ function TrashButton() {
                 </button>
                 <button
                     onclicked={() => {
-                        popover.popdown()
+                        if (!trashEmpty()) {
+                            playSound("trash.wav")
+                        }
                         emptyTrash()
+                        popover.popdown()
                         setTrashEmpty(true)
                     }}
                 >

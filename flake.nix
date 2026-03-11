@@ -103,7 +103,7 @@
           pkgs.brightnessctl
           pkgs.zenity
           pkgs.imagemagick
-          pkgs.sox
+          pkgs.libpulseaudio
           pkgs.psmisc
           pkgs.glib.bin
         ]}" \
