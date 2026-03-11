@@ -26,7 +26,10 @@ app.start({
     } else if (cmd == "apps") {
       toggleAppSwitcher(arg)
       response(``)
-    } else {
+    } else if (cmd == "quit") {
+      app.quit()
+    }
+    else {
       response(`Unknown command: ${cmd}`)
     }
     
