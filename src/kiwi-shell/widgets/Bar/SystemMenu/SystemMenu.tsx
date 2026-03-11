@@ -2,8 +2,6 @@ import { Gtk } from "ags/gtk4"
 import { createState, createBinding, createComputed } from "ags"
 import { createPoll } from "ags/time"
 import AstalBattery from "gi://AstalBattery"
-import { exec } from "ags/process"
-import App from "ags/app"
 
 import { CircularProgress } from "../../Misc"
 
@@ -16,6 +14,7 @@ import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./tabs/Bluetoot
 
 import { primaryColor } from "../../config"
 import { Icon } from "../../iconNames"
+import { playSound } from "../../sound"
 
 const battery = AstalBattery.get_default()
 const hasBattery = battery.get_is_present()
@@ -23,13 +22,10 @@ const hasBattery = battery.get_is_present()
 const batPercentBinding = createBinding(battery, "percentage");
 const batChargingBinding = createBinding(battery, "charging");
 
-const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
-
 if (hasBattery) {
-  const chargingSound = `${ROOT}/assets/charging.mp3`
   batChargingBinding.subscribe(() => {
     if (!battery.charging) { return }
-    exec('play '+chargingSound);
+    playSound('charging.mp3') 
   })
 }
 
