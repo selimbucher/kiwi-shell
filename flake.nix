@@ -73,7 +73,7 @@
     # ─── Kiwi Shell package ───────────────────────────────────────────────
     kiwi-package = pkgs.stdenv.mkDerivation {
       name = pname;
-      version = "0.2";
+      version = "0.2.0";
       src = pkgs.lib.cleanSource ./.;
 
       nativeBuildInputs = with pkgs; [
