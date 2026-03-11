@@ -11,6 +11,7 @@ import Workspaces from "./Workspaces"
 import PowerMenu from "./PowerMenu"
 import Tray from "./Tray"
 import { conf } from "../config"
+import { Icon, iconTheme } from "../iconNames"
 
 const battery = Battery.get_default()
 const network = Network.get_default()
@@ -120,9 +121,9 @@ function NetworkIcon() {
 
 function PreferencesIcon() {
   return (
-    <Gtk.Image 
+    <Icon 
       class="preferencesIcon"
-      pixelSize={11}
+      pixelSize={iconTheme.as(theme => theme.includes("WhiteSur") || theme.includes("Fluent") || theme.includes("Reversal") ? 11 : 16)}
       iconName="tweaks-app-symbolic"
     />
   )

@@ -7,7 +7,7 @@ import AstalWp from "gi://AstalWp"
 import AstalPowerProfiles from "gi://AstalPowerProfiles"
 
 import { MediaPlayer } from "../../../Misc"
-import { powerProfileIcon, volumeIcon, brightnessIcon } from "../../../iconNames"
+import { Icon, powerProfileIcon, volumeIcon, brightnessIcon } from "../../../iconNames"
 import { brightness, setBrightnessLevel } from "../../../brightness"
 
 const [nightShift, setNightShift] = createState(false);
@@ -111,7 +111,11 @@ function OptionButtons(){
           }}
         >
           <box>
-            <Gtk.Image iconName={powerProfileBinding.as(powerProfileIcon)} pixelSize={17} class={powerProfileBinding.as(p => 'icon-'+p)}/>
+            <Icon
+              iconName={powerProfileBinding.as(powerProfileIcon)}
+              pixelSize={17}
+              class={powerProfileBinding.as(p => 'icon-'+p)}
+            />
             <label label={powerProfileBinding.as(powerProfileName)} />
           </box>
         </button>
@@ -122,7 +126,7 @@ function OptionButtons(){
         >
           <Gtk.Image
             class="arrow-button"
-            iconName={ppOpen(v => v ? "up-symbolic" : "down-symbolic")}
+            iconName={ppOpen(v => v ? "go-up-symbolic" : "go-down-symbolic")}
             pixelSize={16}
             hexpand={false}
           />
@@ -151,7 +155,7 @@ function OptionButtons(){
           }}
           >
           <box>
-            <Gtk.Image iconName="night-light-symbolic" pixelSize={17}/>
+            <Icon iconName="night-light-symbolic" pixelSize={17}/>
             <label label="Night Shift" />
             <box hexpand={true} />
           </box>
@@ -162,14 +166,14 @@ function OptionButtons(){
             mic.mute = !micMutedBinding.get()
           }}
         >
-          <Gtk.Image iconName={micMutedBinding.as(b =>
-            b ? "audio-input-microphone-muted-symbolic" : "audio-input-microphone-symbolic"
+          <Icon iconName={micMutedBinding.as(b =>
+            b ? "microphone-disabled-symbolic" : "audio-input-microphone-symbolic"
           )}
           
            pixelSize={17}/>
         </button>
          <button class="option">
-          <Gtk.Image iconName="notifications-applet-symbolic" pixelSize={17}/>
+          <Gtk.Image iconName="notifications-symbolic" pixelSize={17}/>
         </button>
         <button class="option"
         onClicked={() => {
@@ -229,7 +233,7 @@ function Sliders() {
       </With>
       <box visible={hasBacklight} class="slider-container">
         <button class="bar-button">
-          <Gtk.Image 
+          <Icon 
             class="icon brightnessIcon"
             pixelSize={16}
             iconName={

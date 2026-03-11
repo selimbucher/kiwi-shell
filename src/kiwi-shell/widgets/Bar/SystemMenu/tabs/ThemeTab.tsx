@@ -3,6 +3,7 @@ import { Gtk, Gdk } from "ags/gtk4"
 import { exec, execAsync } from "ags/process"
 
 import { conf, setConf, primaryColor, storePrimaryColor, writeConf } from "../../../config"
+import { Icon } from "../../../iconNames";
 
 // Helper function to safely get the current wallpaper
 function getCurrentWallpaper(): string | null {
@@ -79,9 +80,9 @@ export default function ThemeTab({visible}) {
                         </box>
                     </button>
                     <button valign={Gtk.Align.CENTER} vexpand={false}>
-                            <Gtk.Image
+                            <Icon
                             halign={Gtk.Align.CENTER}
-                                iconName="randomize-symbolic"
+                                iconName="media-playlist-shuffle-symbolic"
                                 pixelSize={14}
                             />
                     </button>

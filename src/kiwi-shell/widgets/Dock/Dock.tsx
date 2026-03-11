@@ -9,6 +9,7 @@ import GioUnix from "gi://GioUnix"
 import GObject from "gi://GObject"
 
 import Hyprland from "gi://AstalHyprland"
+import { Icon } from "../iconNames"
 
 const DOCK_HIDE_TIMEOUT = 600
 const DOCK_HIDE_TIMEOUT_EDGE = 1200
@@ -607,7 +608,7 @@ function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, 
 
 function DockContextIcon({ icon }) {
     return (
-        <Gtk.Image
+        <Icon
             class="dock-context-icon"
             iconName={icon}
             pixelSize={20}

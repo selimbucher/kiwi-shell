@@ -15,6 +15,7 @@ import PerformanceTab from "./tabs/PerformanceTab"
 import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./tabs/BluetoothTab"
 
 import { primaryColor } from "../../config"
+import { Icon } from "../../iconNames"
 
 const battery = AstalBattery.get_default()
 const hasBattery = battery.get_is_present()
@@ -45,11 +46,11 @@ export const systemTabOpen = createComputed(get => {
 
 // Define your tabs
 const tabs = [
-  { name: "settings", icon: "prefs-tweaks-symbolic" },
+  { name: "settings", icon: "system-settings-symbolic" },
   { name: "network", icon: "network-wireless-symbolic" },
   { name: "bluetooth", icon: "bluetooth-active-symbolic" },
-  { name: "performance", icon: "power-profile-performance-symbolic" },
-  { name: "theme", icon: "image-round-symbolic" }
+  { name: "performance", icon: "power-profile-balanced-symbolic" },
+  { name: "theme", icon: "preferences-desktop-wallpaper-symbolic" }
 ]
 
 export default function SystemMenu() {
@@ -108,7 +109,7 @@ function SystemMenuContent() {
           }
         }}
       >
-        <Gtk.Image 
+        <Icon
           class={`icon-${tab.name}`}
           pixelSize={16}
           iconName={tab.icon}
@@ -122,10 +123,10 @@ function SystemMenuContent() {
               <Time />
               <box hexpand={true}/>
               <overlay visible={hasBattery}>
-                <Gtk.Image 
+                <Icon
                   $type="overlay"
                   pixelSize={24}
-                  iconName="mintupdate-type-kernel-symbolic"
+                  iconName="preferences-system-power-symbolic"
                 />
                 <CircularProgress progress={batPercentBinding} size={64} lineWidth={7} color={createComputed(get => batteryBarColor(get(batPercentBinding), get(batChargingBinding), get(primaryColor)))}/>
               </overlay>
