@@ -106,9 +106,6 @@
           pkgs.sox
           pkgs.psmisc
           pkgs.glib.bin
-          pkgs.quicksand
-          pkgs.whitesur-icon-theme
-          pkgs.whitesur-gtk-theme
         ]}" \
           --prefix GI_TYPELIB_PATH : "${app-capture}/lib/girepository-1.0" \
           --prefix LD_LIBRARY_PATH : "${app-capture}/lib"

@@ -1,16 +1,57 @@
 * {
   font-family: 'Quicksand';
+  color: unset;
+}
+
+menubutton popover {
+	padding: 0;
+}
+
+menubutton modelbutton {
+  padding: 5px;
+  border-radius: 6px;
+  color: rgba(222,222,222,1);
+}
+
+modelbutton label {
+  margin-left: 4px;
+}
+
+separator {
+  margin: 4px 0;
+  background: rgba(255, 255, 255, 0.1);
+  min-height: 1px;
+}
+
+switch {
+  background: rgba(255, 255, 255, 0.2);
+  &:checked {
+    background: var(--primary);
+  }
+  padding: 2px;
+  
+  slider {
+    border-radius: 1000px;
+    box-shadow: none;
+    background: white;
+    min-width: 20px;
+    min-height: 0;
+  }
 }
 
 .Bar, .IndicatorBar, .PowerMenu {
-
   button {
     background: rgba(255, 255, 255, 0.1);
     border: none;
     box-shadow: none;
+    color: rgb(175, 175, 175);
+    &:hover {
+      color: #fff;
+    }
   }
 
   scale {
+    padding: 0 4px;
     trough {
       min-height: 10px;
       border-radius: 8px;

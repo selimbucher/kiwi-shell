@@ -4,17 +4,10 @@ checkRequirements()
 import app from "ags/gtk4/app"
 import style from "./style.scss"
 import Bar from "./widgets/Bar/Bar"
-import IndicatorBar, { showIndicator } from "./widgets/IndicatorBar/IndicatorBar"
+import IndicatorBar from "./widgets/IndicatorBar/IndicatorBar"
 import AppSwitcher, { toggleAppSwitcher } from "./widgets/AppSwitcher/AppSwitcher"
 import Dock, { EdgeSensor } from "./widgets/Dock/Dock"
-import { Gtk } from "ags/gtk4"
 import { execAsync } from "ags/process"
-
-const settings = Gtk.Settings.get_default()
-if (settings) {
-  settings.gtk_theme_name = "WhiteSur-Dark"
-  //console.log("Setting GTK theme to WhiteSur-Dark")
-}
 
 let sawWarning = false;
 

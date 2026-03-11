@@ -21,11 +21,14 @@
     padding: 24px;
   }
 
+  colorbutton button {
+    padding: 0;
+  }
   dropdown button, colorbutton * {
     border-radius: 12px;
   }
   dropdown button {
-    padding-left: 12px;
+    padding: 0 12px;
     background: rgba(255, 255, 255, 0.1);
     color: #ededed;
 
@@ -101,6 +104,7 @@
   }
 
   .time {
+    color: rgba(222,222,222,1);
     font-size: 64px;
     font-weight: 30;
   }
@@ -122,11 +126,15 @@
       &.active {
         color: var(--primary);
       }
-      padding: 0 6px;
+      padding: 0;
+      image {
+        padding: 4px;
+      }
     }
 
   .network-item, .bluetooth-item {
     margin: 0;
+    padding: 0 6px;
     background: none;
     box-shadow: none;
     border: none;
@@ -185,6 +193,7 @@
 
     .large-header {
       font-size: 14px;
+      color: rgba(222,222,222,1);
     }
 
     .sliders {
@@ -205,7 +214,10 @@
       }
     }
 
-      .media-player {
+    .media-player {
+      label {
+        color: rgba(222,222,222,1);
+      }
       padding: 12px;
       background-color: rgba(255, 255, 255, 0.1);
       border-radius: 8px;
@@ -229,14 +241,14 @@
         }
         .bottom-bar {
           margin-bottom: -4px;
-
+          margin-top: 4px;
         }
         .control-bar {
           button {
             background: none;
             border: none;
             box-shadow: none;
-            padding: 0 6px;
+            padding: 0 4px;
           }
           
         }

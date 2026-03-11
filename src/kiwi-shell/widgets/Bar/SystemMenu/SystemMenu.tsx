@@ -131,7 +131,7 @@ function SystemMenuContent() {
               </overlay>
         </box>
         
-        <box class="tab-bar" halign={Gtk.Align.CENTER} hexpand={false}>
+        <box class="tab-bar" halign={Gtk.Align.CENTER} hexpand={false} spacing={6}>
           {tabs.map((tab, i) => TabButton(i, tab))}
         </box>
         <box class="tab-container" hexpand={true}>
