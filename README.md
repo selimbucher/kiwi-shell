@@ -72,5 +72,6 @@ Recreating the usual keybinds for an app switcher can be a bit tricky. Check out
 ## Icon Theme and Font
 To recreate the clean look in the screenshots you need to install:
 - **Quicksand** (Font)
-- [WhiteSur GTK Theme](https://github.com/vinceliuice/WhiteSur-gtk-theme)
-- [WhiteSur Icon Theme](https://github.com/vinceliuice/WhiteSur-icon-theme)
+- [WhiteSur Icon Theme](https://github.com/vinceliuice/WhiteSur-icon-theme) with these settings:
+  - Alternative Icons
+  - Bold Panel Icons
