@@ -189,6 +189,18 @@
                 type = lib.types.str;
                 default = "default";
               };
+              dock = lib.mkOption {
+                type = lib.types.str;
+                default = "default";
+              };
+              dock_home = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+              };
+              dock_trash = lib.mkOption {
+                type = lib.types.bool;
+                default = true;
+              };
             };
           };
         };
