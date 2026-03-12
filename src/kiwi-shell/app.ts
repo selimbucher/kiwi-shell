@@ -28,8 +28,9 @@ app.start({
       response(``)
     } else if (cmd == "quit") {
       app.quit()
-    }
-    else {
+    } else if (cmd == undefined) {
+      response(`Kiwi-Shell already running.`)
+    } else {
       response(`Unknown command: ${cmd}`)
     }
     
