@@ -48,6 +48,9 @@ switch {
     &:hover {
       color: #fff;
     }
+    transition-property: color, background-color;
+    transition-duration: 110ms;
+    transition-timing-function: linear;
   }
 
   scale {
