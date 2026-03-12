@@ -15,8 +15,6 @@ This app requires a standard **Hyprland** setup and assumes the following servic
 
 ## Installation
 ### NixOS & Home Manager
-If you are on NixOS or have the Nix package manager installed with **Flakes enabled**, you do not need to manually install dependencies.
-#### Step 1: Add the Input
 In your system's flake.nix, add this repository to the inputs block.
 ```nix
 {
@@ -25,7 +23,6 @@ In your system's flake.nix, add this repository to the inputs block.
   };
 }
 ```
-#### Step 2: Append the Package List
 In your Home Manager configuration file (usually home.nix), add the package to your home.packages list. You will need to pass the inputs argument to your module.
 ```nix
 { inputs, pkgs, ... }: 
@@ -36,39 +33,15 @@ In your Home Manager configuration file (usually home.nix), add the package to y
   ];
 }
 ```
-### Generic Linux (Arch, Fedora, etc.)
-#### Step 1
-Clone this repository to a convinient location.
-#### Step 2
-In addition to the services in the system requirements section, install the following dependencies:
-- zenity
-- sox
-- imagemagick
-- psmisc
-
-And install the following [Astal](https://github.com/aylur/astal) libraries.
-- io
-- astal4
-- battery
-- network
-- hyprland
-- wireplumber
-- mpris
-- powerprofiles
-- bluetooth
-- tray
-- apps
-
-For installing astal packages, refer to the [Wiki](https://aylur.github.io/astal/).
-
-#### Step 3
-Start the app by running
-```bash
-ags run /path/to/project/app.ts
+### Arch Linux
+Make sure that the required system services are installed.
 ```
-
-Note: There is a script **install.sh** that builds everything into a binary, but it has not been tested.
-
+sudo pacman -S networkmanager bluez power-profiles-daemon wireplumber upower
+```
+You can install kiwi-shell from AUR.
+```
+yay -S kiwi-shell
+```
 ## Usage
 Run the following.
 ```bash
