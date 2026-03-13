@@ -20,9 +20,6 @@ const max_brightness = parseInt(exec("brightnessctl max"))
 const min_brightness = 10;
 
 let waiting = true;
-timeout(600, () => {
-  waiting = false
-})
 
 volumeBinding.subscribe(() => showIndicator('volume'))
 muteBinding.subscribe(() => showIndicator('volume'))
@@ -100,6 +97,11 @@ export default function IndicatorBar(gdkmonitor: Gdk.Monitor) {
       css={primaryColor(hex => 
         `--primary: ${hex};`
       )}
+      $={ self => {
+        timeout(500, () => {
+          waiting = false
+        })
+      }}
       visible={isVisible}
       name="ags-indicator"
       class={conf.as(conf =>
