@@ -51,7 +51,7 @@ You might want to execute this automatically on login.
 
 When changing the theme color using this app, the file `~/.conf/kiwi-shell/hypr.conf` is created.
 ```conf
-$primaryColor = rgba(179,165,231,0.6)
+$kiwiColorLight = rgba(179,165,231,0.7)
 ```
 You may want to include this in your hyprland config to match the border color of active windows.
 ### Commands
