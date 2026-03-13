@@ -135,3 +135,11 @@ export function keyboardBrightnessIcon(percentage: number) {
   }
   return 'keyboard-brightness-off-symbolic'
 }
+
+export function wifiIcon(strength: number) {
+    if (strength >= 70) return "network-wireless-signal-excellent-symbolic"
+    if (strength >= 45) return "network-wireless-signal-good-symbolic"
+    if (strength >= 25) return "network-wireless-signal-ok-symbolic"
+    if (strength >= 0) return "network-wireless-signal-weak-symbolic"
+    // return "network-wireless-signal-none-symbolic"
+}

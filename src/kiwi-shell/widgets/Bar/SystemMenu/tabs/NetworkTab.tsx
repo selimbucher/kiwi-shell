@@ -2,7 +2,9 @@ import { createState, createBinding, createComputed, For, With } from "ags"
 import { execAsync } from "ags/process"
 import Network from "gi://AstalNetwork"
 import { Gtk } from "ags/gtk4"
+
 import { openWifiPrompt } from "../../../prompts";
+import { wifiIcon } from "../../../iconNames";
 
 const network = Network.get_default()
 const wifi = network.wifi
@@ -80,16 +82,6 @@ export default function NetworkTab({ visible }) {
   )
 }
 
-
-
-function getSignalIcon(strength: number) {
-    if (strength >= 80) return "network-wireless-signal-excellent-symbolic"
-    if (strength >= 60) return "network-wireless-signal-good-symbolic"
-    if (strength >= 40) return "network-wireless-signal-ok-symbolic"
-    if (strength >= 20) return "network-wireless-signal-weak-symbolic"
-    return "network-wireless-signal-none-symbolic"
-}
-
 const stateBinding = createBinding(wifi, "state")
 
 function AccessPoint(ap) {
@@ -131,7 +123,7 @@ function AccessPoint(ap) {
         <Gtk.Image 
         class="networkIcon"
         pixelSize={16}
-        iconName={createBinding(ap, "strength").as(s => getSignalIcon(s))}
+        iconName={createBinding(ap, "strength").as(s => wifiIcon(s))}
         />
         <label label={ap.ssid || "Hidden Network"} hexpand={true} halign={Gtk.Align.START} />
         <label

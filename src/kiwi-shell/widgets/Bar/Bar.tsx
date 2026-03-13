@@ -11,7 +11,7 @@ import Workspaces from "./Workspaces"
 import PowerMenu from "./PowerMenu"
 import Tray from "./Tray"
 import { conf } from "../config"
-import { Icon, iconTheme } from "../iconNames"
+import { Icon, iconTheme, wifiIcon } from "../iconNames"
 
 const battery = Battery.get_default()
 const network = Network.get_default()
@@ -143,12 +143,11 @@ function networkIcon(wired, wifiState, activeAP) {
   }
 
   if (wifiState === Network.DeviceState.ACTIVATED) {
-    const strength = activeAP ? activeAP.strength : 0
-    if (strength > 80) return "network-wireless-signal-excellent-symbolic"
-    if (strength > 60) return "network-wireless-signal-good-symbolic"
-    if (strength > 40) return "network-wireless-signal-ok-symbolic"
-    if (strength > 20) return "network-wireless-signal-weak-symbolic"
-    return "network-wireless-signal-none-symbolic"
+    if (activeAP) {
+      return wifiIcon(activeAP.strength)
+    } else {
+      return "network-wireless-signal-none-symbolic"
+    }
   }
 
   return "network-wireless-signal-none-symbolic"
