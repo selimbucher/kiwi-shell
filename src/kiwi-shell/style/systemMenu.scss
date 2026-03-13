@@ -21,6 +21,22 @@
     padding: 24px;
   }
 
+  .system-percentage {
+    font-weight: bold;
+    font-size: 13px;
+    color: rgba(222,222,222,1);
+    margin-left: 4px;
+
+    .percent-symbol {
+      font-size: 13px;
+      transform: scale(0.7) translateX(-0.7px) translateY(-1.5px);
+      transform-origin: bottom left;
+      font-weight: bold;
+    }
+
+  }
+
+
   colorbutton button {
     padding: 0;
   }

@@ -11,14 +11,25 @@ gtkSettings?.connect("notify::gtk-icon-theme-name", () => {
     setIconTheme(gtkSettings.gtk_icon_theme_name)
 })
 
-export function Icon({ iconName, pixelSize = 64, class: className = "" }) {
+export function Icon({ iconName, pixelSize = 64, class: className = "", visible = true }: { 
+    iconName: string | (() => string), 
+    pixelSize?: number, 
+    class?: string, 
+    visible?: boolean | (() => boolean)
+}) {
     const resolvedName = typeof iconName === "function"
         ? createComputed(get => filterIconName(get(iconName), get(iconTheme)))
         : iconTheme.as(theme => filterIconName(iconName, theme))
 
+    const resolvedVisible = createComputed(get => {
+        const name = get(resolvedName)
+        const vis = typeof visible === "function" ? get(visible) : visible
+        return name !== "hide" && vis
+    })
+
     return (
         <Gtk.Image
-            visible={resolvedName.as(name => name != "hide")}
+            visible={resolvedVisible}
             class={className}
             iconName={resolvedName}
             pixelSize={pixelSize}

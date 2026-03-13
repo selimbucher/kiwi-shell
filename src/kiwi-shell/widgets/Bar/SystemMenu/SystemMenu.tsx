@@ -19,11 +19,11 @@ import { playSound } from "../../sound"
 const battery = AstalBattery.get_default()
 const hasBattery = battery.get_is_present()
 
-const batPercentBinding = createBinding(battery, "percentage");
-const batChargingBinding = createBinding(battery, "charging");
+const batPercent = createBinding(battery, "percentage");
+const batCharging = createBinding(battery, "charging");
 
 if (hasBattery) {
-  batChargingBinding.subscribe(() => {
+  batCharging.subscribe(() => {
     if (!battery.charging) { return }
     playSound('charging.mp3') 
   })
@@ -128,8 +128,20 @@ function SystemMenuContent() {
                   $type="overlay"
                   pixelSize={24}
                   iconName="preferences-system-power-symbolic"
+                  visible={batCharging}
                 />
-                <CircularProgress progress={batPercentBinding} size={64} lineWidth={7} color={createComputed(get => batteryBarColor(get(batPercentBinding), get(batChargingBinding), get(primaryColor)))}/>
+                <box $type="overlay"
+                  visible={batCharging(b => !b)}
+                  halign={Gtk.Align.CENTER}
+                  valign={Gtk.Align.CENTER}
+                  class={batPercent(p => "system-percentage" + (p==1 ? " full" : ""))}
+                >
+                  <label class="percent-value" label={batPercent(p => `${Math.floor(p*100)}`)}
+                  />
+                  <label class="percent-symbol" valign={Gtk.Align.END} label="%"/>
+                </box>
+                
+                <CircularProgress progress={batPercent} size={64} lineWidth={7} color={createComputed(get => batteryBarColor(get(batPercent), get(batCharging), get(primaryColor)))}/>
               </overlay>
         </box>
         
@@ -149,10 +161,10 @@ function SystemMenuContent() {
 
 function batteryBarColor(percentage, isCharging, primaryColor){
   if (isCharging) {
-    return "#4bd452"
+    return primaryColor
   }
   if (percentage <= 0.1) {
-    return "#ec4a34"
+    return "#ee5a46"
   }
   if (percentage <= 0.2) {
     return "#d6be5dff"
