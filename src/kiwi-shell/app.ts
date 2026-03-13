@@ -8,6 +8,7 @@ import IndicatorBar from "./widgets/IndicatorBar/IndicatorBar"
 import AppSwitcher, { toggleAppSwitcher } from "./widgets/AppSwitcher/AppSwitcher"
 import Dock, { EdgeSensor } from "./widgets/Dock/Dock"
 import { execAsync } from "ags/process"
+import Prompt from "./widgets/prompts";
 
 let sawWarning = false;
 
@@ -42,6 +43,7 @@ app.start({
     app.get_monitors().map(AppSwitcher)
     app.get_monitors().map(Dock)
     app.get_monitors().map(EdgeSensor)
+    app.get_monitors().map(Prompt)
     
   },
 })

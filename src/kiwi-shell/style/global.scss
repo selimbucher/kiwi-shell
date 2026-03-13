@@ -48,9 +48,18 @@ button {
   &:hover {
     color: #fff;
   }
+
   transition-property: color, background-color;
   transition-duration: 110ms;
   transition-timing-function: linear;
+
+  &.primary {
+    background: var(--primary);
+    color: #000;
+    &:hover {
+      background: rgba(255, 255, 255, 0.85);
+    }
+  }
 }
 
 scale {

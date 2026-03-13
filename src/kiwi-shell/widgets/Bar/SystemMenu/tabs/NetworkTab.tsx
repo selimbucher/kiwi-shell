@@ -2,6 +2,7 @@ import { createState, createBinding, createComputed, For, With } from "ags"
 import { execAsync } from "ags/process"
 import Network from "gi://AstalNetwork"
 import { Gtk } from "ags/gtk4"
+import { openWifiPrompt } from "../../../prompts";
 
 const network = Network.get_default()
 const wifi = network.wifi
@@ -89,20 +90,41 @@ function getSignalIcon(strength: number) {
     return "network-wireless-signal-none-symbolic"
 }
 
+const stateBinding = createBinding(wifi, "state")
+
 function AccessPoint(ap) {
-  const isActiveBinding = createBinding(wifi, "activeAccessPoint").as(
-    activeAP => activeAP?.ssid === ap.ssid
-  )
+  const isConnectingBinding = createComputed(get => {
+      const activeAP = get(createBinding(wifi, "activeAccessPoint"))
+      const state = get(stateBinding)
+      return activeAP?.ssid === ap.ssid && 
+          state === Network.DeviceState.IP_CONFIG ||
+          state === Network.DeviceState.PREPARE ||
+          state === Network.DeviceState.CONFIG
+  })
+
+  const isActiveBinding = createComputed(get => {
+      const activeAP = get(createBinding(wifi, "activeAccessPoint"))
+      const state = get(stateBinding)
+      return activeAP?.ssid === ap.ssid && 
+          state === Network.DeviceState.ACTIVATED
+  })
+
+  const isFocusedBinding = createComputed(get => {
+      const focusedAP = get(createBinding(wifi, "activeAccessPoint"))
+      return focusedAP?.ssid === ap.ssid
+  })
     
- return (
+  return (
   <button 
     class={isActiveBinding.as(isActive => isActive ? "network-item active" : "network-item")}
       onClicked={() => {
-      if (!wifi.activeAccessPoint || wifi.activeAccessPoint.ssid !== ap.ssid) {
-        execAsync(`nmcli device wifi connect "${ap.ssid}"`)
-        .catch(err => console.error("Failed to connect: ", err))
-      }
-    }}
+        onNetworkClick(ap.ssid, ap.flags !== 0).catch(e => {
+          if (  String(e).includes("Secrets were required, but not provided") ||
+                String(e).includes("property is invalid")) {
+            openWifiPrompt(ap.ssid, true)
+          }
+        })
+      }}
   >
     <box spacing={8}>
         <Gtk.Image 
@@ -110,7 +132,7 @@ function AccessPoint(ap) {
         pixelSize={16}
         iconName={createBinding(ap, "strength").as(s => getSignalIcon(s))}
         />
-        <label label={ap.ssid || "(Hidden Network)"} hexpand={true} halign={Gtk.Align.START} />
+        <label label={ap.ssid || "Hidden Network"} hexpand={true} halign={Gtk.Align.START} />
         <label
         label = "Connected"
         visible={isActiveBinding}
@@ -125,4 +147,26 @@ function AccessPoint(ap) {
     </box>
     </button>
   )
+}
+
+async function onNetworkClick(ssid: string, secured: boolean) {
+
+  const saved = await hasSavedPassword(ssid)
+  if (saved) {
+      await execAsync(`nmcli con up "${ssid}"`)
+  } else {
+    if (secured)
+      openWifiPrompt(ssid)
+    else
+      await execAsync(`nmcli device wifi connect "${ssid}"`)
+  }
+}
+
+async function hasSavedPassword(ssid: string): Promise<boolean> {
+    try {
+        await execAsync(`nmcli -s connection show "${ssid}"`)
+        return true
+    } catch (e) {
+        return false
+    }
 }
