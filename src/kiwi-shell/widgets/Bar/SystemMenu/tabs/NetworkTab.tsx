@@ -117,14 +117,15 @@ function AccessPoint(ap) {
   return (
   <button 
     class={isActiveBinding.as(isActive => isActive ? "network-item active" : "network-item")}
-      onClicked={() => {
-        onNetworkClick(ap.ssid, ap.flags !== 0).catch(e => {
-          if (  String(e).includes("Secrets were required, but not provided") ||
-                String(e).includes("property is invalid")) {
-            openWifiPrompt(ap.ssid, true)
-          }
-        })
-      }}
+    onClicked={() => {
+      if (isActiveBinding()) { return }
+      onNetworkClick(ap.ssid, ap.flags !== 0).catch(e => {
+        if (  String(e).includes("Secrets were required, but not provided") ||
+              String(e).includes("property is invalid")) {
+          openWifiPrompt(ap.ssid, true)
+        }
+      })
+    }}
   >
     <box spacing={8}>
         <Gtk.Image 
