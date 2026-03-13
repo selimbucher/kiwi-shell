@@ -2,7 +2,7 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createEffect, For, createBinding } from "ags"
 import Hyprland from "gi://AstalHyprland"
-import { primaryColor, conf } from "../config"
+import { conf } from "../config"
 import { captureWindowToTexture } from "./clientCachingService"
 import GioUnix from "gi://GioUnix"
 
@@ -98,7 +98,7 @@ function executeSelectedAndClose() {
 export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
-            css={primaryColor((hex: string) => `--primary: ${hex};`)}
+            css={conf(conf => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-app-switcher"
             class={conf.as((conf: any) => `AppSwitcher theme-${conf.theme}`)}
