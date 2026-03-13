@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, createComputed, createBinding, For } from "ags"
+import { createState, createComputed, createBinding, For, onCleanup } from "ags"
 import { readFile, writeFileAsync } from "ags/file"
 import { conf, primaryColor } from "../config"
 import GLib from "gi://GLib"
@@ -89,41 +89,46 @@ function emptyTrash() {
     }
 }
 
-const [dockTrigger, setDockTrigger] = createState(false)
-const [dockHovered, setDockHovered] = createState(false)
-const [menuOpen, setMenuOpen] = createState(false)
-let hideTimeout: number | null = null
-let leaveTimeout: number | null = null
-
 const clients = createBinding(hyprland, "clients")
 const activeWorkspace = createBinding(hyprland, "focusedWorkspace")
 
-const showDock = createComputed(get => {
-    const config = get(conf)
-    if (get(list).length + get(unpinnedList).length == 0)
-        return false
+export default function Dock({  gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
+    const [dockTrigger, setDockTrigger] = createState(false)
+    const [dockHovered, setDockHovered] = createState(false)
+    const [menuOpen, setMenuOpen] = createState(false)
+    let hideTimeout: number | null = null
+    let leaveTimeout: number | null = null
 
-    const mode = config.dock
-    const trigger = get(dockTrigger)
-    const hovered = get(dockHovered)
-    const hasMenu = get(menuOpen)
+    const showDock = createComputed(get => {
+        const config = get(conf)
+        if (get(list).length + get(unpinnedList).length == 0)
+            return false
 
-    if (mode == "disabled") return false
-    if (mode != "auto-hide") return true
-    if (trigger || hovered || hasMenu) return true
+        const mode = config.dock
+        const trigger = get(dockTrigger)
+        const hovered = get(dockHovered)
+        const hasMenu = get(menuOpen)
 
-    const activeId = get(activeWorkspace)?.id
+        if (mode == "disabled") return false
+        if (mode != "auto-hide") return true
+        if (trigger || hovered || hasMenu) return true
 
-    const hastiledWindow = get(clients).some(client => {
-        const floating = get(createBinding(client, "floating"))
-        return client.workspace.id === activeId /* && !floating */
+        const monitorId = gdkmonitor // you'll need to resolve this to a hyprland monitor id
+        const monitorWorkspaceId = get(clients)
+            .find(c => hyprland.get_monitor(monitorId)?.activeWorkspace?.id)
+        
+        const activeId = hyprland.get_monitors()
+            .find(m => m.name === gdkmonitor.get_connector())
+            ?.activeWorkspace?.id
+
+        const hastiledWindow = get(clients).some(client => {
+            return client.workspace.id === activeId
+        })
+
+        return !hastiledWindow
     })
 
-    return !hastiledWindow
-})
-
-export default function Dock(gdkmonitor: Gdk.Monitor) {
-    return (
+    return [(
         <window
             css={conf.as(conf => 
                 `
@@ -180,10 +185,10 @@ export default function Dock(gdkmonitor: Gdk.Monitor) {
         >
             <DockBar />
         </window>
-    )
+    ), <EdgeSensor gdkmonitor={gdkmonitor} hideTimeout={hideTimeout} setDockTrigger={setDockTrigger}/>]
 }
 
-export function EdgeSensor(gdkmonitor: Gdk.Monitor) {
+function EdgeSensor({ gdkmonitor, hideTimeout, setDockTrigger }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
             name="ags-dock-sensor"
@@ -195,6 +200,7 @@ export function EdgeSensor(gdkmonitor: Gdk.Monitor) {
             application={app}
             visible={conf.as(conf => conf.dock == "auto-hide")}
             $={(self) => {
+                onCleanup(() => self.destroy())
                 const motionController = new Gtk.EventControllerMotion()
                 motionController.connect("enter", () => {
                     if (hideTimeout) {

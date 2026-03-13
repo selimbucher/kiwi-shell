@@ -6,9 +6,11 @@ import style from "./style.scss"
 import Bar from "./widgets/Bar/Bar"
 import IndicatorBar from "./widgets/IndicatorBar/IndicatorBar"
 import AppSwitcher, { toggleAppSwitcher } from "./widgets/AppSwitcher/AppSwitcher"
-import Dock, { EdgeSensor } from "./widgets/Dock/Dock"
+import Dock from "./widgets/Dock/Dock"
 import { execAsync } from "ags/process"
 import Prompt from "./widgets/prompts";
+import { Gdk } from "ags/gtk4"
+import { For, This, createBinding } from "ags"
 
 let sawWarning = false;
 
@@ -38,12 +40,24 @@ app.start({
   },
   css: style,
   main() {
-    app.get_monitors().map(Bar)
-    app.get_monitors().map(IndicatorBar)
-    app.get_monitors().map(AppSwitcher)
-    app.get_monitors().map(Dock)
-    app.get_monitors().map(EdgeSensor)
-    app.get_monitors().map(Prompt)
+    const monitors = createBinding(app, "monitors")
     
+    return (
+        <For each={monitors}>
+            {(gdkmonitor, index) => (
+                <This this={app}>
+                    <Bar gdkmonitor={gdkmonitor} />
+                    <Dock gdkmonitor={gdkmonitor} />
+                    {index() === 0 && <IndicatorBar gdkmonitor={gdkmonitor} /> }
+                    {index() === 0 && <AppSwitcher gdkmonitor={gdkmonitor} />}
+                    {index() === 0 && <Prompt gdkmonitor={gdkmonitor} />}
+                </This>
+            )}
+        </For>
+    )
   },
 })
+
+const isPrimary = (monitor: Gdk.Monitor) => {
+    return app.get_monitors()[0] === monitor
+}

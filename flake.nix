@@ -18,7 +18,7 @@
     system = "x86_64-linux";
     pkgs = nixpkgs.legacyPackages.${system};
     pname = "kiwi";
-    entry = "src/kiwi-shell/app.ts";
+    entry = "src/kiwi-shell/app.tsx";
 
     # ─── app-capture C library ───────────────────────────────────────────────
     # Compiles app-capture.c into libappcapture.so and generates the

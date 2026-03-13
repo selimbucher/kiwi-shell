@@ -12,6 +12,8 @@ export default function Workspaces() {
   const hypr = Hyprland.get_default()
   
   const updateClasses = (btn: Gtk.Button, id: number) => {
+    if (!hypr.focusedWorkspace) return
+    
     const workspace = hypr.get_workspace(id)
     const isFocused = hypr.focusedWorkspace.id === id
     const hasClients = workspace && workspace.get_clients().length > 0
@@ -41,8 +43,8 @@ export default function Workspaces() {
       vexpand={false}
       class="workspace"
       onClicked={() => {
+        if (!hypr.focusedWorkspace) return
         if (hypr.focusedWorkspace.id === id) {
-          // Do something else when clicking active workspace
           hypr.dispatch("exec", "hyprctl dispatch hyprexpo:expo toggle")
         } else {
           hypr.dispatch("workspace", `${id}`)
@@ -54,9 +56,15 @@ export default function Workspaces() {
     
     updateClasses(btn, id)
     
-    hypr.connect("notify::focused-workspace", () => updateClasses(btn, id))
-    hypr.connect("notify::workspaces", () => updateClasses(btn, id))
-    hypr.connect("notify::clients", () => updateClasses(btn, id))
+    const signalIds = [
+      hypr.connect("notify::focused-workspace", () => updateClasses(btn, id)),
+      hypr.connect("notify::workspaces", () => updateClasses(btn, id)),
+      hypr.connect("notify::clients", () => updateClasses(btn, id)),
+    ]
+
+    btn.connect("destroy", () => {
+      signalIds.forEach(sid => hypr.disconnect(sid))
+    })
     
     return btn
   })
@@ -65,10 +73,8 @@ export default function Workspaces() {
     <box class="workspaces">
       {buttons}
       <revealer
-      transitionType={Gtk.RevealerTransitionType.SLIDE_LEFT}
-        revealChild={recordersBinding.as(
-            a => !(a.length === 0)
-          )}
+        transitionType={Gtk.RevealerTransitionType.SLIDE_LEFT}
+        revealChild={recordersBinding.as(a => !(a.length === 0))}
       >
         <Gtk.Image
           class="mic-access"
@@ -78,7 +84,6 @@ export default function Workspaces() {
           pixelSize={13}
         />
       </revealer>
-      
     </box>
   )
 }

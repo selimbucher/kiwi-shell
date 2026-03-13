@@ -95,7 +95,7 @@ function executeSelectedAndClose() {
 }
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
-export default function AppSwitcher(gdkmonitor: Gdk.Monitor) {
+export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
             css={primaryColor((hex: string) => `--primary: ${hex};`)}

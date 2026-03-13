@@ -1,7 +1,7 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createPoll } from "ags/time"
-import { createBinding, createComputed } from "ags"
+import { createBinding, createComputed, onCleanup } from "ags"
 
 import Battery from "gi://AstalBattery"
 import Network from "gi://AstalNetwork"
@@ -23,7 +23,7 @@ const activeAPBinding = createBinding(wifi, "activeAccessPoint")
 
 const hasBattery = battery.get_is_present()
 
-export default function Bar(gdkmonitor: Gdk.Monitor) {
+export default function Bar({  gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
   const { TOP, LEFT, RIGHT } = Astal.WindowAnchor
 
@@ -43,6 +43,7 @@ export default function Bar(gdkmonitor: Gdk.Monitor) {
       anchor={TOP | LEFT | RIGHT}
       application={app}
       layer={Astal.Layer.TOP}
+      $={(self) => onCleanup(() => self.destroy())}
 
     >
       <centerbox class="centerbox">

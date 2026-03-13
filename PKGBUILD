@@ -65,7 +65,7 @@ package() {
     # Bundle the shell
     install -dm755 "$pkgdir/usr/bin"
     cd "$pkgdir/usr/share/kiwi-shell"
-    ags bundle app.ts "$pkgdir/usr/bin/.kiwi-core" \
+    ags bundle app.tsx "$pkgdir/usr/bin/.kiwi-core" \
         --define "SRC='/usr/share/kiwi-shell'"
 
     # Logging wrapper

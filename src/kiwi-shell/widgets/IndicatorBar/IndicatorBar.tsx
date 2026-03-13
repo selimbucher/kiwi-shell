@@ -90,7 +90,7 @@ function resetIndicatorTimeout() {
 }
 
 
-export default function IndicatorBar(gdkmonitor: Gdk.Monitor) {
+export default function IndicatorBar({  gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
   return (
     <window
@@ -114,7 +114,6 @@ export default function IndicatorBar(gdkmonitor: Gdk.Monitor) {
       }
       application={app}
       layer={Astal.Layer.TOP}
-
     >
       <Indicator />
     </window>

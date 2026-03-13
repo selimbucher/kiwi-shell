@@ -9,7 +9,7 @@ import Hyprland from "gi://AstalHyprland"
 import { Icon } from "./iconNames"
 import { playSound } from "./sound";
 
-export default function Prompt(gdkmonitor: Gdk.Monitor) {
+export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
             css={conf.as(conf => 
