@@ -39,42 +39,42 @@ switch {
   }
 }
 
-.Bar, .IndicatorBar, .PowerMenu {
-  button {
-    background: rgba(255, 255, 255, 0.1);
+
+button {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  box-shadow: none;
+  color: rgb(175, 175, 175);
+  &:hover {
+    color: #fff;
+  }
+  transition-property: color, background-color;
+  transition-duration: 110ms;
+  transition-timing-function: linear;
+}
+
+scale {
+  padding: 0 4px;
+  trough {
+    min-height: 10px;
+    border-radius: 8px;
+    background-color: rgba(255,255,255,0.2); // Background color
+  }
+  
+  highlight {
+    border-radius: 8px;
+    margin: 0px;
+    background-color: var(--primary); // Fill/progress color
+  }
+  
+  slider {
+    background: none;
     border: none;
     box-shadow: none;
-    color: rgb(175, 175, 175);
-    &:hover {
-      color: #fff;
-    }
-    transition-property: color, background-color;
-    transition-duration: 110ms;
-    transition-timing-function: linear;
   }
-
-  scale {
-    padding: 0 4px;
-    trough {
-      min-height: 10px;
-      border-radius: 8px;
-      background-color: rgba(255,255,255,0.2); // Background color
-    }
-    
-    highlight {
-      border-radius: 8px;
-      margin: 0px;
-      background-color: var(--primary); // Fill/progress color
-    }
-    
-    slider {
-      background: none;
-      border: none;
-      box-shadow: none;
-    }
-  }
-
 }
+
+
 
 .colorchooser {
   background: rgba(20,20,20.8);
