@@ -6,16 +6,20 @@ import { conf, setConf, primaryColor, storePrimaryColor, writeConf } from "../..
 import { Icon } from "../../../iconNames";
 
 // Helper function to safely get the current wallpaper
-function getCurrentWallpaper(): string | null {
+function getCurrentWallpaper(connector?: string): string | null {
     try {
         const output = exec("swww query")
-        if (output && output.includes("image: ")) {
-            return output.split("image: ")[1].trim()
-        }
+        const lines = output.split("\n").filter(l => l.includes("image: "))
+        
+        const line = connector 
+            ? lines.find(l => l.includes(connector)) ?? lines[0]
+            : lines[0]
+            
+        const match = line?.match(/image:\s*(.+)$/)
+        return match ? match[1].trim() : null
     } catch (error) {
-        // Use execAsync so the daemon runs in the background without blocking the GTK thread
         execAsync("swww-daemon").catch(() => {})
-        console.log("swww daemon not running or query failed, starting daemon...")
+        console.log("swww daemon not running, starting...")
     }
     return null
 }
