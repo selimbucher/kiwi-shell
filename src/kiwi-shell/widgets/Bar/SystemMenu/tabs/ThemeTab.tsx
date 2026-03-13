@@ -2,7 +2,7 @@ import { createState } from "ags"
 import { Gtk, Gdk } from "ags/gtk4"
 import { exec, execAsync } from "ags/process"
 
-import { conf, setConf, primaryColor, storePrimaryColor, writeConf } from "../../../config"
+import { conf, setConf, writeConf } from "../../../config"
 import { Icon } from "../../../iconNames";
 
 // Helper function to safely get the current wallpaper
@@ -61,7 +61,7 @@ function setupWallpaperPolling() {
 setupWallpaperPolling()
 
 const rgba = new Gdk.RGBA()
-rgba.parse(primaryColor.get())
+rgba.parse(conf().primary_color)
 
 export default function ThemeTab({visible}) {
     return (
@@ -248,15 +248,18 @@ function ThemeSelector() {
 function ColorPicker() {
   return (
     <Gtk.ColorButton
-    class="color-picker"
-    rgba={primaryColor(hex => {
-        rgba.parse(primaryColor.get())
+      class="color-picker"
+      rgba={(() => {
+        rgba.parse(conf().primary_color)
         return rgba
-    })}
-    onColorSet={self =>
-        storePrimaryColor(self.rgba)
-    }
-      show_editor={true}  // Opens directly to custom picker!
+      })()}
+      onColorSet={self => {
+        const r = self.rgba
+        const hex = rgbaToHex(r)
+        setConf({ ...conf(), primary_color: `#${hex}` })
+        writeConf()
+      }}
+      show_editor={true}
     />
   )
 }

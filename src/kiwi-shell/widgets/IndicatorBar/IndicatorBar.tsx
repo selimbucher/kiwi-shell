@@ -7,7 +7,7 @@ import { exec } from "ags/process"
 import { readFile } from "ags/file"
 
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../iconNames"
-import { conf, primaryColor } from "../config"
+import { conf } from "../config"
 import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 
@@ -94,8 +94,8 @@ export default function IndicatorBar({  gdkmonitor }: { gdkmonitor: Gdk.Monitor 
 
   return (
     <window
-      css={primaryColor(hex => 
-        `--primary: ${hex};`
+      css={conf(conf => 
+        `--primary: ${conf.primary_color};`
       )}
       $={ self => {
         timeout(500, () => {

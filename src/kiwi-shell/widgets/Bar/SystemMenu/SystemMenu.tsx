@@ -12,7 +12,7 @@ import ThemeTab from "./tabs/ThemeTab"
 import PerformanceTab from "./tabs/PerformanceTab"
 import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./tabs/BluetoothTab"
 
-import { primaryColor } from "../../config"
+import { conf } from "../../config"
 import { Icon } from "../../iconNames"
 import { playSound } from "../../sound"
 
@@ -141,7 +141,7 @@ function SystemMenuContent() {
                   <label class="percent-symbol" valign={Gtk.Align.END} label="%"/>
                 </box>
                 
-                <CircularProgress progress={batPercent} size={64} lineWidth={7} color={createComputed(get => batteryBarColor(get(batPercent), get(batCharging), get(primaryColor)))}/>
+                <CircularProgress progress={batPercent} size={64} lineWidth={7} color={createComputed(get => batteryBarColor(get(batPercent), get(batCharging), get(conf).primary_color))}/>
               </overlay>
         </box>
         

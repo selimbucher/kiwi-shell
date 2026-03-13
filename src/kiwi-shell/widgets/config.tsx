@@ -37,10 +37,8 @@ const initialConfig = loadConfig()
 const borderOpacity = 0.7;
 
 export const [conf, setConf] = createState(initialConfig)
-export const [primaryColor, setPrimaryColor] = createState(initialConfig.primary_color)
 
 export async function writeConf() {
-    // Read directly from the current state
     const currentConf = conf(); 
     const jsonString = JSON.stringify(currentConf, null, 2);
     
@@ -49,27 +47,15 @@ export async function writeConf() {
     } catch (error) {
         console.error("Failed to save config:", error)
     }
-}
 
-export async function storePrimaryColor(color: Gdk.RGBA) {
-    const colorString = color.to_string()
-    
-    // Update both states
-    setPrimaryColor(colorString)
-    setConf({ ...conf(), primary_color: colorString })
-    
-    // Reuse writeConf to save the updated JSON config
-    await writeConf()
-
-    // Prepare and save Hyprland string
-    const borderColor = color.copy()
-    borderColor.alpha = borderOpacity
-    const hyprString = `$primaryColor = ${borderColor.to_string()}`
-
+    // Sync hypr.conf with current primary color
     try {
+        const rgba = new Gdk.RGBA()
+        rgba.parse(currentConf.primary_color)
+        rgba.alpha = borderOpacity
+        const hyprString = `$primaryColor = ${rgba.to_string()}`
         await writeFileAsync(HYPR_FILE, hyprString)
     } catch (error) {
         console.error("Failed to save hypr colors:", error)
     }
 }
-
