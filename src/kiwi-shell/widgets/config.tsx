@@ -48,12 +48,16 @@ export async function writeConf() {
         console.error("Failed to save config:", error)
     }
 
-    // Sync hypr.conf with current primary color
     try {
         const rgba = new Gdk.RGBA()
         rgba.parse(currentConf.primary_color)
+        
+        const kiwiColor = rgba.to_string()
+        
         rgba.alpha = borderOpacity
-        const hyprString = `$primaryColor = ${rgba.to_string()}`
+        const kiwiColorTransparent = rgba.to_string()
+        
+        const hyprString = `$kiwiColor = ${kiwiColor}\n$kiwiColorLight = ${kiwiColorTransparent}`
         await writeFileAsync(HYPR_FILE, hyprString)
     } catch (error) {
         console.error("Failed to save hypr colors:", error)
