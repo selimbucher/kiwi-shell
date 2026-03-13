@@ -37,6 +37,14 @@ const initialConfig = loadConfig()
 const borderOpacity = 0.7;
 
 export const [conf, setConf] = createState(initialConfig)
+monitorFile(CONFIG_FILE, () => {
+    try {
+        const content = readFile(CONFIG_FILE)
+        setConf(JSON.parse(content))
+    } catch (error) {
+        console.error("Failed to reload config:", error)
+    }
+})
 
 export async function writeConf() {
     const currentConf = conf(); 
