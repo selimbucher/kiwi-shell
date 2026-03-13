@@ -6,7 +6,7 @@ import { timeout } from "ags/time"
 import { exec } from "ags/process"
 import { readFile } from "ags/file"
 
-import { volumeIcon, brightnessIcon, keyboardBrightnessIcon } from "../iconNames"
+import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../iconNames"
 import { conf, primaryColor } from "../config"
 import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
@@ -136,7 +136,7 @@ function Indicator(){
   return (
     <centerbox class="indicator-bar">
       <box $type="center" class="indicator-box">
-        <Gtk.Image
+        <Icon
           class={indicatorIcon.as((icon) => 'indicator-icon '+icon)}
           iconName={indicatorIcon}
           pixelSize={16}
