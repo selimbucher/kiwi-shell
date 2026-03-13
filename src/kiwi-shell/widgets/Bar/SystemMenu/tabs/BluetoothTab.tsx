@@ -1,10 +1,22 @@
 import { Gtk } from "ags/gtk4"
 import AstalBluetooth from "gi://AstalBluetooth"
 import { createBinding, createComputed, For } from "ags"
+
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
+import { bluetoothTabOpen } from "../SystemMenu";
 
 const bluetooth = AstalBluetooth.get_default()
 const adapter = bluetooth.adapter
+
+adapter.connect("notify::powered", () => {
+    if (adapter.powered) {
+        adapter.set_discoverable(true)
+        if (bluetoothTabOpen()) {
+            console.log("Starting Bluetooth discovery because Bluetooth tab is open")
+            startBluetoothDiscovery()
+        }
+    }
+})
 
 const bluetoothEnabledBinding = createBinding(adapter, "powered")
 const devicesBinding = createBinding(bluetooth, "devices")
@@ -28,11 +40,8 @@ export default function BluetoothTab({visible}) {
                 <switch
                     active={bluetoothEnabledBinding}
                     onStateSet={(self, state) => {
-                        if (bluetoothEnabledBinding.get()) {
-                            adapter.powered = false
-                        } else {
-                            adapter.powered = true
-                            adapter.pairable = true
+                        if (state !== adapter.powered) {
+                            adapter.set_powered(state)
                         }
                     }}
                 />

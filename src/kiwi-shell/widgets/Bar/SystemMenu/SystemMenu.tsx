@@ -40,6 +40,11 @@ export const systemTabOpen = createComputed(get => {
   return get(activeTab) === 0 && get(systemMenuOpen)
 })
 
+export const bluetoothTabOpen = createComputed(get => {
+  print("Active tab:", get(activeTab), "System menu open:", get(systemMenuOpen))
+  return get(activeTab) === 2 && get(systemMenuOpen)
+})
+
 // Define your tabs
 const tabs = [
   { name: "settings", icon: "system-settings-symbolic" },
