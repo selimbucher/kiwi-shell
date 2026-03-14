@@ -116,17 +116,16 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         if (mode != "auto-hide") return true
         if (trigger || hovered || hasMenu) return true
 
-        const monitorId = gdkmonitor
-        const monitorWorkspaceId = get(clients)
-            .find(c => hyprland.get_monitor(monitorId)?.activeWorkspace?.id)
-        
+        // Subscribe so this recomputes on every workspace switch
+        get(activeWorkspace)
+
         const activeId = hyprland.get_monitors()
             .find(m => m.name === gdkmonitor.get_connector())
             ?.activeWorkspace?.id
 
-        const hastiledWindow = get(clients).some(client => {
-            return client.workspace.id === activeId
-        })
+        const hastiledWindow = get(clients).some(client =>
+            client.workspace.id === activeId
+        )
 
         return !hastiledWindow
     })
