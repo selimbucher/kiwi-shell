@@ -8,12 +8,19 @@
       url = "github:aylur/ags";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    kiwi-settings = {
+      url = "github:selimbucher/kiwi-settings";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
   };
 
   outputs = {
     self,
     nixpkgs,
     ags,
+    kiwi-settings,
   }: let
     system = "x86_64-linux";
     pkgs = nixpkgs.legacyPackages.${system};
@@ -208,7 +215,10 @@
 
       config = lib.mkIf cfg.enable {
         xdg.configFile."kiwi-shell/initial-config.json".text = builtins.toJSON cfg.settings;
-        home.packages = [self.packages.${system}.default];
+        home.packages = [
+          self.packages.${system}.default
+          kiwi-settings.packages.${system}.default
+        ];
       };
     };
   };

@@ -42,6 +42,26 @@
         "type": "github"
       }
     },
+    "kiwi-settings": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1773455047,
+        "narHash": "sha256-3LloP9KcfZa25UDoNa8a/xDNJnf5vHcPvGRhgEOivbA=",
+        "owner": "selimbucher",
+        "repo": "kiwi-settings",
+        "rev": "4fc7a2c0729fac5d2ff83a8c5f5119a8c888569d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "selimbucher",
+        "repo": "kiwi-settings",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1771848320,
@@ -61,6 +81,7 @@
     "root": {
       "inputs": {
         "ags": "ags",
+        "kiwi-settings": "kiwi-settings",
         "nixpkgs": "nixpkgs"
       }
     }
