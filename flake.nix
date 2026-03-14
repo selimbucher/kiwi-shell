@@ -216,13 +216,20 @@
                 type = lib.types.bool;
                 default = true;
               };
+              dock_apps = lib.mkOption {
+                type = lib.types.nullOr (lib.types.listOf lib.types.str);
+                default = null;
+                description = "List of .desktop app IDs to pin to the dock";
+              };
             };
           };
         };
       };
 
       config = lib.mkIf cfg.enable {
-        xdg.configFile."kiwi-shell/initial-config.json".text = builtins.toJSON cfg.settings;
+        xdg.configFile."kiwi-shell/initial-config.json".text = builtins.toJSON (
+          lib.filterAttrs (_: v: v != null) cfg.settings
+        );
         home.packages = [ self.packages.${system}.default ];
       };
     };

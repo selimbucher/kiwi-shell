@@ -11,6 +11,7 @@ import GObject from "gi://GObject"
 import Hyprland from "gi://AstalHyprland"
 import { Icon } from "../iconNames"
 import { playSound } from "../sound";
+import { conf } from "../config";
 
 const DOCK_HIDE_TIMEOUT = 600
 const DOCK_HIDE_TIMEOUT_EDGE = 1200
@@ -21,17 +22,20 @@ const hyprland = Hyprland.get_default()
 const HOME = GLib.getenv("HOME")
 const APPLIST_FILE = `${HOME}/.config/kiwi-shell/dock-apps.json`
 
-let initialAppList: string[]
+const isNixManaged = !!conf().dock_apps
 
-try {
-    initialAppList = JSON.parse(readFile(APPLIST_FILE))
-} catch {
-    initialAppList = []
-}
+const initialAppList: string[] = conf().dock_apps ?? (() => {
+    try {
+        return JSON.parse(readFile(APPLIST_FILE))
+    } catch {
+        return []
+    }
+})()
 
 const [list, setList] = createState<string[]>(initialAppList)
 
 async function saveList() {
+    if (isNixManaged) return
     try {
         await writeFileAsync(APPLIST_FILE, JSON.stringify(list(), null, 2))
     } catch (error) {
