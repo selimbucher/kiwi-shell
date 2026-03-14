@@ -45,7 +45,6 @@ export const systemTabOpen = createComputed(get => {
 })
 
 export const bluetoothTabOpen = createComputed(get => {
-  print("Active tab:", get(activeTab), "System menu open:", get(systemMenuOpen))
   return get(activeTab) === 2 && get(systemMenuOpen)
 })
 
@@ -73,7 +72,6 @@ export default function SystemMenu() {
         if (activeTab.get() === 2) {
           try{
             startBluetoothDiscovery()
-            console.log("Started Bluetooth Discovery")
           } catch {}
           
         }
@@ -82,7 +80,6 @@ export default function SystemMenu() {
         setSystemMenuOpen(false)
         try {
           stopBluetoothDiscovery()
-          console.log("Stopped Bluetooth Discovery")
         } catch {}
         
       }}
@@ -102,12 +99,10 @@ function SystemMenuContent() {
           if (index == 2) {
             try {
               startBluetoothDiscovery()
-              console.log("Started Bluetooth Discovery")
             } catch {}
           } else {
             try {
               stopBluetoothDiscovery()
-              console.log("Stopped Bluetooth Discovery")
             } catch (err) {}
           }
           if (index == 1) {

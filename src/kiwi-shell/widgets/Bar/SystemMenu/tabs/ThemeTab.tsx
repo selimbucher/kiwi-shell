@@ -151,7 +151,6 @@ function DockSelector() {
                 
                 const textValue = selectedItem.get_string();
                 
-                print(`Selected Dock: ${textValue}`);
                 setConf({ 
                     ...conf(), 
                     dock: textValue.toLowerCase()
@@ -186,7 +185,6 @@ function ThemeSelector() {
                 
                 const textValue = selectedItem.get_string();
                 
-                print(`Selected Theme: ${textValue}`);
                 setConf({ 
                     ...conf(), 
                     theme: textValue.toLowerCase()
