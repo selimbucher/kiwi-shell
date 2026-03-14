@@ -8,7 +8,14 @@ import { wifiIcon } from "../../../iconNames";
 
 const network = Network.get_default()
 const wifi = network.wifi
-const wifiEnabledBinding = createBinding(wifi, "enabled");
+const wifiEnabledRaw = createBinding(wifi, "enabled");
+const [frozen, setFrozen] = createState(false);
+const [frozenValue, setFrozenValue] = createState(wifi.enabled);
+
+const wifiEnabledBinding = createComputed((get) => {
+  if (get(frozen)) return get(frozenValue);
+  return get(wifiEnabledRaw);
+});
 
 export function rescanWifi(){
   wifi.scan()
@@ -68,8 +75,11 @@ export default function NetworkTab({ visible }) {
         <switch
           active={wifiEnabledBinding}
           onStateSet={(self, state) => {
-            wifi.enabled = state
-            return false
+            wifi.enabled = state;
+            setFrozenValue(state);
+            setFrozen(true);
+            setTimeout(() => setFrozen(false), 2000);
+            return false;
           }}
         />
       </box>

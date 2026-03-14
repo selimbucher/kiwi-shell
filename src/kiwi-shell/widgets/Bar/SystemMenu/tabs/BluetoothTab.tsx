@@ -9,20 +9,33 @@ const bluetooth = AstalBluetooth.get_default()
 const adapter = bluetooth.adapter
 
 adapter.connect("notify::powered", () => {
-    if (adapter.powered) {
+    if (bluetoothEnabledBinding()) {
         adapter.set_discoverable(true)
         if (bluetoothTabOpen()) {
-            console.log("Starting Bluetooth discovery because Bluetooth tab is open")
             startBluetoothDiscovery()
         }
     }
 })
 
-const bluetoothEnabledBinding = createBinding(adapter, "powered")
+import { createState } from "ags"
+
+const bluetoothEnabledRaw = createBinding(adapter, "powered")
+const [btFrozen, setBtFrozen] = createState(false)
+const [btFrozenValue, setBtFrozenValue] = createState(adapter.powered)
+
+const bluetoothEnabledBinding = createComputed((get) => {
+  if (get(btFrozen)) return get(btFrozenValue)
+  return get(bluetoothEnabledRaw)
+})
+
 const devicesBinding = createBinding(bluetooth, "devices")
 
 export function startBluetoothDiscovery() {
-    adapter.start_discovery()
+    try {
+        adapter.start_discovery()
+    } catch (e) {
+        // Already discovering, ignore
+    }
 }
 
 export function stopBluetoothDiscovery() {
@@ -43,6 +56,9 @@ export default function BluetoothTab({visible}) {
                         if (state !== adapter.powered) {
                             adapter.set_powered(state)
                         }
+                        setBtFrozen(true)
+                        setBtFrozenValue(state)
+                        setTimeout(() => setBtFrozen(false), 2000)
                     }}
                 />
             </box>
