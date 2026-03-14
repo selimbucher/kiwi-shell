@@ -8,7 +8,7 @@ import { readFile } from "ags/file"
 
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../iconNames"
 import { conf } from "../config"
-import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable } from "../brightness"
+import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessAvailable } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 
 const fadeTimeout = 2500
@@ -16,7 +16,7 @@ const fadeTimeout = 2500
 const wp = AstalWp.get_default()
 const volumeBinding = createBinding(wp.audio.defaultSpeaker, 'volume');
 const muteBinding = createBinding(wp.audio.defaultSpeaker, 'mute')
-const max_brightness = parseInt(exec("brightnessctl max"))
+const max_brightness = brightnessAvailable ? parseInt(exec("brightnessctl max")) : 1
 const min_brightness = 10;
 
 let waiting = true;
@@ -24,7 +24,9 @@ let waiting = true;
 volumeBinding.subscribe(() => showIndicator('volume'))
 muteBinding.subscribe(() => showIndicator('volume'))
 
-brightness.subscribe(() => showIndicator('brightness'))
+if (brightnessAvailable) {
+  brightness.subscribe(() => showIndicator('brightness'))
+}
 
 if (kbdAvailable) {
   kbdBrightness.subscribe(() => showIndicator('keyboardBrightness'))
@@ -71,12 +73,11 @@ const isSensitive = createComputed(get => {
     case 'volume':
       return true
     case 'brightness':
-      return true;
+      return brightnessAvailable;
     default:
       return false;
   }
 })
-
 
 const [isVisible, setVisibility] = createState(false)
 
