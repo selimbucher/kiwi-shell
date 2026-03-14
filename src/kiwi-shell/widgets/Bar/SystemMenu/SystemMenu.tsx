@@ -29,10 +29,14 @@ if (hasBattery) {
   })
 }
 
+let systemMenuPopover: Gtk.Popover | null = null
 
+export function closeSystemMenu() {
+  systemMenuPopover?.popdown()
+}
 
 // Expose active tab state so other modules can react to it (e.g., Bar popover open)
-const [systemMenuOpen, setSystemMenuOpen] = createState(false)
+export const [systemMenuOpen, setSystemMenuOpen] = createState(false)
 
 const [activeTab, setActiveTab] = createState(0)
 
@@ -60,6 +64,7 @@ export default function SystemMenu() {
       hasArrow={false}
       class="system-menu-popover"
       autohide={true}
+      $={self => systemMenuPopover = self}
       onShow={() => {
         setSystemMenuOpen(true)
         if (activeTab.get() === 1) {

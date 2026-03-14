@@ -2,6 +2,7 @@ import { Gtk } from "ags/gtk4"
 import { exec, execAsync } from "ags/process"
 import { createState, createBinding, createComputed, With } from "ags"
 import { createPoll } from "ags/time"
+import { subprocess } from "ags/process"
 
 import AstalWp from "gi://AstalWp"
 import AstalPowerProfiles from "gi://AstalPowerProfiles"
@@ -9,6 +10,7 @@ import AstalPowerProfiles from "gi://AstalPowerProfiles"
 import { MediaPlayer } from "../../../Misc"
 import { Icon, powerProfileIcon, volumeIcon, brightnessIcon } from "../../../iconNames"
 import { brightness, setBrightnessLevel } from "../../../brightness"
+import { closeSystemMenu } from "../SystemMenu";
 
 const [nightShift, setNightShift] = createState(false);
 
@@ -177,7 +179,8 @@ function OptionButtons(){
         </button>
         <button class="option"
         onClicked={() => {
-          console.log(wp.audio.recorders)
+          subprocess(["kiwi-settings"])
+          closeSystemMenu()
         }}
         >
           <Gtk.Image iconName="preferences-system-symbolic" pixelSize={17}/>
