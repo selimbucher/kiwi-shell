@@ -11,7 +11,6 @@ import GObject from "gi://GObject"
 import Hyprland from "gi://AstalHyprland"
 import { Icon } from "../iconNames"
 import { playSound } from "../sound";
-import { conf } from "../config";
 
 const DOCK_HIDE_TIMEOUT = 600
 const DOCK_HIDE_TIMEOUT_EDGE = 1200
@@ -96,7 +95,7 @@ function emptyTrash() {
 const clients = createBinding(hyprland, "clients")
 const activeWorkspace = createBinding(hyprland, "focusedWorkspace")
 
-export default function Dock({  gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
+export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     const [dockTrigger, setDockTrigger] = createState(false)
     const [dockHovered, setDockHovered] = createState(false)
     const [menuOpen, setMenuOpen] = createState(false)
@@ -117,7 +116,7 @@ export default function Dock({  gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         if (mode != "auto-hide") return true
         if (trigger || hovered || hasMenu) return true
 
-        const monitorId = gdkmonitor // you'll need to resolve this to a hyprland monitor id
+        const monitorId = gdkmonitor
         const monitorWorkspaceId = get(clients)
             .find(c => hyprland.get_monitor(monitorId)?.activeWorkspace?.id)
         
@@ -187,7 +186,7 @@ export default function Dock({  gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 self.add_controller(dragMotion)
             }}
         >
-            <DockBar />
+            <DockBar setMenuOpen={setMenuOpen} />
         </window>
     ), <EdgeSensor gdkmonitor={gdkmonitor} hideTimeout={hideTimeout} setDockTrigger={setDockTrigger}/>]
 }
@@ -239,7 +238,7 @@ function EdgeSensor({ gdkmonitor, hideTimeout, setDockTrigger }: { gdkmonitor: G
     )
 }
 
-function DockBar() {
+function DockBar({ setMenuOpen }) {
     const pinnedBinding = createComputed(get => get(list))
 
     return (
@@ -247,7 +246,7 @@ function DockBar() {
             <box $type="center" class="dock-box" orientation={Gtk.Orientation.HORIZONTAL}>
                 <box>
                     <For each={pinnedBinding}>
-                        {(entry) => <AppIcon entry={entry} />}
+                        {(entry) => <AppIcon entry={entry} setMenuOpen={setMenuOpen} />}
                     </For>
                 </box>
                 <box
@@ -259,7 +258,7 @@ function DockBar() {
                 />
                 <box>
                     <For each={unpinnedList}>
-                        {(entry) => <AppIcon entry={entry} />}
+                        {(entry) => <AppIcon entry={entry} setMenuOpen={setMenuOpen} />}
                     </For>
                 </box>
                 <box
@@ -270,16 +269,15 @@ function DockBar() {
                         (get(conf).dock_home == true || get(conf).dock_trash == true)
                     )}
                 />
-                <HomeFolderButton />
-                <TrashButton />
+                <HomeFolderButton setMenuOpen={setMenuOpen} />
+                <TrashButton setMenuOpen={setMenuOpen} />
             </box>
         </box>
     )
 }
 
-function HomeFolderButton() {
+function HomeFolderButton({ setMenuOpen }) {
     const commonDirs = [
-        // { name: "Home",      path: `${HOME}`,           icon: "user-home" },
         { name: "Desktop",   path: `${HOME}/Desktop`,   icon: "user-desktop" },
         { name: "Documents", path: `${HOME}/Documents`, icon: "folder-documents" },
         { name: "Downloads", path: `${HOME}/Downloads`, icon: "folder-download" },
@@ -351,7 +349,7 @@ function HomeFolderButton() {
 
 let _trashMonitor: Gio.FileMonitor | null = null
 
-function TrashButton() {
+function TrashButton({ setMenuOpen }) {
     const TRASH_FILES = `${GLib.get_user_data_dir()}/Trash/files`
 
     const isTrashEmpty = () => {
@@ -473,7 +471,7 @@ function TrashButton() {
     )
 }
 
-function AppIcon({ entry }: { entry: string }) {
+function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v: boolean) => void }) {
     const initClass = entry.replace(/\.desktop$/, "")
     const application = GioUnix.DesktopAppInfo.new(entry)
     const icon = application?.get_icon()?.to_string() ?? initClass
@@ -497,7 +495,7 @@ function AppIcon({ entry }: { entry: string }) {
         saveList()
     }
 
-    const menu = AppContextMenu(entry, clientsBinding, application, icon, name, pinned, onPinChange)
+    const menu = AppContextMenu(entry, clientsBinding, application, icon, name, pinned, onPinChange, setMenuOpen)
 
     return (
         <button
@@ -549,7 +547,7 @@ function ActiveClientDot() {
     )
 }
 
-function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, onPinChange) {
+function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, onPinChange, setMenuOpen) {
     let popover: Gtk.Popover
 
     return (
@@ -577,7 +575,7 @@ function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, 
                 </button>
 
                 <button
-                    visible={pinned.as(p => p === true)}
+                    visible={pinned.as(p => p === true && !isNixManaged)}
                     onclicked={() => {
                         popover.popdown()
                         onPinChange(false)
@@ -590,7 +588,7 @@ function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, 
                 </button>
 
                 <button
-                    visible={pinned.as(p => p === false)}
+                    visible={pinned.as(p => p === false && !isNixManaged)}
                     onclicked={() => {
                         popover.popdown()
                         onPinChange(true)
