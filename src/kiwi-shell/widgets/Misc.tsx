@@ -2,24 +2,47 @@ import { Gtk } from "ags/gtk4"
 import { createBinding, createComputed, With } from "ags"
 import Mpris from "gi://AstalMpris"
 
-// Access the first available player
-// const player = mpris.get_players()[0]
-
 export function MediaPlayer() {
   const mpris = Mpris.get_default()
-  
+
+  let lastPlayingPlayer: Mpris.Player | null = null
+
+  const activePlayer = createComputed(get => {
+    const list = get(createBinding(mpris, "players"))
+    if (!list?.length) return null
+
+    const isAlive = (p: Mpris.Player) => {
+      const title = get(createBinding(p, "title"))
+      return title && String(title).trim().length > 0
+    }
+
+    for (const p of list) {
+      const status = get(createBinding(p, "playback_status"))
+      if (status === Mpris.PlaybackStatus.PLAYING && isAlive(p)) {
+        lastPlayingPlayer = p
+        return p
+      }
+    }
+
+    if (lastPlayingPlayer && list.includes(lastPlayingPlayer) && isAlive(lastPlayingPlayer)) {
+      const status = get(createBinding(lastPlayingPlayer, "playback_status"))
+      if (status === Mpris.PlaybackStatus.PAUSED) return lastPlayingPlayer
+    }
+
+    for (const p of list) {
+      const status = get(createBinding(p, "playback_status"))
+      if (status === Mpris.PlaybackStatus.PAUSED && isAlive(p)) return p
+    }
+
+    return list.find(p => isAlive(p)) ?? null
+  })
+
   return (
     <box>
-      <With value={createBinding(mpris, "players")}>
-        {(players) => {
-          const list = Array.isArray(players) ? players : []
-          
-          // 1. Pick the best player: Prioritize 'PLAYING', fallback to the first available.
-          const player = list.find(p => p.playback_status === Mpris.PlaybackStatus.PLAYING) || list[0]
-          
+      <With value={activePlayer}>
+        {(player) => {
           if (!player) return;
-          
-          // make fields reactive and ensure strings
+
           const title = createBinding(player, "title").as(v => String(v ?? ""))
           const artist = createBinding(player, "artist").as(v => String(v ?? ""))
           const album = createBinding(player, "album").as(v => String(v ?? ""))
@@ -28,16 +51,11 @@ export function MediaPlayer() {
           const position = createBinding(player, "position")
           const length = createBinding(player, "length")
           const remaining = createComputed((get) =>
-            get(length) - get(position)
+            Math.max(0, get(length) - get(position))
           )
 
           return (
-            // 2. REACTIVE FIX: Hide the whole box if the title is empty.
-            <box 
-              class="media-player" 
-              hexpand={true} 
-              visible={title.as(t => t.trim().length > 0)}
-            >
+            <box class="media-player" hexpand={true}>
               <box class="cover-art" overflow={Gtk.Overflow.HIDDEN}>
                 <With value={cover}>
                   {(cover) => {
@@ -128,12 +146,10 @@ export function CircularProgress({
   size = 64, 
   color = "#4DB3FF"
 }) {
-  // Helper: parse hex, rgb(), rgba() into RGBA [0..1]
   const parseColor = (input: string) => {
     if (!input) return null
     let s = input.trim()
 
-    // Hex: #RGB, #RGBA, #RRGGBB, #RRGGBBAA
     if (s.startsWith("#")) {
       let h = s.slice(1)
       if (h.length === 3 || h.length === 4) {
@@ -147,7 +163,6 @@ export function CircularProgress({
       return { r: r / 255, g: g / 255, b: b / 255, a }
     }
 
-    // rgb(a): rgb(255, 0, 0) or rgba(255,0,0,0.5) with optional spaces/percents
     const m = s.match(/^rgba?\(\s*([+-]?\d*\.?\d+%?)\s*,\s*([+-]?\d*\.?\d+%?)\s*,\s*([+-]?\d*\.?\d+%?)(?:\s*,\s*([+-]?\d*\.?\d+%?)\s*)?\)$/i)
     if (m) {
       const to255 = (v: string) => {
@@ -174,7 +189,6 @@ export function CircularProgress({
     return null
   }
 
-  // Replace progressAcc + colorAcc with a single combined accessor
   const stateAcc = createComputed((get) => {
     const raw = typeof progress === "number" ? progress : get(progress)
     const v = Math.max(0, Math.min(1, raw > 1 ? raw / 100 : raw))
@@ -196,17 +210,15 @@ export function CircularProgress({
             const centerX = width / 2
             const centerY = height / 2
 
-            // Background circle
             cr.setSourceRGBA(0.2, 0.2, 0.2, 0.3)
             cr.setLineWidth(lineWidth)
             cr.arc(centerX, centerY, radius, 0, 2 * Math.PI)
             cr.stroke()
 
-            // Progress arc with rounded caps and parsed color
             const parsed = parseColor(c) ?? parseColor("#4DB3FF")!
             cr.setSourceRGBA(parsed.r, parsed.g, parsed.b, parsed.a)
             cr.setLineWidth(lineWidth)
-            cr.setLineCap(1) // Cairo.LineCap.ROUND
+            cr.setLineCap(1)
 
             const startAngle = -Math.PI / 2
             const endAngle = startAngle + (2 * Math.PI * v)
