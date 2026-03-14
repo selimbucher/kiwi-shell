@@ -109,57 +109,20 @@ export default function ThemeTab({visible}) {
                     </box>
                 )}
             </box>
-            <box class="large-header">
-                Theme
-            </box>
-            <box
-                class="theme-settings"
-                orientation={Gtk.Orientation.VERTICAL}
-                spacing={6}
-            >
-                <box halign={Gtk.Align.CENTER}>
-                    <ThemeSelector /> <ColorPicker />
+            {/* Theme section hidden — kept for future use */}
+            <box visible={false} orientation={Gtk.Orientation.VERTICAL}>
+                <box class="large-header">
+                    Theme
                 </box>
-            </box>
-            <box class="large-header">
-                Dock Style
-            </box>
-            <box
-                class="theme-settings"
-                orientation={Gtk.Orientation.VERTICAL}
-                spacing={6}
-            >
-                <box halign={Gtk.Align.CENTER}>
-                    <DockSelector />
+                <box
+                    class="theme-settings"
+                    orientation={Gtk.Orientation.VERTICAL}
+                    spacing={6}
+                >
+                    <box halign={Gtk.Align.CENTER}>
+                        <ThemeSelector /> <ColorPicker />
+                    </box>
                 </box>
-                <box halign={Gtk.Align.FILL} spacing={12} orientation={Gtk.Orientation.VERTICAL} hexpand={true}>
-    <box spacing={6} class="option-row" hexpand={true}>
-        <centerbox hexpand={true}>
-            <label label="Home Folder" $type="start"/>
-            <Gtk.Switch
-                $type="end"
-                active={conf().dock_home === true}
-                onNotifyActive={(self) => {
-                    setConf({ ...conf(), dock_home: self.active })
-                    writeConf()
-                }}
-            />
-        </centerbox>
-    </box>
-    <box spacing={6} class="option-row" hexpand={true}>
-        <centerbox hexpand={true}>
-            <label label="Trash" $type="start"/>
-            <Gtk.Switch
-                $type="end"
-                active={conf().dock_trash === true}
-                onNotifyActive={(self) => {
-                    setConf({ ...conf(), dock_trash: self.active })
-                    writeConf()
-                }}
-            />
-        </centerbox>
-    </box>
-</box>
             </box>
         </box>
     )
