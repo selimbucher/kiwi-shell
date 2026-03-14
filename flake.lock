@@ -49,11 +49,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1773468268,
-        "narHash": "sha256-UdmicY30P6SwTOGS1VoRtP8ro9oHUZhsUfvMPc9tXHY=",
+        "lastModified": 1773469265,
+        "narHash": "sha256-YStnW6IRk89DOTLA2kiRuh73Cgpk2ER77QLkEQQ7Rc4=",
         "owner": "selimbucher",
         "repo": "kiwi-settings",
-        "rev": "f96e67b23034644e5ecc5272d3ca14de69bcfee8",
+        "rev": "78b9303ae2fcf17fe512f746b1605fb2aec77c51",
         "type": "github"
       },
       "original": {
