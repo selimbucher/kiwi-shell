@@ -11,7 +11,7 @@ const CONFIG_FILE = `${CONFIG_FOLDER}/config.json`
 const HYPR_FILE = `${CONFIG_FOLDER}/hypr.conf`
 
 const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
-const DEFAULT_CONFIG_FILE = `${ROOT}/src/kiwi-shell/defaultConfig.json`
+const DEFAULT_CONFIG_FILE = `${ROOT}/defaultConfig.json`
 const NIXOS_CONFIG_FILE = `${CONFIG_FOLDER}/initial-config.json`
 
 // Ensure config directory exists once at startup
