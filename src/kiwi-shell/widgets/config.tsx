@@ -14,22 +14,22 @@ const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
 const DEFAULT_CONFIG_FILE = `${ROOT}/defaultConfig.json`
 const NIXOS_CONFIG_FILE = `${CONFIG_FOLDER}/initial-config.json`
 
-// Ensure config directory exists once at startup
 exec(`mkdir -p ${CONFIG_FOLDER}`)
 
 function loadConfig() {
     try {
-        const content = readFile(NIXOS_CONFIG_FILE)
+        const content = readFile(CONFIG_FILE)
         return JSON.parse(content)
-    } catch (error) {
-        try {
-            const content = readFile(CONFIG_FILE)
-            return JSON.parse(content)
-        } catch (error) {
-            exec(`cp ${DEFAULT_CONFIG_FILE} ${CONFIG_FILE}`)
-            const content = readFile(DEFAULT_CONFIG_FILE)
-            return JSON.parse(content)
-        }
+    } catch {
+        const sourceFile = (() => {
+            try { readFile(NIXOS_CONFIG_FILE); return NIXOS_CONFIG_FILE }
+            catch { return DEFAULT_CONFIG_FILE }
+        })()
+
+        exec(`cp --no-preserve=mode ${sourceFile} ${CONFIG_FILE}`)
+
+        const content = readFile(CONFIG_FILE)
+        return JSON.parse(content)
     }
 }
 
