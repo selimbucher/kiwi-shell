@@ -13,7 +13,6 @@
       url = "github:selimbucher/kiwi-settings";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
   };
 
   outputs = {
@@ -139,8 +138,17 @@
     };
   in {
     packages.${system} = {
-      default = kiwi-package;
+      shell = kiwi-package;
       app-capture = app-capture;
+      settings = kiwi-settings.packages.${system}.default;
+
+      default = pkgs.symlinkJoin {
+        name = "kiwi";
+        paths = [
+          kiwi-package
+          kiwi-settings.packages.${system}.default
+        ];
+      };
     };
 
     # ─── Dev shell ───────────────────────────────────────────────────────────
@@ -215,10 +223,7 @@
 
       config = lib.mkIf cfg.enable {
         xdg.configFile."kiwi-shell/initial-config.json".text = builtins.toJSON cfg.settings;
-        home.packages = [
-          self.packages.${system}.default
-          kiwi-settings.packages.${system}.default
-        ];
+        home.packages = [ self.packages.${system}.default ];
       };
     };
   };
