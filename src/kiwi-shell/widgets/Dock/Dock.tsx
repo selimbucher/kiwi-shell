@@ -473,7 +473,7 @@ function TrashButton({ setMenuOpen }) {
 function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v: boolean) => void }) {
     const initClass = entry.replace(/\.desktop$/, "")
     const application = GioUnix.DesktopAppInfo.new(entry)
-    const icon = application?.get_icon()?.to_string() ?? initClass
+    const icon = application?.get_string("Icon") ?? "application-x-executable"
     const name = application?.get_name() ?? initClass
 
     const [pinned, setPinned] = createState(list().includes(entry))
