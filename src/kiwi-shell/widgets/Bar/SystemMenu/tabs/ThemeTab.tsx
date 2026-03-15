@@ -128,40 +128,6 @@ export default function ThemeTab({visible}) {
     )
 }
 
-function DockSelector() {
-    const options = ["Disabled", "Default", "Auto-Hide"];
-    const myOptions = Gtk.StringList.new(options);
-
-    // Ermittelt den Index des aktuellen Themes aus der Konfiguration.
-    // Fallback auf 0 ("Default"), falls der Wert nicht im Array existiert.
-    const currentTheme = conf().dock || "default";
-    const foundIndex = options.findIndex(opt => opt.toLowerCase() === currentTheme);
-    const defaultIndex = foundIndex !== -1 ? foundIndex : 0;
-
-    return (
-        <Gtk.DropDown
-            model={myOptions}
-            selected={defaultIndex} // Setzt den dynamisch berechneten Index
-            enableSearch={false}
-            onNotifySelected={(self) => {
-                const selectedItem = self.get_selected_item();
-                
-                // Kurzer Sicherheitscheck, falls das Item noch nicht geladen ist
-                if (!selectedItem) return; 
-                
-                const textValue = selectedItem.get_string();
-                
-                setConf({ 
-                    ...conf(), 
-                    dock: textValue.toLowerCase()
-                });
-                
-                writeConf();
-            }}
-        />
-    )
-}
-
 function ThemeSelector() {
     const options = ["Dark", "Glass"];
     const myOptions = Gtk.StringList.new(options);
@@ -233,7 +199,6 @@ function rgbaToHex(rgba: any): string {
 }
 
 function promptWallpaper() {
-    // Use execAsync for zenity so it doesn't freeze the AGS UI while the window is open
     execAsync(["bash", "-c", `zenity --file-selection \
         --title="Select a Wallpaper" \
         --file-filter="Image files | *.jpg *.jpeg *.png *.gif *.pnm *.tga *.tiff *.tif *.webp *.bmp *.farbfeld *.ff *.svg" \
@@ -241,58 +206,21 @@ function promptWallpaper() {
         2>/dev/null`])
         .then((path) => {
             const cleanPath = path.trim()
-            if (!cleanPath) return;
+            if (!cleanPath) return
 
-            // Try to set wallpaper, but handle if swww isn't running
-            try {
-                exec(`swww img "${cleanPath}" --transition-type wipe --transition-fps 120`)
-                storeWallpaperPath(cleanPath)
-                // If this succeeds and we were polling, stop it
-                if (retryInterval) {
-                    clearInterval(retryInterval)
-                    retryInterval = null
-                }
-            } catch (error) {
-                console.error("Failed to set wallpaper with swww:", error)
-                // Try to initialize swww daemon asynchronously
-                console.log("Attempting to start swww daemon...")
-                execAsync("swww-daemon").catch(() => {})
-                
-                // Wait a bit for daemon to start, then try setting wallpaper again
-                setTimeout(() => {
-                    try {
-                        exec(`swww img "${cleanPath}" --transition-type wipe --transition-fps 120`)
-                        storeWallpaperPath(cleanPath)
-                    } catch (e) {
-                        console.error("Still failed after starting daemon:", e)
-                        // Store the path anyway for when daemon becomes available
-                        storeWallpaperPath(cleanPath)
-                    }
-                }, 500)
-            }
+            execAsync(`swww img "${cleanPath}" --transition-type wipe --transition-fps 120`)
+                .then(() => {
+                    storeWallpaperPath(cleanPath)
+                })
+                .catch((error) => {
+                    console.error("Failed to set wallpaper:", error)
+                })
         })
-        .catch((err) => {
-            // This catches when the user hits "Cancel" in zenity or if zenity fails
+        .catch(() => {
             console.log("Wallpaper selection cancelled or failed.")
         })
 }
 
-function getAverageColor(imagePath: string): Gdk.RGBA {
-    const result = exec(`magick ${imagePath} -resize 1x1 -format "%[pixel:u]" info:`)
-    
-    const match = result.match(/srgba?\(([\d.]+)%,([\d.]+)%,([\d.]+)%/)
-    
-    if (match) {
-        rgba.red = parseFloat(match[1]) / 100
-        rgba.green = parseFloat(match[2]) / 100
-        rgba.blue = parseFloat(match[3]) / 100
-        rgba.alpha = 1.0
-    }
-    
-    return rgba
-}
-
-// Optional: Clean up interval if this module gets unloaded
 export function cleanup() {
     if (retryInterval) {
         clearInterval(retryInterval)
