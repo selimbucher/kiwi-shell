@@ -15,6 +15,7 @@ import { startBluetoothDiscovery, stopBluetoothDiscovery } from "./tabs/Bluetoot
 import { conf } from "../../config"
 import { Icon } from "../../iconNames"
 import { playSound } from "../../sound"
+import { debug } from "../../../app"
 
 const battery = AstalBattery.get_default()
 const hasBattery = battery.get_is_present()
@@ -62,7 +63,7 @@ export default function SystemMenu() {
     <popover
       hasArrow={false}
       class="system-menu-popover"
-      autohide={true}
+      autohide={debug(b => !b)}
       $={self => systemMenuPopover = self}
       onShow={() => {
         setSystemMenuOpen(true)

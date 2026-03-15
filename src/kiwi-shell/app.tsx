@@ -10,9 +10,12 @@ import Dock from "./widgets/Dock/Dock"
 import { execAsync } from "ags/process"
 import Prompt from "./widgets/prompts";
 import { Gdk } from "ags/gtk4"
-import { For, This, createBinding } from "ags"
+import { For, This, createBinding, createState } from "ags"
 
 let sawWarning = false;
+
+const [debug, setDebug] = createState(false)
+export { debug }
 
 app.start({
   requestHandler(argv: string[], response: (response: string) => void) {
@@ -31,7 +34,10 @@ app.start({
       response(``)
     } else if (cmd == "quit") {
       app.quit()
-    } else if (cmd == undefined) {
+    } else if (cmd == "--debug" || cmd == "-d") {
+      setDebug(true)
+    }
+    else if (cmd == undefined) {
       response(`Kiwi-Shell already running.`)
     } else {
       response(`Unknown command: ${cmd}`)
@@ -57,7 +63,3 @@ app.start({
     )
   },
 })
-
-const isPrimary = (monitor: Gdk.Monitor) => {
-    return app.get_monitors()[0] === monitor
-}
