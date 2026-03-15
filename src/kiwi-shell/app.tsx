@@ -5,7 +5,7 @@ import app from "ags/gtk4/app"
 import style from "./style.scss"
 import Bar from "./widgets/Bar/Bar"
 import IndicatorBar from "./widgets/IndicatorBar/IndicatorBar"
-import AppSwitcher, { toggleAppSwitcher } from "./widgets/AppSwitcher/AppSwitcher"
+//import AppSwitcher, { toggleAppSwitcher } from "./widgets/AppSwitcher/AppSwitcher"
 import Dock from "./widgets/Dock/Dock"
 import { execAsync } from "ags/process"
 import Prompt from "./widgets/prompts";
@@ -34,7 +34,7 @@ app.start({
       response(``)
     } else if (cmd == "quit") {
       app.quit()
-    } else if (cmd == "--debug" || cmd == "-d") {
+    } else if (cmd == "debug") {
       setDebug(true)
     }
     else if (cmd == undefined) {
@@ -55,7 +55,7 @@ app.start({
                     <Bar gdkmonitor={gdkmonitor} />
                     <Dock gdkmonitor={gdkmonitor} />
                     {index() === 0 && <IndicatorBar gdkmonitor={gdkmonitor} /> }
-                    {index() === 0 && <AppSwitcher gdkmonitor={gdkmonitor} />}
+                    {index() === 20 && <AppSwitcher gdkmonitor={gdkmonitor} />}
                     {index() === 0 && <Prompt gdkmonitor={gdkmonitor} />}
                 </This>
             )}
