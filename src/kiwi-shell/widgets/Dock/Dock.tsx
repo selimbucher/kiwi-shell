@@ -14,7 +14,7 @@ import { playSound } from "../sound";
 
 const DOCK_HIDE_TIMEOUT = 600
 const DOCK_HIDE_TIMEOUT_EDGE = 1200
-const JUMP_ANIMATION_CLASS_TIMEOUT = 400
+const JUMP_ANIMATION_CLASS_TIMEOUT = 500
 
 const hyprland = Hyprland.get_default()
 
