@@ -206,12 +206,12 @@ function promptWallpaper() {
         2>/dev/null`])
         .then((path) => {
 
-            if (conf().auto_color) {
-                execAsync(`kiwi-settings auto-color`)
-            }
-
             const cleanPath = path.trim()
             if (!cleanPath) return
+
+            if (conf().auto_color) {
+                execAsync(`kiwi-settings auto-color "${cleanPath}"`)
+            }
 
             execAsync(`swww img "${cleanPath}" --transition-type wipe --transition-fps 120`)
                 .then(() => {
