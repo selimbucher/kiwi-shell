@@ -205,6 +205,11 @@ function promptWallpaper() {
         --file-filter="All files | *" \
         2>/dev/null`])
         .then((path) => {
+
+            if (conf().auto_color) {
+                execAsync(`kiwi-settings auto-color`)
+            }
+
             const cleanPath = path.trim()
             if (!cleanPath) return
 
