@@ -82,14 +82,14 @@ export default function ThemeTab({visible}) {
             <box class="large-header">
                 Wallpaper
             </box>
-            <box class="wallpaper-section" halign={Gtk.Align.CENTER} spacing={36}>
+            <box class="wallpaper-section">
+                <box hexpand={true} />
                 <box
                     class="wallpaper-buttons"
                     spacing={6}
                     valign={Gtk.Align.CENTER}
-                    hexpand={true}
                 >
-                    <button onClicked={() => promptWallpaper()}>
+                    <button onClicked={() => promptWallpaper()} >
                         <box halign={Gtk.Align.CENTER}>
                             <label label="Select File" />
                         </box>
@@ -103,8 +103,8 @@ export default function ThemeTab({visible}) {
                     </button>
                 </box>
 
-
-                <Gtk.ScrolledWindow
+                <box hexpand={true} />
+                 <Gtk.ScrolledWindow
                     valign={Gtk.Align.CENTER}
                     hscrollbarPolicy={Gtk.PolicyType.NEVER}
                     vscrollbarPolicy={Gtk.PolicyType.NEVER}
@@ -115,7 +115,7 @@ export default function ThemeTab({visible}) {
                         class="wallpaper-preview"
                         paintable={texture}
                         contentFit={Gtk.ContentFit.COVER}
-                        halign={Gtk.Align.CENTER}
+                        halign={Gtk.Align.END}
                     />
                 </Gtk.ScrolledWindow>
             </box>
