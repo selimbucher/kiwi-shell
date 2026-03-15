@@ -195,7 +195,7 @@ export function AppIcon({ client }: { client: any }) {
     const initClass = client.get_class()
     const entry = initClass + ".desktop"
     const appInfo = GioUnix.DesktopAppInfo.new(entry)
-    const icon = appInfo?.get_icon()?.to_string() ?? initClass
+    const icon = appInfo?.get_icon()?.to_string() ?? "application-x-executable"
 
     return (
         <Gtk.Image
