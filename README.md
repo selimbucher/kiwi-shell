@@ -108,7 +108,7 @@ The app switcher is controlled via `kiwictl`. Bind these commands in your Hyprla
 
 | Command | Description |
 |---|---|
-| `kiwictl apps open-next` | Cycle to the next open app |
+| `kiwictl apps open-next` | Open the menu if closed and cycle to the next app |
 | `kiwictl apps confirm` | Switch to the selected app |
 | `kiwictl apps close` | Dismiss the switcher |
 
