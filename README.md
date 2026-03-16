@@ -1,6 +1,6 @@
 # Kiwi Shell
 
-A clean, macOS-inspired desktop shell for **Hyprland** — featuring a status bar, app switcher, application dock, and quick settings panel.
+A clean, macOS-inspired desktop shell for **Hyprland** — featuring a status bar, app switcher, application dock, media player and quick settings panel.
 
 ![Screenshot](./docs/screenshots/screenshot3.png)
 
