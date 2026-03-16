@@ -11,7 +11,7 @@ More screenshots [here](./docs/screenshots/screenshots.md).
 ## Why Kiwi Shell?
 - Kiwi Shell focuses on a polished, professional aesthetic inspired by macOS.
 - Kiwi Shell is easy to install — one command on Arch, a few lines in your flake on NixOS.
-- Kiwi Shell is designed to be configurable. It comes with it's own [settings](https://github.com/selimbucher/kiwi-settings) app and supports config files.
+- Kiwi Shell is designed to be configurable. It comes with its own [settings](https://github.com/selimbucher/kiwi-settings) app and supports config files.
 - Kiwi Shell is lightweight by design. Built on [Astal](https://github.com/aylur/astal), it reacts to system changes instead of polling for them, keeping CPU usage low and the interface snappy.
 
 If you run into any problems, I am happy to help. Just open an issue on github.
