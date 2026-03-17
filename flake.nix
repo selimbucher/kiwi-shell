@@ -184,7 +184,7 @@
         enable = lib.mkEnableOption "Kiwi Shell for Hyprland";
 
         settings = lib.mkOption {
-          description = "Configuration written to ~/.config/kiwi-shell/initial-config.json";
+          description = "Deterministic settings for Kiwi Shell. These are converted to JSON and read by the app at runtime.";
           default = {};
           type = lib.types.submodule {
             options = {
@@ -227,7 +227,7 @@
       };
 
       config = lib.mkIf cfg.enable {
-        xdg.configFile."kiwi-shell/initial-config.json".text = builtins.toJSON (
+        xdg.configFile."kiwi-shell/nix-config.json".text = builtins.toJSON (
           lib.filterAttrs (_: v: v != null) cfg.settings
         );
         home.packages = [ self.packages.${system}.default ];
