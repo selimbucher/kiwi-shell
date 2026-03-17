@@ -185,8 +185,8 @@
 
         settings = lib.mkOption {
           description = "Deterministic settings for Kiwi Shell. These are converted to JSON and read by the app at runtime.";
-          default = {};
-          type = lib.types.submodule {
+          default = null;
+          type = lib.types.nullOr (lib.types.submodule {
             options = {
               primary_color = lib.mkOption {
                 type = lib.types.str;
@@ -222,14 +222,14 @@
                 description = "List of .desktop app IDs to pin to the dock";
               };
             };
-          };
+          });
         };
       };
 
       config = lib.mkIf cfg.enable {
-        xdg.configFile."kiwi-shell/nix-config.json".text = builtins.toJSON (
-          lib.filterAttrs (_: v: v != null) cfg.settings
-        );
+        xdg.configFile."kiwi-shell/nix-config.json" = lib.mkIf (cfg.settings != null) {
+          text = builtins.toJSON (lib.filterAttrs (_: v: v != null) cfg.settings);
+        };
         home.packages = [ self.packages.${system}.default ];
       };
     };
