@@ -20,6 +20,8 @@ export function toggleNc() {
 
 const [notifState, setNotifState] = createState<Map<number, "active" | "expired">>(new Map())
 
+const animatedIds = new Set<number>()
+
 notifd.connect("notified", (_, id) => {
     setNotifState(m => new Map([[id, "active" as const], ...m]))
 
@@ -32,6 +34,7 @@ notifd.connect("notified", (_, id) => {
 })
 
 notifd.connect("resolved", (_, id) => {
+    animatedIds.delete(id)
     setNotifState(m => {
         const next = new Map(m)
         next.delete(id)
@@ -132,6 +135,13 @@ function Notification({ n }: { n: Notifd.Notification }) {
     return (
         <button
             class="notification"
+            $={(self) => {
+                if (!animatedIds.has(n.id)) {
+                    animatedIds.add(n.id)
+                    self.add_css_class("slide-in")
+                    timeout(400, () => self.remove_css_class("slide-in"))
+                }
+            }}
             onclicked={() => {
                 print("Notification clicked:", n.summary)
                 n.dismiss()

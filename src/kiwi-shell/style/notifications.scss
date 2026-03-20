@@ -34,3 +34,12 @@
 .summary {
     font-weight: bold;
 }
+
+@keyframes slideLeft {
+    0%   { transform: translateX(250px); }
+    100% { transform: translateX(0); }
+}
+
+.notification.slide-in {
+    animation: slideLeft 0.4s ease-out;
+}
