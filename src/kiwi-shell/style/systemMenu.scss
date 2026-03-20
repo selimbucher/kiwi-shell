@@ -9,8 +9,12 @@
   margin-top: 10px;
   border-radius: 15px;
 
-  .option-row {
-    
+  .performance-graphs {
+    padding: 22px 10px;
+    .performance-label {
+      font-weight: bold;
+      font-size: 15px;
+    }
   }
 
   .arrow-button {
@@ -199,7 +203,7 @@
     border-top: #222222 1px solid;
     
     padding-top: 14px;
-    min-height: 130px;
+    //min-height: 130px;
 
     .section-header {
       font-size: 14px;

@@ -153,7 +153,7 @@ function SystemMenuContent() {
           <SystemTab visible={activeTab(t => t === 0)} />
           <NetworkTab visible={activeTab(t => t === 1)} />
           <BluetoothTab visible={activeTab(t => t === 2)} />
-          <PerformanceTab visible={activeTab(t => false)} />
+          <PerformanceTab visible={activeTab(t => t === 3)} />
           <ThemeTab visible={activeTab(t => t === 4)}/>      
         </box>
       </box>

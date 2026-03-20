@@ -46,7 +46,7 @@ const ICON_OVERRIDES: Record<string, Record<string, string>> = {
         "preferences-system-power-symbolic": "mintupdate-type-kernel-symbolic",
         "system-settings-symbolic": "prefs-tweaks-symbolic",
         "media-playlist-shuffle-symbolic": "randomize-symbolic",
-        "display-brightness-symbolic": "display-brightness-off-symbolic"
+        "display-brightness-symbolic": "display-brightness-off-symbolic",
     },
     "Adwaita": {
         "tweaks-app-symbolic": "bluetooth-symbolic",

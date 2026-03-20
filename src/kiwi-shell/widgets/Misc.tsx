@@ -210,7 +210,7 @@ export function CircularProgress({
             const centerX = width / 2
             const centerY = height / 2
 
-            cr.setSourceRGBA(0.2, 0.2, 0.2, 0.3)
+            cr.setSourceRGBA(0.3, 0.3, 0.3, 0.3)
             cr.setLineWidth(lineWidth)
             cr.arc(centerX, centerY, radius, 0, 2 * Math.PI)
             cr.stroke()
