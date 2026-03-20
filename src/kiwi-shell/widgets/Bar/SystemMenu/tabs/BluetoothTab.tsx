@@ -109,7 +109,7 @@ function Device({device, paired}){
             handleDeviceClick(device)
         }}
       >
-        <box spacing={8}>
+        <box spacing={6}>
             <Icon 
                 pixelSize={16}
                 visible={hasIcon}
