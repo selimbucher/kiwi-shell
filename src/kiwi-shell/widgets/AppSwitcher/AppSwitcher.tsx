@@ -2,9 +2,10 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createEffect, For, createBinding } from "ags"
 import Hyprland from "gi://AstalHyprland"
+import GioUnix from "gi://GioUnix"
 import { conf } from "../config"
 import { captureWindowToTexture } from "./clientCachingService"
-import GioUnix from "gi://GioUnix"
+import { classToEntry } from "../desktopEntries"
 
 export const [isVisible, setVisibility] = createState(false)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)
@@ -131,8 +132,6 @@ export function WindowPreview({ client }: { client: any }) {
     const address = client.get_address()
     const [texture, setTexture] = createState<Gdk.Texture | null>(null)
 
-    // Re-capture every time the switcher opens.
-    // captureWindowToTexture() is queued so concurrent calls don't pile up.
     createEffect(() => {
         if (!isVisible()) return
         captureWindowToTexture(address).then(t => {
@@ -188,13 +187,11 @@ export function WindowPreview({ client }: { client: any }) {
     return container
 }
 
-import GioUnix from "gi://GioUnix"
-
 export function AppIcon({ client }: { client: any }) {
     if (!client) return null
-    const initClass = client.get_class()
-    const entry = initClass + ".desktop"
-    const appInfo = GioUnix.DesktopAppInfo.new(entry)
+
+    const entry = classToEntry.get(client.get_class().toLowerCase())
+    const appInfo = entry ? GioUnix.DesktopAppInfo.new(entry) : null
     const icon = appInfo?.get_icon()?.to_string() ?? "application-x-executable"
 
     return (
