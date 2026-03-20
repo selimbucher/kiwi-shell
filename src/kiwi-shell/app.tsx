@@ -11,6 +11,7 @@ import { execAsync } from "ags/process"
 import Prompt from "./widgets/prompts";
 import { Gdk } from "ags/gtk4"
 import { For, This, createBinding, createState } from "ags"
+import NotificationCenter, { toggleNc } from "./widgets/Notifications/NotificationCenter";
 
 let sawWarning = false;
 
@@ -52,8 +53,9 @@ app.start({
         <For each={monitors}>
             {(gdkmonitor, index) => (
                 <This this={app}>
-                    <Bar gdkmonitor={gdkmonitor} />
+                    <Bar gdkmonitor={gdkmonitor} toggleNc={toggleNc} />
                     <Dock gdkmonitor={gdkmonitor} />
+                    <NotificationCenter gdkmonitor={gdkmonitor} />
                     {index() === 0 && <IndicatorBar gdkmonitor={gdkmonitor} /> }
                     {index() === 0 && <AppSwitcher gdkmonitor={gdkmonitor} />}
                     {index() === 0 && <Prompt gdkmonitor={gdkmonitor} />}

@@ -12,6 +12,10 @@ window.Bar {
     transform: translateY(-1px);
   }
 
+  .toggle-nc {
+    all: unset;
+  }
+
   .MenuButtons, .Tray {
     background-color: rgba(0, 0, 0, 0.9);
     color: #fff;

@@ -23,7 +23,7 @@ const activeAPBinding = createBinding(wifi, "activeAccessPoint")
 
 const hasBattery = battery.get_is_present()
 
-export default function Bar({  gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
+export default function Bar({  gdkmonitor , toggleNc }: { gdkmonitor: Gdk.Monitor; toggleNc: () => void }) {
 
   const { TOP, LEFT, RIGHT } = Astal.WindowAnchor
 
@@ -49,13 +49,13 @@ export default function Bar({  gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
       <centerbox class="centerbox">
         <Tray $type="start"/>
         <Workspaces $type="center"/>
-        <MenuButtons $type="end" />
+        <MenuButtons $type="end" toggleNc={toggleNc} />
       </centerbox>
     </window>
   )
 }
 
-function MenuButtons() {
+function MenuButtons({ toggleNc }: { toggleNc: () => void }) {
   const time = createPoll("", 1000, "date '+%a %b %d  %H:%M'")
 
   return (
@@ -68,7 +68,9 @@ function MenuButtons() {
         </box>
         <SystemMenu />
       </menubutton>
-      <label class="time" label={time} />
+      <button class="toggle-nc" onclicked={toggleNc}>
+        <label class="time" label={time} />
+      </button>
       <menubutton
       class={'powermenu-toggle'}
       >

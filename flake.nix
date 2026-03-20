@@ -66,6 +66,7 @@
       bluetooth
       tray
       apps
+      notifd
     ];
 
     extraPackages =

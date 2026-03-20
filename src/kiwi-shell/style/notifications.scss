@@ -1,0 +1,36 @@
+.Notifications {
+    padding-bottom: 1px;
+}
+
+.notification, .no-notifications {
+    min-width: 250px;
+    background-color: #000;
+    border-radius: 12px;
+    color: #fff;
+    border: 1px rgba(56, 56, 56, 0.9) solid;
+    padding: 10px;
+    margin-right: 4px;
+    font-size: 10.5px;
+}
+
+.no-notifications-text {
+    margin-top: 10px;
+    font-size: 16px;
+}
+
+.header {
+    margin-bottom: 6px;
+}
+
+.app-name {
+    font-weight: lighter;
+    color: #adadad;
+}
+
+.notification-icon {
+    margin-right: 4px;
+}
+
+.summary {
+    font-weight: bold;
+}

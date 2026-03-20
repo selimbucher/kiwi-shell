@@ -6,6 +6,8 @@ import { subprocess } from "ags/process"
 
 import AstalWp from "gi://AstalWp"
 import AstalPowerProfiles from "gi://AstalPowerProfiles"
+import Notifd from "gi://AstalNotifd"
+
 
 import { MediaPlayer } from "../../../Misc"
 import { Icon, powerProfileIcon, volumeIcon, brightnessIcon } from "../../../iconNames"
@@ -17,6 +19,8 @@ const [nightShift, setNightShift] = createState(false);
 const max_brightness = parseInt(exec("brightnessctl max"))
 const nightShiftTemp = 4000;
 
+const notifd = Notifd.get_default()
+const dontDisturb = createBinding(notifd, "dont-disturb")
 
 const hasBacklight = exec(`sh -c 'ls /sys/class/backlight/ | grep -q . && echo yes || echo no'`).trim() === 'yes';
 
@@ -174,8 +178,13 @@ function OptionButtons(){
           
            pixelSize={17}/>
         </button>
-         <button class="option">
-          <Gtk.Image iconName="notifications-symbolic" pixelSize={17}/>
+         <button class="option"
+         onClicked={() => {
+            notifd.dont_disturb = !dontDisturb.get()
+          }}
+        >
+
+          <Gtk.Image iconName={dontDisturb.as(b => b ? "notifications-disabled-symbolic" : "notifications-symbolic")} pixelSize={17}/>
         </button>
         <button class="option"
         onClicked={() => {
