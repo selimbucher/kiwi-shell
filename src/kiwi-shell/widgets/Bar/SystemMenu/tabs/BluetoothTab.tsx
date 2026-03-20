@@ -94,8 +94,12 @@ function Device({device, paired}){
     const pairedBinding = createBinding(device, "paired")
 
     const visibility = createComputed((get) => {
-        return (get(pairedBinding) == paired) && get(deviceName);
+        const name = get(deviceName)
+        const isMac = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(name)
+        return (get(pairedBinding) == paired) && name && !isMac
     })
+
+    const hasIcon = iconBinding.as(s => !!s)
 
     return (
       <button 
@@ -108,6 +112,7 @@ function Device({device, paired}){
         <box spacing={8}>
             <Icon 
                 pixelSize={16}
+                visible={hasIcon}
                 iconName={iconBinding.as(s => BluetoothDeviceIcon(s))}
             />
             <label label={device.name || "Unkown Device"} hexpand={true} halign={Gtk.Align.START} />
