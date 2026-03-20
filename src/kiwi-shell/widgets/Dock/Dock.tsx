@@ -152,6 +152,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             application={app}
             layer={Astal.Layer.TOP}
             $={(self) => {
+                onCleanup(() => self.destroy())
                 const motionController = new Gtk.EventControllerMotion()
                 motionController.connect("enter", () => {
                     if (leaveTimeout) {
