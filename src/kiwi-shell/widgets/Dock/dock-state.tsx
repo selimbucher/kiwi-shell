@@ -37,12 +37,19 @@ export async function saveList() {
     }
 }
 
+export function isValidClient(client: any): boolean {
+    const cls = (client["initial-class"] ?? "").trim()
+    const title = (client.title ?? "").trim()
+    return cls !== "" || title !== ""
+}
+
 export const unpinnedList = createComputed(get => {
     const clients = get(createBinding(hyprland, "clients"))
     const pinned = new Set(get(list))
 
     const seen = new Set<string>()
     return clients.reduce((acc, client) => {
+        if (!isValidClient(client)) return acc
         const entry = classToEntry.get(client["initial-class"].toLowerCase())
             ?? (client["initial-class"] + ".desktop")
         if (pinned.has(entry) || seen.has(entry)) return acc

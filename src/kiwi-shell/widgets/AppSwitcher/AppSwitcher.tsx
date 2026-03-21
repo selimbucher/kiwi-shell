@@ -4,8 +4,10 @@ import { createState, createEffect, For, createBinding } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import GioUnix from "gi://GioUnix"
 import { conf } from "../config"
+import { playSound } from "../sound"
 import { captureWindowToTexture } from "./clientCachingService"
 import { classToEntry } from "../desktopEntries"
+import { isValidClient } from "../Dock/dock-state"
 
 export const [isVisible, setVisibility] = createState(false)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)
@@ -18,7 +20,7 @@ let mruAddresses: string[] = []
 
 hyprland.connect("notify::focused-client", () => {
     const client = hyprland.get_focused_client()
-    if (client) {
+    if (client && isValidClient(client)) {
         const addr = client.get_address()
         mruAddresses = [addr, ...mruAddresses.filter(a => a !== addr)]
         if (mruAddresses.length > 50) mruAddresses.length = 50
@@ -55,7 +57,7 @@ export function toggleAppSwitcher(cmd: string) {
 }
 
 function showAppSwitcher() {
-    const clients = hyprland.get_clients()
+    const clients = hyprland.get_clients().filter(isValidClient)
 
     const sortedClients = [...clients].sort((a, b) => {
         const posA = mruAddresses.indexOf(a.get_address())
