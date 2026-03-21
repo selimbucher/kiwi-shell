@@ -10,7 +10,7 @@ const network = Network.get_default()
 const wifi = network.wifi
 const wifiEnabledRaw = createBinding(wifi, "enabled");
 const [frozen, setFrozen] = createState(false);
-const [frozenValue, setFrozenValue] = createState(wifi.enabled);
+const [frozenValue, setFrozenValue] = createState(wifi?.enabled);
 
 const wifiEnabledBinding = createComputed((get) => {
   if (get(frozen)) return get(frozenValue);
