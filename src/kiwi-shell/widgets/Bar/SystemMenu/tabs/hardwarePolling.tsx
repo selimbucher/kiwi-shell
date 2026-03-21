@@ -32,9 +32,31 @@ export const ramUsage = createPoll(0, 2000, "cat /proc/meminfo", (out) => {
 })
 
 // Returns degrees Celsius as a plain number e.g. 54, 72
-export const cpuTemp = createPoll(0, 2000, ["bash", "-c",
-  "grep -l x86_pkg_temp /sys/class/thermal/thermal_zone*/type 2>/dev/null | sed 's/type/temp/' | head -1 | xargs cat"
-], (out) => {
+export const cpuTemp = createPoll(0, 2000, ["bash", "-c", `
+  # 1. AMD: k10temp hwmon (Tdie preferred, fallback to Tctl)
+  for d in /sys/class/hwmon/hwmon*/; do
+    [ "\$(cat \${d}name 2>/dev/null)" = "k10temp" ] || continue
+    t=\$(cat \${d}temp2_input 2>/dev/null || cat \${d}temp1_input 2>/dev/null)
+    [ -n "\$t" ] && echo "\$t" && exit
+  done
+  # 2. Intel: coretemp hwmon (Package id 0 = temp1)
+  for d in /sys/class/hwmon/hwmon*/; do
+    [ "\$(cat \${d}name 2>/dev/null)" = "coretemp" ] || continue
+    t=\$(cat \${d}temp1_input 2>/dev/null)
+    [ -n "\$t" ] && echo "\$t" && exit
+  done
+  # 3. Intel: x86_pkg_temp thermal zone
+  f=\$(grep -rl x86_pkg_temp /sys/class/thermal/thermal_zone*/type 2>/dev/null \
+    | sed 's/type/temp/' | head -1)
+  [ -n "\$f" ] && cat "\$f" && exit
+  # 4. Generic fallback: any thermal zone named *cpu* or *pkg*
+  for z in /sys/class/thermal/thermal_zone*/; do
+    name=\$(cat \${z}type 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    case "\$name" in *cpu*|*pkg*|*core*)
+      cat \${z}temp 2>/dev/null && exit
+    esac
+  done
+`], (out) => {
   const raw = parseInt(out.trim())
   return isNaN(raw) ? 0 : raw / 1000
 })
