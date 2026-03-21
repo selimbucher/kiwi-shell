@@ -60,3 +60,21 @@ export const cpuTemp = createPoll(0, 2000, ["bash", "-c", `
   const raw = parseInt(out.trim())
   return isNaN(raw) ? 0 : raw / 1000
 })
+
+function readCpuTicks(): [number, number] {
+  const line = exec("bash -c \"grep -m1 'cpu ' /proc/stat\"")
+  const parts = line.trim().split(/\s+/).slice(1).map(Number)
+  const idle = parts[3] + parts[4]
+  const total = parts.reduce((a, b) => a + b, 0)
+  return [idle, total]
+}
+
+let [prevIdle, prevTotal] = readCpuTicks()
+
+export const cpuUsage = createPoll(0, 1000, () => {
+  const [idle, total] = readCpuTicks()
+  const diffIdle = idle - prevIdle
+  const diffTotal = total - prevTotal
+  ;[prevIdle, prevTotal] = [idle, total]
+  return diffTotal === 0 ? 0 : 1 - diffIdle / diffTotal
+})
