@@ -2,6 +2,7 @@ import { Gtk } from "ags/gtk4"
 import { createState, createBinding, createComputed } from "ags"
 import { createPoll } from "ags/time"
 import AstalBattery from "gi://AstalBattery"
+import Network from "gi://AstalNetwork"
 
 import { CircularProgress } from "../../Misc"
 
@@ -19,6 +20,13 @@ import { conf } from "../../config"
 import { Icon } from "../../iconNames"
 import { playSound } from "../../sound"
 import { debug } from "../../../app"
+import AstalBluetooth from "gi://AstalBluetooth?version=0.1"
+
+const network = Network.get_default()
+const wifi = network.wifi
+
+const bluetooth = AstalBluetooth.get_default()
+const adapter = bluetooth.adapter
 
 const battery = AstalBattery.get_default()
 const hasBattery = battery.get_is_present()
@@ -54,14 +62,11 @@ export const bluetoothTabOpen = createComputed((get) => {
   return get(activeTab) === 2 && get(systemMenuOpen)
 })
 
-// Define your tabs
-const tabs = [
-  { name: "settings", icon: "system-settings-symbolic" },
-  { name: "network", icon: "network-wireless-symbolic" },
-  { name: "bluetooth", icon: "bluetooth-active-symbolic" },
-  { name: "performance", icon: "power-profile-balanced-symbolic" },
-  { name: "theme", icon: "preferences-desktop-wallpaper-symbolic" },
-]
+const tabs = [{ name: "settings", icon: "system-settings-symbolic" }]
+if (wifi) tabs.push({ name: "network", icon: "network-wireless-symbolic" })
+if (adapter) tabs.push({ name: "bluetooth", icon: "bluetooth-active-symbolic" })
+tabs.push({ name: "performance", icon: "power-profile-balanced-symbolic" })
+tabs.push({ name: "theme", icon: "preferences-desktop-wallpaper-symbolic" })
 
 export default function SystemMenu() {
   return (
@@ -101,7 +106,7 @@ function SystemMenuContent() {
       )}
       onClicked={() => {
         setActiveTab(index)
-        if (index == 2) {
+        if (adapter && index == 2) {
           try {
             startBluetoothDiscovery()
           } catch {}
@@ -110,7 +115,7 @@ function SystemMenuContent() {
             stopBluetoothDiscovery()
           } catch (err) {}
         }
-        if (index == 1) {
+        if (wifi && index == 1) {
           rescanWifi()
         }
       }}
@@ -172,8 +177,8 @@ function SystemMenuContent() {
       </box>
       <box class="tab-container" hexpand={true}>
         <SystemTab visible={activeTab((t) => t === 0)} />
-        <NetworkTab visible={activeTab((t) => t === 1)} />
-        <BluetoothTab visible={activeTab((t) => t === 2)} />
+        {wifi && <NetworkTab visible={activeTab((t) => t === 1)} />}
+        {adapter && <BluetoothTab visible={activeTab((t) => t === 2)} />}
         <PerformanceTab visible={activeTab((t) => t === 3)} />
         <ThemeTab visible={activeTab((t) => t === 4)} />
       </box>

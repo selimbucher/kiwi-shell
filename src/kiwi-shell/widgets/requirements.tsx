@@ -13,7 +13,6 @@ const REQUIRED_SERVICES = [
 ]
 
 export function checkRequirements() {
-  let quit = false
   for (const service of REQUIRED_SERVICES) {
     try {
       const flag = service.user ? "--user" : ""
@@ -22,14 +21,11 @@ export function checkRequirements() {
         console.error(
           `[kiwi-shell] Required service not active: ${service.name} (${service.unit}) — status: ${result}`,
         )
-        quit = true
       }
     } catch {
       console.error(
         `[kiwi-shell] Failed to check service: ${service.name} (${service.unit})`,
       )
-      quit = true
     }
   }
-  if (quit) app.quit()
 }
