@@ -23,32 +23,37 @@ const activeAPBinding = createBinding(wifi, "activeAccessPoint")
 
 const hasBattery = battery.get_is_present()
 
-export default function Bar({  gdkmonitor , toggleNc }: { gdkmonitor: Gdk.Monitor; toggleNc: () => void }) {
-
+export default function Bar({
+  gdkmonitor,
+  toggleNc,
+}: {
+  gdkmonitor: Gdk.Monitor
+  toggleNc: () => void
+}) {
   const { TOP, LEFT, RIGHT } = Astal.WindowAnchor
 
   return (
     <window
-      css={conf.as(conf => 
-        `
+      css={conf.as(
+        (conf) =>
+          `
         --primary: ${conf.primary_color};
         --bar-margin: ${conf.bar_margin}px;
-        `
+        `,
       )}
       visible
       name="ags-bar"
-      class={conf.as(conf => `Bar theme-${conf.theme}`)}
+      class={conf.as((conf) => `Bar theme-${conf.theme}`)}
       gdkmonitor={gdkmonitor}
       exclusivity={Astal.Exclusivity.EXCLUSIVE}
       anchor={TOP | LEFT | RIGHT}
       application={app}
       layer={Astal.Layer.TOP}
       $={(self) => onCleanup(() => self.destroy())}
-
     >
       <centerbox class="centerbox">
-        <Tray $type="start"/>
-        <Workspaces $type="center"/>
+        <Tray $type="start" />
+        <Workspaces $type="center" />
         <MenuButtons $type="end" toggleNc={toggleNc} />
       </centerbox>
     </window>
@@ -63,27 +68,21 @@ function MenuButtons({ toggleNc }: { toggleNc: () => void }) {
       <menubutton class="toggle-powermenu">
         <box class="icons">
           <PreferencesIcon />
-          <NetworkIcon />
-          <BatteryIcon/>
+          {wifi && <NetworkIcon />}
+          <BatteryIcon />
         </box>
         <SystemMenu />
       </menubutton>
       <button class="toggle-nc" onclicked={toggleNc}>
         <label class="time" label={time} />
       </button>
-      <menubutton
-      class={'powermenu-toggle'}
-      >
+      <menubutton class={"powermenu-toggle"}>
         <Gtk.Image
-        class="power-icon"
-          iconName={'system-shutdown-symbolic'}
+          class="power-icon"
+          iconName={"system-shutdown-symbolic"}
           pixelSize={14}
         />
-        <popover
-        class="power-popover"
-          hasArrow={false}
-          autohide={true}
-        >
+        <popover class="power-popover" hasArrow={false} autohide={true}>
           <PowerMenu />
         </popover>
       </menubutton>
@@ -91,11 +90,9 @@ function MenuButtons({ toggleNc }: { toggleNc: () => void }) {
   )
 }
 
-
 function BatteryIcon() {
-  
   return (
-    <Gtk.Image 
+    <Gtk.Image
       visible={hasBattery}
       class="batteryIcon"
       pixelSize={16}
@@ -109,24 +106,28 @@ function NetworkIcon() {
     <Gtk.Image
       class="networkIcon"
       iconSize={Gtk.IconSize.NORMAL}
-      iconName={
-        createComputed(get =>
-          networkIcon(
-            get(wiredBinding),
-            get(wifiStateBinding),
-            get(activeAPBinding),
-          )
-        )
-      }
+      iconName={createComputed((get) =>
+        networkIcon(
+          get(wiredBinding),
+          get(wifiStateBinding),
+          get(activeAPBinding),
+        ),
+      )}
     />
   )
 }
 
 function PreferencesIcon() {
   return (
-    <Icon 
+    <Icon
       class="preferencesIcon"
-      pixelSize={iconTheme.as(theme => theme.includes("WhiteSur") || theme.includes("Fluent") || theme.includes("Reversal") ? 11 : 16)}
+      pixelSize={iconTheme.as((theme) =>
+        theme.includes("WhiteSur") ||
+        theme.includes("Fluent") ||
+        theme.includes("Reversal")
+          ? 11
+          : 16,
+      )}
       iconName="tweaks-app-symbolic"
     />
   )
