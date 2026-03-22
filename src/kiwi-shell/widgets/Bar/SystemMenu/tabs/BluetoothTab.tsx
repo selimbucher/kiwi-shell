@@ -77,9 +77,11 @@ export default function BluetoothTab({ visible }) {
         spacing={4}
         vexpand={true}
       >
-        <For each={devicesBinding}>
-          {(device) => <Device device={device} paired={true} />}
-        </For>
+        {devicesBinding && (
+          <For each={devicesBinding}>
+            {(device) => <Device device={device} paired={true} />}
+          </For>
+        )}
       </box>
 
       <box class="section-header mt">
