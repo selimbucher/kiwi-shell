@@ -8,25 +8,29 @@ import { CircularProgress } from "../../Misc"
 
 import SystemTab from "./tabs/SystemTab"
 import NetworkTab, { rescanWifi } from "./tabs/NetworkTab"
-import BluetoothTab from "./tabs/BluetoothTab"
 import ThemeTab from "./tabs/ThemeTab"
 import PerformanceTab from "./tabs/PerformanceTab"
-import {
-  startBluetoothDiscovery,
-  stopBluetoothDiscovery,
-} from "./tabs/BluetoothTab"
 
 import { conf } from "../../config"
 import { Icon } from "../../iconNames"
 import { playSound } from "../../sound"
 import { debug } from "../../../app"
+
 import AstalBluetooth from "gi://AstalBluetooth?version=0.1"
+import BluetoothTab from "./tabs/BluetoothTab"
+import {
+  startBluetoothDiscovery,
+  stopBluetoothDiscovery,
+} from "./tabs/BluetoothTab"
+import { exec } from "ags/process"
 
 const network = Network.get_default()
 const wifi = network.wifi
 
-const bluetooth = AstalBluetooth.get_default()
-const adapter = bluetooth.adapter
+let bluetooth: AstalBluetooth.Adapter | undefined = undefined
+if (exec("hciconfig") !== "") {
+  bluetooth = AstalBluetooth.get_default().adapter
+}
 
 const battery = AstalBattery.get_default()
 const hasBattery = battery.get_is_present()
@@ -64,7 +68,8 @@ export const bluetoothTabOpen = createComputed((get) => {
 
 const tabs = [{ name: "settings", icon: "system-settings-symbolic" }]
 if (wifi) tabs.push({ name: "network", icon: "network-wireless-symbolic" })
-if (adapter) tabs.push({ name: "bluetooth", icon: "bluetooth-active-symbolic" })
+if (bluetooth)
+  tabs.push({ name: "bluetooth", icon: "bluetooth-active-symbolic" })
 tabs.push({ name: "performance", icon: "power-profile-balanced-symbolic" })
 tabs.push({ name: "theme", icon: "preferences-desktop-wallpaper-symbolic" })
 
@@ -106,7 +111,7 @@ function SystemMenuContent() {
       )}
       onClicked={() => {
         setActiveTab(index)
-        if (adapter && index == 2) {
+        if (bluetooth && index == 2) {
           try {
             startBluetoothDiscovery()
           } catch {}
@@ -178,7 +183,7 @@ function SystemMenuContent() {
       <box class="tab-container" hexpand={true}>
         <SystemTab visible={activeTab((t) => t === 0)} />
         {wifi && <NetworkTab visible={activeTab((t) => t === 1)} />}
-        {adapter && <BluetoothTab visible={activeTab((t) => t === 2)} />}
+        {bluetooth && <BluetoothTab visible={activeTab((t) => t === 2)} />}
         <PerformanceTab visible={activeTab((t) => t === 3)} />
         <ThemeTab visible={activeTab((t) => t === 4)} />
       </box>

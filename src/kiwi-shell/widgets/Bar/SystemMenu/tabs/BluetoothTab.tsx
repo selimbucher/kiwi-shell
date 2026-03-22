@@ -5,12 +5,14 @@ import { createBinding, createComputed, For } from "ags"
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
 import { bluetoothTabOpen } from "../SystemMenu"
 
-const bluetooth = AstalBluetooth.get_default()
-const adapter = bluetooth.adapter
+let bluetooth: AstalBluetooth.Adapter | undefined = undefined
+if (exec("hciconfig") !== "") {
+  bluetooth = AstalBluetooth.get_default().adapter
+}
 
-adapter?.connect("notify::powered", () => {
+bluetooth?.connect("notify::powered", () => {
   if (bluetoothEnabledBinding()) {
-    adapter.set_discoverable(true)
+    bluetooth.set_discoverable(true)
     if (bluetoothTabOpen()) {
       startBluetoothDiscovery()
     }
@@ -18,10 +20,14 @@ adapter?.connect("notify::powered", () => {
 })
 
 import { createState } from "ags"
+import { exec } from "ags/process"
 
-const bluetoothEnabledRaw = createBinding(adapter, "powered")
+let bluetoothEnabledRaw = false
+if (bluetooth) {
+  bluetoothEnabledRaw = createBinding(bluetooth, "powered")
+}
 const [btFrozen, setBtFrozen] = createState(false)
-const [btFrozenValue, setBtFrozenValue] = createState(adapter?.powered)
+const [btFrozenValue, setBtFrozenValue] = createState(bluetooth?.powered)
 
 const bluetoothEnabledBinding = createComputed((get) => {
   if (get(btFrozen)) return get(btFrozenValue)
@@ -32,14 +38,14 @@ const devicesBinding = createBinding(bluetooth, "devices")
 
 export function startBluetoothDiscovery() {
   try {
-    adapter?.start_discovery()
+    bluetooth?.start_discovery()
   } catch (e) {
     // Already discovering, ignore
   }
 }
 
 export function stopBluetoothDiscovery() {
-  adapter?.stop_discovery()
+  bluetooth?.stop_discovery()
 }
 
 export default function BluetoothTab({ visible }) {
@@ -56,8 +62,8 @@ export default function BluetoothTab({ visible }) {
         <switch
           active={bluetoothEnabledBinding}
           onStateSet={(self, state) => {
-            if (state !== adapter?.powered) {
-              adapter?.set_powered(state)
+            if (state !== bluetooth?.powered) {
+              bluetooth?.set_powered(state)
             }
             setBtFrozen(true)
             setBtFrozenValue(state)

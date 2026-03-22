@@ -1,6 +1,3 @@
-import { checkRequirements } from "./widgets/requirements"
-checkRequirements()
-
 import app from "ags/gtk4/app"
 import style from "./style.scss"
 import Bar from "./widgets/Bar/Bar"
