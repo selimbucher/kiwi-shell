@@ -66,12 +66,25 @@ export const bluetoothTabOpen = createComputed((get) => {
   return get(activeTab) === 2 && get(systemMenuOpen)
 })
 
-const tabs = [{ name: "settings", icon: "system-settings-symbolic" }]
-if (wifi) tabs.push({ name: "network", icon: "network-wireless-symbolic" })
-if (bluetooth)
-  tabs.push({ name: "bluetooth", icon: "bluetooth-active-symbolic" })
-tabs.push({ name: "performance", icon: "power-profile-balanced-symbolic" })
-tabs.push({ name: "theme", icon: "preferences-desktop-wallpaper-symbolic" })
+const tabs = [
+  { name: "settings", icon: "system-settings-symbolic", enabled: true },
+  { name: "network", icon: "network-wireless-symbolic", enabled: wifi },
+  {
+    name: "bluetooth",
+    icon: "bluetooth-active-symbolic",
+    enabled: bluetooth,
+  },
+  {
+    name: "performance",
+    icon: "power-profile-balanced-symbolic",
+    enabled: true,
+  },
+  {
+    name: "theme",
+    icon: "preferences-desktop-wallpaper-symbolic",
+    enabled: true,
+  },
+]
 
 export default function SystemMenu() {
   return (
@@ -178,7 +191,7 @@ function SystemMenuContent() {
         hexpand={false}
         spacing={6}
       >
-        {tabs.map((tab, i) => TabButton(i, tab))}
+        {tabs.map((tab, i) => (tab.enabled ? TabButton(i, tab) : <box></box>))}
       </box>
       <box class="tab-container" hexpand={true}>
         <SystemTab visible={activeTab((t) => t === 0)} />
