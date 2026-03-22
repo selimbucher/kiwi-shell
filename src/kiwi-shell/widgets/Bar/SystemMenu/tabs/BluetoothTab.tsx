@@ -1,51 +1,60 @@
 import { Gtk } from "ags/gtk4"
 import AstalBluetooth from "gi://AstalBluetooth"
-import { createBinding, createComputed, For } from "ags"
+import GLib from "gi://GLib"
+import { createBinding, createComputed, createState, For } from "ags"
+import { exec } from "ags/process"
 
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
 import { bluetoothTabOpen } from "../SystemMenu"
 
-let bluetooth: AstalBluetooth.Adapter | undefined = undefined
-if (exec("hciconfig") !== "") {
-  bluetooth = AstalBluetooth.get_default().adapter
+function hasBluetoothAdapter(): boolean {
+  try {
+    const dir = GLib.Dir.open("/sys/class/bluetooth", 0)
+    return dir.read_name() !== null
+  } catch {
+    return false
+  }
 }
 
-bluetooth?.connect("notify::powered", () => {
+let bluetooth: ReturnType<typeof AstalBluetooth.get_default> | null = null
+let adapter: AstalBluetooth.Adapter | undefined = undefined
+
+if (hasBluetoothAdapter()) {
+  bluetooth = AstalBluetooth.get_default()
+  adapter = bluetooth.adapter ?? undefined
+}
+
+adapter?.connect("notify::powered", () => {
   if (bluetoothEnabledBinding()) {
-    bluetooth.set_discoverable(true)
+    adapter!.set_discoverable(true)
     if (bluetoothTabOpen()) {
       startBluetoothDiscovery()
     }
   }
 })
 
-import { createState } from "ags"
-import { exec } from "ags/process"
+const bluetoothEnabledRaw = adapter ? createBinding(adapter, "powered") : null
+const devicesBinding = bluetooth ? createBinding(bluetooth, "devices") : null
 
-let bluetoothEnabledRaw = false
-if (bluetooth) {
-  bluetoothEnabledRaw = createBinding(bluetooth, "powered")
-}
 const [btFrozen, setBtFrozen] = createState(false)
-const [btFrozenValue, setBtFrozenValue] = createState(bluetooth?.powered)
+const [btFrozenValue, setBtFrozenValue] = createState(adapter?.powered ?? false)
 
 const bluetoothEnabledBinding = createComputed((get) => {
   if (get(btFrozen)) return get(btFrozenValue)
+  if (!bluetoothEnabledRaw) return false
   return get(bluetoothEnabledRaw)
 })
 
-const devicesBinding = createBinding(bluetooth, "devices")
-
 export function startBluetoothDiscovery() {
   try {
-    bluetooth?.start_discovery()
+    adapter?.start_discovery()
   } catch (e) {
     // Already discovering, ignore
   }
 }
 
 export function stopBluetoothDiscovery() {
-  bluetooth?.stop_discovery()
+  adapter?.stop_discovery()
 }
 
 export default function BluetoothTab({ visible }) {
@@ -58,12 +67,12 @@ export default function BluetoothTab({ visible }) {
       <box class="section-header">
         <box halign={Gtk.Align.START}>Bluetooth</box>
         <box hexpand={true} />
-
         <switch
+          sensitive={adapter !== undefined}
           active={bluetoothEnabledBinding}
           onStateSet={(self, state) => {
-            if (state !== bluetooth?.powered) {
-              bluetooth?.set_powered(state)
+            if (state !== adapter?.powered) {
+              adapter?.set_powered(state)
             }
             setBtFrozen(true)
             setBtFrozenValue(state)
@@ -149,7 +158,6 @@ function Device({ device, paired }) {
 async function handleDeviceClick(device) {
   try {
     if (!device.paired) {
-      // Pair is synchronous
       console.log("Pairing with", device.name)
       device.pair()
 
@@ -166,7 +174,6 @@ async function handleDeviceClick(device) {
         }
       })
     } else if (!device.connected) {
-      // Already paired, just connect
       console.log("Connecting to", device.name)
       device.connect_device((source, result) => {
         try {
@@ -177,7 +184,6 @@ async function handleDeviceClick(device) {
         }
       })
     } else {
-      // Already connected, disconnect
       console.log("Disconnecting from", device.name)
       device.disconnect_device((source, result) => {
         try {
