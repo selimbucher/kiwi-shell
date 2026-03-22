@@ -191,7 +191,7 @@ function SystemMenuContent() {
         hexpand={false}
         spacing={6}
       >
-        {tabs.map((tab, i) => (tab.enabled ? TabButton(i, tab) : <box></box>))}
+        {tabs.map((tab, i) => (tab.enabled ? TabButton(i, tab) : ""))}
       </box>
       <box class="tab-container" hexpand={true}>
         <SystemTab visible={activeTab((t) => t === 0)} />
