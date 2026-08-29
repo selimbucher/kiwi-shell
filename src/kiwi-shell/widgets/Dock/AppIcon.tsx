@@ -364,11 +364,14 @@ function WindowPreviewItem({ client, pickerOpen, popdown }: {
             >
                 <Gtk.Picture
                     canShrink={true}
-                    contentFit={texture(() => {
+                    contentFit={texture(t => {
                         const raw = dockRawClientWidth(client)
-                        return raw === dockClampWidth(raw)
-                            ? Gtk.ContentFit.CONTAIN
-                            : Gtk.ContentFit.COVER
+                        if (raw !== dockClampWidth(raw)) return Gtk.ContentFit.COVER
+                        // stale pre-retile frame → fill and crop until the
+                        // settle-recapture replaces it
+                        if (t && Math.abs(dockRawWidth(t.get_width(), t.get_height()) - raw) > 6)
+                            return Gtk.ContentFit.COVER
+                        return Gtk.ContentFit.CONTAIN
                     })}
                     widthRequest={-1}
                     paintable={texture}

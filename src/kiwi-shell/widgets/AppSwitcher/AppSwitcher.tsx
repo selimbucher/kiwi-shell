@@ -360,11 +360,16 @@ export function WindowPreview({ client }: { client: any }) {
                         // aspect, so CONTAIN fills it edge to edge; when a
                         // clamp kicked in the tile can't match the aspect —
                         // zoom-crop to fill instead of letterboxing
-                        contentFit={texture(() => {
+                        contentFit={texture(t => {
                             const raw = rawPreviewWidth(client)
-                            return raw === clampTile(raw)
-                                ? Gtk.ContentFit.CONTAIN
-                                : Gtk.ContentFit.COVER
+                            if (raw !== clampTile(raw)) return Gtk.ContentFit.COVER
+                            // a frame captured before a retile no longer
+                            // matches the window's aspect — fill and crop
+                            // until the settle-recapture replaces it,
+                            // instead of flashing a letterbox
+                            if (t && Math.abs(rawAspectWidth(t.get_width(), t.get_height()) - raw) > 8)
+                                return Gtk.ContentFit.COVER
+                            return Gtk.ContentFit.CONTAIN
                         })}
                         widthRequest={-1}
                         paintable={texture}
