@@ -8,7 +8,7 @@ import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
 import { conf } from "../config"
 import { playSound } from "../sound"
-import { captureWindowToTexture, freshClientSize } from "./clientCachingService"
+import { captureWindowToTexture, freshClientSize, getCachedTexture } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { popupGdkMonitor } from "../monitors"
@@ -231,6 +231,13 @@ function aspectWidth(w: number, h: number): number {
 // clipped capture, and sizing from it would warp the tile. Astal client
 // geometry (stale after resizes) is only the fallback.
 function rawPreviewWidth(client: any): number {
+    // a minimized window is unmapped: its compositor geometry reflects the
+    // hidden scratchpad layout, while the frame on display is the cached
+    // pre-minimize snapshot — size from the snapshot instead
+    if (isMinimized(client)) {
+        const cached = getCachedTexture(client.get_address())
+        if (cached) return rawAspectWidth(cached.get_width(), cached.get_height())
+    }
     const fresh = freshClientSize(client.get_address())
     return fresh
         ? rawAspectWidth(fresh[0], fresh[1])

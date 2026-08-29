@@ -6,7 +6,7 @@ import Hyprland from "gi://AstalHyprland"
 import { DockContextIcon } from "./dock-utils"
 import { mapVersion } from "../desktopEntries"
 import { entryForClient, AppIconImage } from "../appIcon"
-import { captureWindowToTexture, freshClientSize } from "../AppSwitcher/clientCachingService"
+import { captureWindowToTexture, freshClientSize, getCachedTexture } from "../AppSwitcher/clientCachingService"
 import { closeWindow, clientSelector } from "../../hypr"
 import { conf } from "../config"
 import { logger } from "../../log"
@@ -276,6 +276,12 @@ const dockClampWidth = (w: number) => Math.min(300, Math.max(120, w))
 // compositor geometry, never capture pixel sizes — a window hanging off a
 // workspace edge yields a clipped capture that would warp the tile
 const dockRawClientWidth = (client: Hyprland.Client) => {
+    // minimized → size from the snapshot: the compositor geometry reflects
+    // the hidden scratchpad layout, not the frame being shown
+    if (isMinimized(client)) {
+        const cached = getCachedTexture(client.get_address())
+        if (cached) return dockRawWidth(cached.get_width(), cached.get_height())
+    }
     const fresh = freshClientSize(client.get_address())
     return fresh
         ? dockRawWidth(fresh[0], fresh[1])
