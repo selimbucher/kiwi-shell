@@ -203,10 +203,19 @@ hyprland.connect("notify::clients", () => {
 
 // ─── Public API ────────────────────────────────────────────────────────────────
 // Latest cached snapshot, if any — synchronous, never triggers a capture.
-// Sizing code prefers this over Astal client geometry, which goes stale after
-// resizes (Hyprland emits no resize event, so sync_clients() never runs).
 export function getCachedTexture(address: string): Gdk.Texture | null {
     return cache.get(address)?.texture ?? null
+}
+
+// Freshest known window size (logical px), from the 600ms resize poll.
+// Preview sizing uses this rather than Astal client geometry (stale after
+// resizes) or capture pixel sizes (wrong for windows hanging off a
+// workspace edge, whose captures come back clipped).
+export function freshClientSize(address: string): [number, number] | null {
+    const s = lastSizes.get(address)
+    if (!s) return null
+    const [w, h] = s.split("x").map(Number)
+    return Number.isFinite(w) && Number.isFinite(h) && h > 0 ? [w, h] : null
 }
 
 // Returns the cached texture immediately if fresh enough.

@@ -7,15 +7,47 @@ const log = logger("desktop-entries")
 
 export const classToEntry = new Map<string, string>()
 export const entryToClass = new Map<string, string>()
+export const execToEntry = new Map<string, string>()
 export const titleMatchers: Array<{ entry: string, regex: RegExp }> = []
 export const [mapVersion, setMapVersion] = createState(0)
+
+// runtimes that host many unrelated apps — indexing them by executable would
+// make every window of that runtime resolve to whichever entry got scanned
+// first (this excludes *runtimes*, not applications)
+const GENERIC_EXECUTABLES = new Set([
+    "sh", "bash", "zsh", "dash", "env", "electron", "java", "wine",
+    "python", "python3", "gjs", "node", "flatpak", "xdg-open",
+])
+
+// the executable a desktop entry actually runs: Exec= with env/VAR=/flag
+// prefixes stripped, reduced to its basename
+function execName(appInfo: GioUnix.DesktopAppInfo): string | null {
+    const commandline = appInfo.get_commandline()
+    if (!commandline) return null
+    let argv: string[]
+    try {
+        argv = GLib.shell_parse_argv(commandline)[1]
+    } catch {
+        return null
+    }
+    let i = 0
+    while (i < argv.length &&
+        (argv[i] === "env" || argv[i].includes("=") || argv[i].startsWith("-"))) i++
+    const word = argv[i]
+    if (!word) return null
+    const base = GLib.path_get_basename(word).toLowerCase()
+    return GENERIC_EXECUTABLES.has(base) ? null : base
+}
 
 export function buildClassMap() {
     classToEntry.clear()
     entryToClass.clear()
+    execToEntry.clear()
     titleMatchers.length = 0
 
-    for (const appInfo of Gio.AppInfo.get_all() as GioUnix.DesktopAppInfo[]) {
+    const apps = Gio.AppInfo.get_all() as GioUnix.DesktopAppInfo[]
+
+    for (const appInfo of apps) {
         const id = appInfo.get_id()
         if (!id) continue
 
@@ -34,6 +66,11 @@ export function buildClassMap() {
             }
         }
 
+        const exec = execName(appInfo)
+        if (exec && !execToEntry.has(exec)) {
+            execToEntry.set(exec, id)
+        }
+
         const titleMatchRaw = appInfo.get_string("X-Kiwi-TitleMatch")
         if (titleMatchRaw) {
             try {
@@ -44,7 +81,20 @@ export function buildClassMap() {
         }
     }
 
-    log.debug(`[ClassMap] Built ${classToEntry.size} class entries, ${titleMatchers.length} title matchers`)
+    // second pass so full-id matches always win over reverse-DNS aliases:
+    // app ids like org.gnome.Nautilus also answer to the bare last segment
+    // (windows report app_id both ways in the wild)
+    for (const appInfo of apps) {
+        const id = appInfo.get_id()
+        if (!id) continue
+        const stem = id.replace(/\.desktop$/, "").toLowerCase()
+        const last = stem.split(".").pop()
+        if (last && last !== stem && !classToEntry.has(last)) {
+            classToEntry.set(last, id)
+        }
+    }
+
+    log.debug(`[ClassMap] Built ${classToEntry.size} class entries, ${execToEntry.size} exec entries, ${titleMatchers.length} title matchers`)
     setMapVersion(v => v + 1)
 }
 

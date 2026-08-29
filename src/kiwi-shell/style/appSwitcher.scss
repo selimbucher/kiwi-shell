@@ -13,13 +13,59 @@
     padding: 4px 8px;
 }
 
+.switcher-preview-close {
+    background: none;
+    background-image: none;
+    border: none;
+    // fixed square + Align.CENTER in the widget — FILL alignment would
+    // stretch it to the title bar and turn the radius into an oval
+    border-radius: 9999px;
+    min-width: 16px;
+    min-height: 16px;
+    padding: 0;
+    margin-right: 3px;
+    // solid ground so the ✕ stays legible over the title text it covers;
+    // the ring extends it in the bar color, keeping a small text-free gap
+    // around the circle
+    background-color: #000;
+    box-shadow: 0 0 0 3px #000;
+    color: #b0b0b0;
+    opacity: 0;
+    transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease;
+
+    &:hover {
+        color: #fff;
+        background-color: rgba(60, 60, 60, 0.95);
+    }
+}
+
+.preview-tile:hover .switcher-preview-close {
+    opacity: 1;
+}
+
+// a button so the whole tile is clickable — flattened, the tile look
+// comes from its content and the selection border
 .window-preview {
-    padding: 5px;
+    padding: 3px;
     border: 3px transparent solid;
+    background: none;
+    background-image: none;
+    box-shadow: none;
+    min-width: 0;
+    min-height: 0;
 }
 
 .window-preview-container {
     border-radius: 0 0 6px 6px;
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+.switcher-badge {
+    margin: 8px;
+}
+
+.switcher-badge-icon {
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
 }
 
 .selected {
@@ -28,8 +74,10 @@
     border-color: var(--primary);
 }
 
-.switcher-preview-icon {
-    margin-right: 4px;
+.preview-title {
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 11px;
+    padding: 2px 3px;
 }
 
 // ─── Workspace switcher ──────────────────────────────────────────────────────

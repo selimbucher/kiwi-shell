@@ -5,13 +5,14 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, createBinding } from "ags"
 import { execAsync } from "ags/process"
 import Hyprland from "gi://AstalHyprland"
+import Pango from "gi://Pango"
 import { conf } from "../config"
 import { playSound } from "../sound"
-import { captureWindowToTexture, getCachedTexture } from "./clientCachingService"
+import { captureWindowToTexture, freshClientSize } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { popupGdkMonitor } from "../monitors"
-import { evalLua, luaBind, luaUnbind, isKiwiBind, describeBind } from "../../hypr"
+import { evalLua, luaBind, luaUnbind, isKiwiBind, describeBind, closeWindow, clientSelector } from "../../hypr"
 
 export const [isVisible, setVisibility] = createState(false)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)
@@ -168,6 +169,25 @@ function executeSelectedAndClose() {
     setVisibility(false)
 }
 
+// closing from the ✕ keeps the switcher open on the remaining windows — the
+// compositor's client-removed event lands too late for the UI, so the list
+// updates eagerly here
+function closeClientFromSwitcher(client: any) {
+    const address = client.get_address()
+    closeWindow(clientSelector(client))
+    const remaining = displayedClients().filter(c => c.get_address() !== address)
+    if (remaining.length === 0) {
+        hideAppSwitcher()
+        return
+    }
+    if (selectedAddress() === address) {
+        const clients = displayedClients()
+        const idx = clients.findIndex(c => c.get_address() === address)
+        setSelectedAddress(remaining[Math.min(idx, remaining.length - 1)].get_address())
+    }
+    setDisplayedClients(remaining)
+}
+
 // ─── UI ───────────────────────────────────────────────────────────────────────
 export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     return (
@@ -187,22 +207,38 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
     )
 }
 
-const PREVIEW_HEIGHT = 220
+// Uniform height, width hugs the window's aspect ratio — the tile IS the
+// preview (narrow windows get narrow tiles, same as Windows Alt-Tab).
+// Outside the clamps the tile can't hug: those windows are cover-zoomed to
+// fill it instead of floating in letterbox space.
+const PREVIEW_HEIGHT = 170
+const MIN_TILE_WIDTH = 140
+const MAX_TILE_WIDTH = 720
 
-function aspectWidth(w: number, h: number): number {
-    return h > 0
-        ? Math.min(520, Math.max(120, Math.round(PREVIEW_HEIGHT * w / h)))
-        : 260
+function rawAspectWidth(w: number, h: number): number {
+    return h > 0 ? Math.round(PREVIEW_HEIGHT * w / h) : 280
 }
 
-// card width from the latest snapshot when one exists — its pixel size is the
-// window's true size at capture, while Astal client geometry can be stale.
-// Client geometry is only the fallback for windows never captured.
+const clampTile = (w: number) =>
+    Math.min(MAX_TILE_WIDTH, Math.max(MIN_TILE_WIDTH, w))
+
+function aspectWidth(w: number, h: number): number {
+    return clampTile(rawAspectWidth(w, h))
+}
+
+// tile width from the compositor's freshest size poll — capture pixel
+// sizes are NOT used: a window hanging off a workspace edge yields a
+// clipped capture, and sizing from it would warp the tile. Astal client
+// geometry (stale after resizes) is only the fallback.
+function rawPreviewWidth(client: any): number {
+    const fresh = freshClientSize(client.get_address())
+    return fresh
+        ? rawAspectWidth(fresh[0], fresh[1])
+        : rawAspectWidth(client.get_width(), client.get_height())
+}
+
 function previewWidth(client: any): number {
-    const cached = getCachedTexture(client.get_address())
-    return cached
-        ? aspectWidth(cached.get_width(), cached.get_height())
-        : aspectWidth(client.get_width(), client.get_height())
+    return clampTile(rawPreviewWidth(client))
 }
 
 function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
@@ -211,7 +247,9 @@ function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // disguise — it stretches cards to uniform column widths.
     const rows = createComputed(get => {
         const monitor = get(popupGdkMonitor) ?? gdkmonitor
-        const budget = monitor.get_geometry().width * 0.92
+        // rows wrap well before the screen edge so the panel never reads
+        // as a full-width band
+        const budget = monitor.get_geometry().width * 0.85
         const chunks: any[][] = []
         let row: any[] = []
         let width = 0
@@ -262,55 +300,108 @@ export function WindowPreview({ client }: { client: any }) {
         })
     })
 
+
     const titleBinding = createBinding(client, "title")
 
-    const container = (
-        <box
-            orientation={Gtk.Orientation.VERTICAL}
-            spacing={0}
-            class="window-preview"
-        >
-            <scrolledwindow
-                class="preview-title-bar"
-                hscrollbarPolicy={Gtk.PolicyType.EXTERNAL}
-                vscrollbarPolicy={Gtk.PolicyType.NEVER}
-            >
-                <box>
-                    <AppIconImage entry={entryForClient(client)} pixelSize={24} cssClass="switcher-preview-icon" />
-                    <label label={titleBinding} />
-                </box>
-            </scrolledwindow>
+    const activate = () => {
+        if (isMinimized(client)) restoreClient(client)
+        else focusClient(client)
+        setVisibility(false)
+    }
 
-            {/* sized to the window's aspect ratio explicitly: a Picture's
-                natural width is the full screenshot size, so it must sit in
-                a scroll-less viewport with the thumbnail size requested */}
-            <Gtk.ScrolledWindow
-                class="window-preview-container"
-                overflow={Gtk.Overflow.HIDDEN}
-                hscrollbarPolicy={Gtk.PolicyType.NEVER}
-                vscrollbarPolicy={Gtk.PolicyType.NEVER}
-                heightRequest={PREVIEW_HEIGHT}
-                widthRequest={texture(t =>
-                    t ? aspectWidth(t.get_width(), t.get_height())
-                      : previewWidth(client))}
-            >
-                <Gtk.Picture
-                    canShrink={true}
-                    contentFit={Gtk.ContentFit.CONTAIN}
-                    widthRequest={-1}
-                    paintable={texture}
+    // the tile is a real button (click to switch, Windows style); the ✕
+    // floats in a sibling overlay layer above it, so the two never fight
+    // over clicks — no nested buttons, no gesture filtering
+    const tile = (
+        <button class="window-preview" onclicked={activate}>
+            <box orientation={Gtk.Orientation.VERTICAL} spacing={0}>
+            <box class="preview-title-bar">
+                {/* no app icon here — the badge on the thumbnail carries
+                    it; maxWidthChars=1 lets the ellipsized label shrink
+                    below its natural width instead of clipping early */}
+                <label
+                    class="preview-title"
+                    label={titleBinding}
+                    ellipsize={Pango.EllipsizeMode.END}
+                    maxWidthChars={1}
+                    hexpand
+                    xalign={0}
                 />
-            </Gtk.ScrolledWindow>
-        </box>
-    ) as Gtk.Box
+            </box>
+
+            <overlay>
+                {/* a Picture's natural width is the full screenshot size, so
+                    it must sit in a scroll-less viewport with the tile size
+                    requested */}
+                <Gtk.ScrolledWindow
+                    class="window-preview-container"
+                    overflow={Gtk.Overflow.HIDDEN}
+                    hscrollbarPolicy={Gtk.PolicyType.NEVER}
+                    vscrollbarPolicy={Gtk.PolicyType.NEVER}
+                    heightRequest={PREVIEW_HEIGHT}
+                    // texture() is only the re-evaluation trigger (captures
+                    // land alongside size changes); the size itself always
+                    // comes from compositor geometry
+                    widthRequest={texture(() => previewWidth(client))}
+                >
+                    <Gtk.Picture
+                        canShrink={true}
+                        // the container width is derived from the same
+                        // aspect, so CONTAIN fills it edge to edge; when a
+                        // clamp kicked in the tile can't match the aspect —
+                        // zoom-crop to fill instead of letterboxing
+                        contentFit={texture(() => {
+                            const raw = rawPreviewWidth(client)
+                            return raw === clampTile(raw)
+                                ? Gtk.ContentFit.CONTAIN
+                                : Gtk.ContentFit.COVER
+                        })}
+                        widthRequest={-1}
+                        paintable={texture}
+                    />
+                </Gtk.ScrolledWindow>
+                {/* the recognition anchor — thumbnails of same-app windows
+                    look alike, the badge says which app at a glance */}
+                <box
+                    $type="overlay"
+                    class="switcher-badge"
+                    halign={Gtk.Align.END}
+                    valign={Gtk.Align.END}
+                >
+                    <AppIconImage entry={entryForClient(client)} pixelSize={40} cssClass="switcher-badge-icon" />
+                </box>
+            </overlay>
+            </box>
+        </button>
+    ) as Gtk.Button
 
     createEffect(() => {
         if (selectedAddress() === address) {
-            container.add_css_class("selected")
+            tile.add_css_class("selected")
         } else {
-            container.remove_css_class("selected")
+            tile.remove_css_class("selected")
         }
     })
 
-    return container
+    return (
+        <overlay class="preview-tile">
+            {tile}
+            {/* hover-revealed, floating over the end of the title bar so it
+                reserves no layout space there */}
+            <button
+                $type="overlay"
+                class="switcher-preview-close"
+                halign={Gtk.Align.END}
+                valign={Gtk.Align.START}
+                // title bar: 6px tile inset + ~27px bar (11px text, label
+                // and bar padding) → bar center ≈ 19.5px; 16px button →
+                // top at ~11.5 to sit centered on it
+                marginTop={12}
+                marginEnd={6}
+                onclicked={() => closeClientFromSwitcher(client)}
+            >
+                <Gtk.Image iconName="window-close-symbolic" pixelSize={12} />
+            </button>
+        </overlay>
+    )
 }

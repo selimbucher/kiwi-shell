@@ -5,29 +5,13 @@ import { readFile, writeFileAsync } from "ags/file"
 import { conf } from "../config"
 import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
-import { classToEntry as _classToEntry, entryToClass as _entryToClass, mapVersion } from "../desktopEntries"
+import { mapVersion } from "../desktopEntries"
 import { entryForClient } from "../appIcon"
 import { clientSelector, focusWindow, moveWindowToWorkspace, raiseWindow, toggleSpecialWorkspace } from "../../hypr"
 
 export const DOCK_HIDE_TIMEOUT = 200
 export const JUMP_ANIMATION_CLASS_TIMEOUT = 500
 export const DOCK_SLIDE_DURATION = 400
-
-// Apps where the actual Hyprland initial-class doesn't match StartupWMClass.
-const ELECTRON_OVERRIDES: [string, string][] = [
-    ["obsidian.desktop", "electron"],
-]
-
-export const entryToClass = new Map([..._entryToClass, ...ELECTRON_OVERRIDES])
-
-export function lookupEntry(cls: string): string | undefined {
-    const fromMap = _classToEntry.get(cls)
-    if (fromMap) return fromMap
-    for (const [entry, wmClass] of ELECTRON_OVERRIDES) {
-        if (wmClass === cls) return entry
-    }
-    return undefined
-}
 
 export const hyprland = Hyprland.get_default()
 

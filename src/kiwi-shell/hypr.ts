@@ -66,6 +66,12 @@ export const moveWindowToWorkspace = (
         (opts.follow === false ? `, follow = false` : ``) + ` })`,
     )
 
+// Client.kill() in AstalHyprland still speaks the pre-0.56 dialect
+// ("dispatch killwindow address:..."), which the lua IPC rejects — every
+// close must go through here instead.
+export const closeWindow = (selector: string) =>
+    dispatchLua(`hl.dsp.window.close({ window = ${luaStr(selector)} })`)
+
 export const raiseWindow = (selector: string) =>
     dispatchLua(`hl.dsp.window.alter_zorder({ mode = "top", window = ${luaStr(selector)} })`)
 

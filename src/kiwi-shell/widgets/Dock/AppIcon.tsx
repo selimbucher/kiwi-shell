@@ -1,43 +1,34 @@
 import { Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createBinding, createEffect, For } from "ags"
 import Pango from "gi://Pango"
-import { hyprland, list, setList, saveList, isNixManaged, entryToClass, JUMP_ANIMATION_CLASS_TIMEOUT, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient } from "./dock-state"
+import { hyprland, list, setList, saveList, isNixManaged, isValidClient, JUMP_ANIMATION_CLASS_TIMEOUT, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
 import { DockContextIcon } from "./dock-utils"
-import { iconForEntry, entryForClient, AppIconImage } from "../appIcon"
-import { captureWindowToTexture } from "../AppSwitcher/clientCachingService"
+import { mapVersion } from "../desktopEntries"
+import { entryForClient, AppIconImage } from "../appIcon"
+import { captureWindowToTexture, freshClientSize } from "../AppSwitcher/clientCachingService"
+import { closeWindow, clientSelector } from "../../hypr"
 import { conf } from "../config"
 import { logger } from "../../log"
 const log = logger("dock")
 
 export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v: boolean) => void }) {
-    const icon = iconForEntry(entry)
     const application = (() => {
         const GioUnix = imports.gi.GioUnix
         return GioUnix.DesktopAppInfo.new(entry)
     })()
     const name = application?.get_name() ?? entry.replace(/\.desktop$/, "")
 
-    const wmClasses = [
-        entryToClass.get(entry),
-        application?.get_string("StartupWMClass")?.toLowerCase(),
-        entry.replace(/\.desktop$/, "").toLowerCase(),
-    ].filter(Boolean) as string[]
-
     const [pinned, setPinned] = createState(list().includes(entry))
     const [jumping, setJumping] = createState(false)
 
-    const titleMatchRaw = application?.get_string("X-Kiwi-TitleMatch")
-    const titleMatch = titleMatchRaw ? new RegExp(titleMatchRaw, "i") : null
-
+    // same resolution the switcher and workspace overview use — one source
+    // of truth for "which app does this window belong to"
     const clientsBinding = createComputed(get => {
+        get(mapVersion) // reactive dependency — re-runs when maps rebuild
         const allClients = get(createBinding(hyprland, "clients"))
-        return allClients.filter(client => {
-            // both properties can be null while a client is being created
-            const byClass = wmClasses.includes((client["initial-class"] ?? "").toLowerCase())
-            const byTitle = titleMatch?.test(client["initial-title"] ?? "") ?? false
-            return byClass || byTitle
-        })
+        return allClients.filter(client =>
+            isValidClient(client) && entryForClient(client) === entry)
     })
 
     const onPinChange = (newPinned: boolean) => {
@@ -50,7 +41,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
         saveList()
     }
 
-    const menu = AppContextMenu(entry, clientsBinding, application, icon, name, pinned, onPinChange, setMenuOpen)
+    const menu = AppContextMenu(entry, clientsBinding, application, name, pinned, onPinChange, setMenuOpen)
     const previews = WindowPreviews(clientsBinding, setMenuOpen)
 
     // hover lifecycle, taskbar style: linger to open, stays while the
@@ -274,6 +265,23 @@ function WindowPreviews(
     ) as Gtk.Popover
 }
 
+// same geometry rules as the app switcher: the tile hugs the window's
+// aspect ratio; outside the clamps it can't hug, so the shot is
+// cover-zoomed to fill instead of floating in letterbox space
+const DOCK_SHOT_HEIGHT = 112
+const dockRawWidth = (w: number, h: number) =>
+    h > 0 ? Math.round(DOCK_SHOT_HEIGHT * w / h) : 192
+const dockClampWidth = (w: number) => Math.min(300, Math.max(120, w))
+
+// compositor geometry, never capture pixel sizes — a window hanging off a
+// workspace edge yields a clipped capture that would warp the tile
+const dockRawClientWidth = (client: Hyprland.Client) => {
+    const fresh = freshClientSize(client.get_address())
+    return fresh
+        ? dockRawWidth(fresh[0], fresh[1])
+        : dockRawWidth(client.get_width(), client.get_height())
+}
+
 function WindowPreviewItem({ client, pickerOpen, popdown }: {
     client: Hyprland.Client,
     pickerOpen: ReturnType<typeof createState<boolean>>[0],
@@ -328,7 +336,7 @@ function WindowPreviewItem({ client, pickerOpen, popdown }: {
                 />
                 <button
                     class="dock-preview-close"
-                    onclicked={() => client.kill()}
+                    onclicked={() => closeWindow(clientSelector(client))}
                 >
                     <Gtk.Image iconName="window-close-symbolic" pixelSize={10} />
                 </button>
@@ -342,20 +350,20 @@ function WindowPreviewItem({ client, pickerOpen, popdown }: {
                 overflow={Gtk.Overflow.HIDDEN}
                 hscrollbarPolicy={Gtk.PolicyType.NEVER}
                 vscrollbarPolicy={Gtk.PolicyType.NEVER}
-                heightRequest={112}
-                widthRequest={texture(t => {
-                    // snapshot pixel size over Astal geometry: the latter is
-                    // stale after resizes (Hyprland emits no resize event)
-                    const w = t ? t.get_width() : client.get_width()
-                    const h = t ? t.get_height() : client.get_height()
-                    return h > 0
-                        ? Math.min(300, Math.max(120, Math.round(112 * w / h)))
-                        : 192
-                })}
+                heightRequest={DOCK_SHOT_HEIGHT}
+                // texture() is only the re-evaluation trigger (captures
+                // land alongside size changes)
+                widthRequest={texture(() =>
+                    dockClampWidth(dockRawClientWidth(client)))}
             >
                 <Gtk.Picture
                     canShrink={true}
-                    contentFit={Gtk.ContentFit.CONTAIN}
+                    contentFit={texture(() => {
+                        const raw = dockRawClientWidth(client)
+                        return raw === dockClampWidth(raw)
+                            ? Gtk.ContentFit.CONTAIN
+                            : Gtk.ContentFit.COVER
+                    })}
                     widthRequest={-1}
                     paintable={texture}
                 />
@@ -373,7 +381,7 @@ function ActiveClientDot({ client }: { client: Hyprland.Client }) {
     )
 }
 
-function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, onPinChange, setMenuOpen) {
+function AppContextMenu(entry, clientsBinding, application, name, pinned, onPinChange, setMenuOpen) {
     let popover: Gtk.Popover
 
     return (
@@ -398,7 +406,7 @@ function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, 
                     }}
                 >
                     <box>
-                        <DockContextIcon icon={icon} />
+                        <AppIconImage entry={entry} pixelSize={20} cssClass="dock-context-icon" />
                         <label halign={Gtk.Align.START} label={name} />
                     </box>
                 </button>
@@ -433,7 +441,7 @@ function AppContextMenu(entry, clientsBinding, application, icon, name, pinned, 
                     onclicked={() => {
                         popover.popdown()
                         for (const client of clientsBinding()) {
-                            client.kill()
+                            closeWindow(clientSelector(client))
                         }
                     }}
                     visible={clientsBinding.as(clients => clients.length > 0)}
