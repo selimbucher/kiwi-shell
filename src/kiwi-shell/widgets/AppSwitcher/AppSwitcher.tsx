@@ -274,6 +274,9 @@ function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 class="app-switch-container"
                 orientation={Gtk.Orientation.VERTICAL}
                 spacing={4}
+                // hug the rows — FILL (the default) would stretch the
+                // panel to the full window width, erasing the edge gap
+                halign={Gtk.Align.CENTER}
             >
                 <For each={rows}>
                     {(row) => (
