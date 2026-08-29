@@ -396,10 +396,7 @@ export function WindowPreview({ client }: { client: any }) {
                 class="switcher-preview-close"
                 halign={Gtk.Align.END}
                 valign={Gtk.Align.START}
-                // title bar: 6px tile inset + ~27px bar (11px text, label
-                // and bar padding) → bar center ≈ 19.5px; 16px button →
-                // top at ~11.5 to sit centered on it
-                marginTop={12}
+                marginTop={10}
                 marginEnd={6}
                 onclicked={() => closeClientFromSwitcher(client)}
             >
