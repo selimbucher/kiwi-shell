@@ -28,18 +28,26 @@ async function registerHyprlandBinds() {
   }
   let keys = ['XF86AudioRaiseVolume', 'XF86AudioLowerVolume', 'XF86AudioMute']
   if (brightnessAvailable) keys.push('XF86MonBrightnessUp', 'XF86MonBrightnessDown')
+  else log.debug('no backlight device — skipping XF86MonBrightness binds')
   if (kbdAvailable) keys.push('XF86KbdBrightnessUp', 'XF86KbdBrightnessDown')
+  else log.debug('no keyboard backlight — skipping XF86KbdBrightness binds')
 
   // never unbind these keys (users bind their own actions on them); skip
   // keys that already carry our described bind instead
   try {
     const binds = JSON.parse(await execAsync(['hyprctl', 'binds', '-j']))
     const registered = new Set(binds.map((b: any) => b.description))
+    const skipped = keys.filter(key => registered.has(`kiwi: ${KEY_TO_ID[key]}`))
+    if (skipped.length > 0)
+      log.debug(`already bound, skipping: ${skipped.join(', ')}`)
     keys = keys.filter(key => !registered.has(`kiwi: ${KEY_TO_ID[key]}`))
   } catch (e) {
     log.error('failed to query binds:', e)
   }
-  if (keys.length === 0) return
+  if (keys.length === 0) {
+    log.info('all indicator key binds already registered')
+    return
+  }
 
   if (await evalLua(keys.map(key => luaBind(
     key,
@@ -55,7 +63,10 @@ export function watchIndicatorKeys(onKey: (type: string) => void) {
   registerHyprlandBinds()
 
   const hyprland = Hyprland.get_default()
-  hyprland.connect('config-reloaded', registerHyprlandBinds)
+  hyprland.connect('config-reloaded', () => {
+    log.debug('config reloaded — re-registering indicator key binds')
+    registerHyprlandBinds()
+  })
 
   manager = new KiwiShortcuts.Manager()
 
@@ -75,6 +86,8 @@ export function watchIndicatorKeys(onKey: (type: string) => void) {
 
   manager.connect('activated', (_: unknown, id: string) => {
     const type = SHORTCUT_MAP[id]
+    log.debug(`shortcut activated: ${id}`)
     if (type) onKey(type)
+    else log.warn(`activated shortcut has no mapping: ${id}`)
   })
 }

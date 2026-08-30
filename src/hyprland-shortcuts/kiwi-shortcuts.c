@@ -2,6 +2,7 @@
 #include "hyprland-global-shortcuts-v1-protocol.h"
 #include <wayland-client.h>
 #include <string.h>
+#include <errno.h>
 
 /* Per-shortcut context passed as the Wayland listener data pointer */
 typedef struct {
@@ -72,7 +73,23 @@ static gboolean
 on_wayland_data (GIOChannel *channel, GIOCondition condition, gpointer data)
 {
     struct wl_display *display = data;
-    wl_display_dispatch(display);
+    /* A protocol error (e.g. another client already holds a kiwi-shell:*
+       shortcut) kills the connection; without this check that death is
+       silent and shortcuts just stop arriving */
+    if ((condition & (G_IO_ERR | G_IO_HUP)) || wl_display_dispatch(display) < 0) {
+        int err = wl_display_get_error(display);
+        if (err == EPROTO) {
+            const struct wl_interface *iface = NULL;
+            uint32_t code = wl_display_get_protocol_error(display, &iface, NULL);
+            g_warning("[kiwi-shortcuts] wayland protocol error %u on %s — "
+                      "shortcuts dead (another client holding kiwi-shell shortcuts?)",
+                      code, iface ? iface->name : "unknown interface");
+        } else {
+            g_warning("[kiwi-shortcuts] wayland connection lost (%s) — shortcuts dead",
+                      err ? g_strerror(err) : "hangup");
+        }
+        return G_SOURCE_REMOVE;
+    }
     return G_SOURCE_CONTINUE;
 }
 
@@ -104,8 +121,10 @@ kiwi_shortcuts_manager_init (KiwiShortcutsManager *self)
        are dispatched automatically without polling */
     int        fd      = wl_display_get_fd(self->display);
     GIOChannel *channel = g_io_channel_unix_new(fd);
-    g_io_add_watch(channel, G_IO_IN, on_wayland_data, self->display);
+    g_io_add_watch(channel, G_IO_IN | G_IO_ERR | G_IO_HUP, on_wayland_data, self->display);
     g_io_channel_unref(channel);
+
+    g_message("[kiwi-shortcuts] global shortcuts manager bound");
 }
 
 static void
