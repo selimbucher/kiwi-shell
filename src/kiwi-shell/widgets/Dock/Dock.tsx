@@ -3,6 +3,7 @@ const log = logger("dock")
 import app from "ags/gtk4/app"
 import App from "ags/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
+import { destroyWindow } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
 import { hyprland, list, unpinnedList, DOCK_HIDE_TIMEOUT, JUMP_ANIMATION_CLASS_TIMEOUT, DOCK_SLIDE_DURATION } from "./dock-state"
@@ -296,7 +297,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             layer={Astal.Layer.TOP}
             $={(self) => {
                 selfRef = self
-                onCleanup(() => self.destroy())
+                onCleanup(() => destroyWindow(self))
 
                 // any pointer or drag activity on the dock is presence
                 // evidence — no leave handling, the watchdog notices absence
@@ -361,7 +362,7 @@ function EdgeSensor({ gdkmonitor, poke }: {
             application={app}
             visible={conf.as(conf => conf.dock == "auto-hide")}
             $={(self) => {
-                onCleanup(() => self.destroy())
+                onCleanup(() => destroyWindow(self))
 
                 const motionController = new Gtk.EventControllerMotion()
                 motionController.connect("enter", poke)

@@ -11,7 +11,7 @@ import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
 
 import { conf } from "../config"
-import { popupGdkMonitor } from "../monitors"
+import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { clientSelector, focusWindow } from "../../hypr"
 
 const DEFAULT_TIMEOUT = 5000
@@ -313,7 +313,7 @@ function NcBackdrop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 })
                 self.add_controller(key)
 
-                onCleanup(() => self.destroy())
+                onCleanup(() => destroyWindow(self))
             }}
         >
             <box />
@@ -369,7 +369,7 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
                     unsub()
                     unsubResize()
                     unsubClosing()
-                    self.destroy()
+                    destroyWindow(self)
                 })
             }}
         >

@@ -1,5 +1,5 @@
 import app from "ags/gtk4/app"
-import { Gdk } from "ags/gtk4"
+import { Gdk, Gtk } from "ags/gtk4"
 import { Accessor, createBinding, createComputed } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { conf } from "./config"
@@ -18,3 +18,17 @@ export const popupGdkMonitor: Accessor<Gdk.Monitor | undefined> = createComputed
     const focused = get(createBinding(hyprland, "focusedMonitor"))
     return monitors.find(m => m.get_connector() === focused?.name) ?? primary
 })
+
+// Tear down a shell window when its monitor goes away. GTK 4.22's Wayland
+// session-management hook (gtk_application_impl_wayland_window_forget)
+// hands the window's GdkSurface to gdk_wayland_toplevel_remove_from_session
+// without a NULL check, so destroying a window that was never presented —
+// the notification center, its backdrop, the dock's edge sensor — segfaults
+// the whole shell on every monitor hotplug. Realizing first gives the window
+// a surface to forget. Gtk.Native shadows Gtk.Widget's realize() on window
+// objects, so call the widget one explicitly. Fixed upstream in GTK 4.23.0
+// (#8098); keep this until 4.22 is history.
+export function destroyWindow(win: Gtk.Window) {
+    if (!win.get_realized()) Gtk.Widget.prototype.realize.call(win)
+    win.destroy()
+}

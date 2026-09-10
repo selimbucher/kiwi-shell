@@ -2,13 +2,13 @@ import { logger } from "../../log"
 const log = logger("workspaces")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, createComputed, createEffect, For } from "ags"
+import { createState, createComputed, createEffect, For, onCleanup } from "ags"
 import { execAsync } from "ags/process"
 import Hyprland from "gi://AstalHyprland"
 import { isValidClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
-import { popupGdkMonitor } from "../monitors"
+import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { evalLua, luaBind, luaUnbind, isKiwiBind, describeBind, focusWorkspace } from "../../hypr"
 
 const hyprland = Hyprland.get_default()
@@ -153,6 +153,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
             anchor={Astal.WindowAnchor.CENTER | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}
             application={app}
             layer={Astal.Layer.TOP}
+            $={(self) => onCleanup(() => destroyWindow(self))}
         >
             <centerbox class="ws-switch-menu">
                 <box

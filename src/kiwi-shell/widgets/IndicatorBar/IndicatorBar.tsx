@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { Accessor, createState, createComputed, createBinding } from "ags"
+import { Accessor, createState, createComputed, createBinding, onCleanup } from "ags"
 import AstalWp from "gi://AstalWp"
 import { timeout } from "ags/time"
 import { exec } from "ags/process"
@@ -11,7 +11,7 @@ import { conf } from "../config"
 import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessAvailable } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 import { watchIndicatorKeys } from "../inputWatcher"
-import { popupGdkMonitor } from "../monitors"
+import { popupGdkMonitor, destroyWindow } from "../monitors"
 
 const fadeTimeout = 2500
 
@@ -93,6 +93,7 @@ export default function IndicatorBar({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }
         `--primary: ${conf.primary_color};`
       )}
       $={ self => {
+        onCleanup(() => destroyWindow(self))
         timeout(1000, () => {
           waiting = false
         })

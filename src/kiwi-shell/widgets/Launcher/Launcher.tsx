@@ -2,7 +2,7 @@ import { logger } from "../../log"
 const log = logger("launcher")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, createComputed, For, Accessor } from "ags"
+import { createState, createComputed, For, Accessor, onCleanup } from "ags"
 import { execAsync } from "ags/process"
 import GLib from "gi://GLib"
 import Pango from "gi://Pango"
@@ -10,7 +10,7 @@ import Apps from "gi://AstalApps"
 import Hyprland from "gi://AstalHyprland"
 import { conf } from "../config"
 import { mapVersion } from "../desktopEntries"
-import { popupGdkMonitor } from "../monitors"
+import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { evalLua, luaBind, isKiwiBind, describeBind } from "../../hypr"
 
 // Spotlight-style launcher: a centered glass search panel on Super+Space.
@@ -200,6 +200,7 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             layer={Astal.Layer.OVERLAY}
             keymode={Astal.Keymode.EXCLUSIVE}
             $={(self) => {
+                onCleanup(() => destroyWindow(self))
                 const keys = new Gtk.EventControllerKey()
                 keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 keys.connect("key-pressed", (_controller, keyval) => {

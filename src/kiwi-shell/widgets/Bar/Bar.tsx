@@ -1,5 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
+import { destroyWindow } from "../monitors"
 import { createPoll } from "ags/time"
 import { createBinding, createComputed, onCleanup } from "ags"
 
@@ -61,7 +62,7 @@ export default function Bar({
             anchor={TOP | LEFT}
             application={app}
             layer={Astal.Layer.TOP}
-            $={(self) => onCleanup(() => self.destroy())}
+            $={(self) => onCleanup(() => destroyWindow(self))}
         >
             <Tray />
         </window>,
@@ -76,7 +77,7 @@ export default function Bar({
             anchor={TOP}
             application={app}
             layer={Astal.Layer.TOP}
-            $={(self) => onCleanup(() => self.destroy())}
+            $={(self) => onCleanup(() => destroyWindow(self))}
         >
             <Workspaces />
         </window>,
@@ -108,7 +109,7 @@ export default function Bar({
                     }
                 })
                 self.add_controller(click)
-                onCleanup(() => self.destroy())
+                onCleanup(() => destroyWindow(self))
             }}
         >
             <MenuButtons

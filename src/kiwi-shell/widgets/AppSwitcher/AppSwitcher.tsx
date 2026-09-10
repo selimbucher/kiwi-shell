@@ -2,7 +2,7 @@ import { logger } from "../../log"
 const log = logger("appswitcher")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, createComputed, createEffect, For, createBinding } from "ags"
+import { createState, createComputed, createEffect, For, createBinding, onCleanup } from "ags"
 import { execAsync } from "ags/process"
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
@@ -11,7 +11,7 @@ import { playSound } from "../sound"
 import { captureWindowToTexture, freshClientSize, getCachedTexture } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
-import { popupGdkMonitor } from "../monitors"
+import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { evalLua, luaBind, luaUnbind, isKiwiBind, describeBind, closeWindow, clientSelector } from "../../hypr"
 
 export const [isVisible, setVisibility] = createState(false)
@@ -201,6 +201,7 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
             anchor={Astal.WindowAnchor.CENTER | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}
             application={app}
             layer={Astal.Layer.TOP}
+            $={(self) => onCleanup(() => destroyWindow(self))}
         >
             <Windows gdkmonitor={gdkmonitor} />
         </window>

@@ -2,7 +2,7 @@ import { logger } from "../log"
 const log = logger("prompts")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, createComputed, createBinding, For } from "ags"
+import { createState, createComputed, createBinding, For, onCleanup } from "ags"
 import { readFile, writeFileAsync } from "ags/file"
 import { exec, execAsync } from "ags/process"
 
@@ -10,7 +10,7 @@ import { conf } from "./config"
 import Hyprland from "gi://AstalHyprland"
 import { Icon } from "./iconNames"
 import { playSound } from "./sound";
-import { popupGdkMonitor } from "./monitors"
+import { popupGdkMonitor, destroyWindow } from "./monitors"
 
 export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monitor }) {
     return (
@@ -31,6 +31,7 @@ export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monito
             application={app}
             layer={Astal.Layer.OVERLAY}
             keymode={Astal.Keymode.EXCLUSIVE}
+            $={(self) => onCleanup(() => destroyWindow(self))}
         >
             <box>
                 <WifiPrompt />

@@ -1,6 +1,7 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, onCleanup } from "ags"
+import { destroyWindow } from "../monitors"
 import { readFile, writeFileAsync } from "ags/file"
 import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
@@ -821,6 +822,7 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 self.visible = visible()
                 const dispose = visible.subscribe(() => { self.visible = visible() })
                 onCleanup(dispose)
+                onCleanup(() => destroyWindow(self))
 
                 // a window taking focus (click into an app) clears the
                 // desktop selection, like every OS desktop
