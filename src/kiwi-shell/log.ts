@@ -22,7 +22,11 @@ export function setLogLevel(level: LogLevel) {
 
 function fmt(v: unknown): string {
     if (typeof v === "string") return v
-    if (v instanceof Error) return v.stack ? `${v.message}\n${v.stack}` : v.message
+    // GLib.Error (everything bluez/gio throws) is NOT an Error subclass, and
+    // its message/domain live on the prototype — JSON.stringify used to render
+    // it as a bare stack with the actual error text missing.
+    if (v instanceof Error || v instanceof GLib.Error)
+        return v.stack ? `${v.message}\n${v.stack}` : v.message
     try {
         return JSON.stringify(v)
     } catch {
