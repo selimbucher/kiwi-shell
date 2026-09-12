@@ -7,6 +7,7 @@ import { exec } from "ags/process"
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
 import { KeyedList } from "../../../KeyedList"
 import { logger } from "../../../../log"
+import { registerBluetoothAgent } from "../../../../bluetoothAgent"
 const log = logger("bluetooth")
 import { bluetoothTabOpen } from "../SystemMenu"
 
@@ -25,6 +26,7 @@ let adapter: AstalBluetooth.Adapter | undefined = undefined
 if (hasBluetoothAdapter()) {
   bluetooth = AstalBluetooth.get_default()
   adapter = bluetooth.adapter ?? undefined
+  registerBluetoothAgent()
 }
 
 adapter?.connect("notify::powered", () => {
