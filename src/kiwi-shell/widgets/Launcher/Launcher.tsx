@@ -10,7 +10,7 @@ import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, type BindOp } from "../../hypr"
 import { shortcut, combo, type Shortcut } from "../../shortcuts"
-import { search, suggestedApps, GROUP_LABEL, type Result } from "./providers"
+import { search, GROUP_LABEL, type Result } from "./providers"
 import { evaluate, formatNumber } from "./calc"
 
 // Spotlight: a floating search panel on a tap of Super. Type to find an app, a
@@ -24,7 +24,6 @@ import { evaluate, formatNumber } from "./calc"
 // the panel actually paints.
 
 const MAX_RESULTS = 8
-const SUGGESTIONS = 5
 
 export const [isVisible, setVisibility] = createState(false)
 const [query, setQuery] = createState("")
@@ -32,7 +31,9 @@ const [selectedIdx, setSelectedIdx] = createState(0)
 
 const results: Accessor<Result[]> = createComputed(get => {
     const text = get(query).trim()
-    if (!text) return suggestedApps(SUGGESTIONS)
+    // nothing typed is nothing to show: the panel is a bar until it has an
+    // answer, and a list of guesses is in the way of the one you came to type
+    if (!text) return []
     const value = evaluate(text)
     const answer = value === null ? null : { name: formatNumber(value), detail: text }
     return search(text, answer, MAX_RESULTS)

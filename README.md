@@ -157,7 +157,7 @@ the panel) to dismiss. It searches, in this order:
   copies the value.
 - **Search** — the last row always offers the query to DuckDuckGo.
 
-With an empty box it lists your most-launched applications. The tap bind only
+With an empty box it is just a search bar. The tap bind only
 fires when nothing else used the Super hold — Super+Tab, Super+drag and
 friends stay untouched. It is registered automatically unless your config
 already binds plain `SUPER_L`; custom keys can call `kiwictl launcher

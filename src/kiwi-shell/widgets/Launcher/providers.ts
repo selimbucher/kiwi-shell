@@ -68,16 +68,6 @@ function appResults(text: string, limit: number): Result[] {
     return apps.fuzzy_query(text).slice(0, limit).map(appResult)
 }
 
-/** The apps to offer before anything is typed, most-launched first. */
-export function suggestedApps(limit: number): Result[] {
-    return apps.get_list()
-        .slice()
-        .sort((a, b) => b.get_frequency() - a.get_frequency() ||
-            a.get_name().localeCompare(b.get_name()))
-        .slice(0, limit)
-        .map(appResult)
-}
-
 // ─── Open windows ─────────────────────────────────────────────────────────────
 
 const hyprland = Hyprland.get_default()
