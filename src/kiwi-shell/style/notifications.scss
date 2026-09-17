@@ -1,224 +1,258 @@
+@use 'theme' as *;
+
+// Every label gets an explicit size and weight: generic class names like
+// .body, .heading or .caption are typography classes in the libadwaita
+// theme, which is loaded at user priority and inflated the text.
+
 // a fully transparent surface renders nothing and won't reliably receive
 // clicks — same 1% alpha trick as the dock's edge sensor
 .nc-backdrop {
     background: rgba(0, 0, 0, 0.01);
 }
 
-// visually imperceptible, but forces a repaint with real damage every frame
-// while it is mapped (only during the close slide)
-.nc-damage-beacon {
-    background-color: rgba(0, 0, 0, 0.02);
-    animation: nc-beacon 100ms linear infinite alternate;
+// must stay drawable: see the keepalive pixel in NotificationCenter.tsx
+.nc-keepalive {
+    background-color: rgba(0, 0, 0, 0.004);
 }
 
-@keyframes nc-beacon {
-    from { opacity: 0.5; }
-    to   { opacity: 1; }
+.nc-scroll {
+    margin-top: 6px;
 }
 
-.Notifications {
-    margin-top: 4px;
-    padding-bottom: 1px;
+.Notifications scrollbar {
+    background: transparent;
 
-    scrollbar {
-        background: transparent;
+    slider {
+        background-color: var(--k-fill-active);
+        border-radius: 100px;
+        min-width: 4px;
+    }
 
-        slider {
-            background-color: rgba(255, 255, 255, 0.25);
-            border-radius: 100px;
-            min-width: 4px;
-        }
-
-        &:hover slider {
-            background-color: rgba(255, 255, 255, 0.45);
-        }
+    &:hover slider {
+        background-color: var(--k-fg-4);
     }
 }
 
-.notification, .no-notifications {
-    background-color: #000;
-    border-radius: 14px;
-    color: #fff;
-    border: 1px rgba(56, 56, 56, 0.9) solid;
-    padding: 10px 12px;
-    margin-right: 4px;
-    font-size: 10.5px;
+// ─── Card ─────────────────────────────────────────────────────────────────────
+
+.nc-card {
+    // top/left room for the close button on the corner, sides for the shadow
+    margin: 8px 12px 0 12px;
+    padding: 11px 13px;
+    border-radius: 16px;
+    @include panel;
+    box-shadow: var(--k-highlight), 0 4px 12px rgba(0, 0, 0, 0.12);
+    transition: background-color 140ms ease;
+
+    &:hover {
+        background-color: var(--k-panel-hover);
+    }
+
+    &.critical {
+        border-color: rgba(255, 105, 97, 0.6);
+    }
+
+    // collapsed group: the cards behind peek out below, narrower each
+    &.stacked {
+        margin-bottom: 14px;
+        box-shadow:
+            0 8px 0 -4px var(--k-stack-1),
+            0 15px 0 -8px var(--k-stack-2),
+            var(--k-highlight),
+            0 4px 12px rgba(0, 0, 0, 0.12);
+    }
 }
 
-// top/left inset inside the overlay wrapper gives the close button room to
-// stick out past the card corner without being clipped by the window edge;
-// tuned so the button sits centered on the corner arc — half over the card
-.notification {
-    margin-left: 4px;
-    margin-top: 4px;
+.nc-title {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--k-fg);
 }
 
-.no-notifications {
-    min-width: 250px;
-    padding: 10px;
-}
-
-.no-notifications-text {
-    margin-top: 10px;
-    font-size: 16px;
-}
-
-.notification {
-    transition: border-color 150ms ease;
-}
-
-.notification.critical {
-    border-color: rgba(255, 105, 97, 0.55);
-}
-
-.notif-app-icon {
-    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
-}
-
-.notif-image {
-    border-radius: 9px;
-}
-
-.header {
-    margin-bottom: 4px;
-}
-
-.app-name {
-    font-weight: lighter;
-    color: #adadad;
-    font-size: 9.5px;
-}
-
-.notif-time {
-    color: #8a8a8a;
-    font-size: 9px;
-}
-
-.summary {
-    font-weight: bold;
-}
-
-.body {
-    color: #d6d6d6;
+.nc-message {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--k-fg-2);
 
     link {
         color: var(--primary);
     }
 }
 
-.group-toggle {
-    background: none;
-    background-image: none;
-    border: none;
-    box-shadow: none;
-    border-radius: 6px;
-    padding: 0 5px;
-    margin-top: 2px;
-    font-size: 9px;
-    color: #9a9a9a;
-
-    &:hover {
-        color: #fff;
-        background-color: rgba(255, 255, 255, 0.08);
-    }
+.nc-time {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--k-fg-3);
 }
 
-// collapsed group head: two offset bars peek out below the card, macOS-style
-.notification.stacked {
-    box-shadow:
-        0 6px 0 -3px rgba(90, 90, 90, 0.9),
-        0 11px 0 -6px rgba(60, 60, 60, 0.9);
-    margin-bottom: 12px;
-}
-
-.actions {
-    margin-top: 8px;
-}
-
-.action-button {
-    background-color: rgba(255, 255, 255, 0.12);
-    background-image: none;
-    border: none;
-    box-shadow: none;
-    border-radius: 7px;
-    padding: 3px 10px;
+// the same notification received several times
+.nc-count {
     font-size: 10px;
-    color: #eee;
-
-    &:hover {
-        background-color: rgba(255, 255, 255, 0.22);
-    }
+    font-weight: 700;
+    color: var(--k-fg-2);
+    background-color: var(--k-fill);
+    border-radius: 100px;
+    padding: 0 6px;
 }
 
-// straddles the card's top-left corner (sibling of the card, macOS style)
-.close-button {
-    background-color: rgba(55, 55, 55, 0.95);
+.nc-app-icon {
+    -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.nc-avatar {
+    border-radius: 100px;
+}
+
+.nc-badge-icon {
+    -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.nc-thumb {
+    border-radius: 8px;
+}
+
+.nc-thumb-icon {
+    color: var(--k-fg-2);
+}
+
+// ─── Actions ──────────────────────────────────────────────────────────────────
+
+.nc-actions {
+    margin-top: 10px;
+}
+
+.nc-action {
+    min-height: 0;
+    padding: 5px 10px;
+    margin: 0 3px;
+    border-radius: 9px;
+    background: var(--k-fill);
     background-image: none;
-    border: 1px solid rgba(120, 120, 120, 0.5);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-    border-radius: 100%;
-    min-width: 16px;
-    min-height: 16px;
-    padding: 0;
-    opacity: 0;
-    transition: opacity 150ms ease;
+    border: none;
+    box-shadow: none;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--k-fg);
+
+    &:first-child { margin-left: 0; }
+    &:last-child { margin-right: 0; }
 
     &:hover {
-        background-color: rgba(90, 90, 90, 0.95);
+        background: var(--k-fill-hover);
+    }
+
+    label {
+        font-size: 12px;
+        font-weight: 600;
     }
 }
 
-.notification-wrap:hover .close-button {
+// ─── Close button ─────────────────────────────────────────────────────────────
+
+// sits on the card's top-left corner, shown while the pointer is on the card
+.nc-close {
+    min-width: 20px;
+    min-height: 20px;
+    padding: 0;
+    border-radius: 100px;
+    background-color: var(--k-close);
+    background-image: none;
+    border: 1px solid var(--k-border);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+    color: var(--k-fg-2);
+    opacity: 0;
+    transition: opacity 120ms ease;
+
+    &:hover {
+        background-image: linear-gradient(var(--k-fill-hover), var(--k-fill-hover));
+        color: var(--k-fg);
+    }
+}
+
+.nc-card-wrap:hover .nc-close {
     opacity: 1;
 }
 
-// same dark card treatment as the notifications, so the header stays
-// readable on light backgrounds
+// ─── Center rows ──────────────────────────────────────────────────────────────
+
 .nc-header {
-    margin: 6px 4px 4px 0;
-    padding: 5px 6px 5px 14px;
-    background-color: #000;
-    border: 1px rgba(56, 56, 56, 0.9) solid;
+    margin: 0 12px 4px 12px;
+    padding: 6px 6px 6px 16px;
     border-radius: 100px;
-    // slides in horizontally like the cards; vertical space is animated by
-    // its revealer instead, so the title itself never moves vertically
-    transition: transform 300ms cubic-bezier(0.2, 0.9, 0.3, 1), opacity 300ms ease;
-
-    &.offscreen {
-        transform: translateX(600px);
-        opacity: 0;
-    }
+    @include panel;
 }
 
-.nc-title {
-    font-weight: bold;
-    font-size: 13px;
-    color: #fff;
+.nc-header-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--k-fg);
 }
 
-.clear-all-button {
-    background-color: rgba(255, 255, 255, 0.1);
+.nc-pill {
+    min-height: 0;
+    padding: 3px 11px;
+    border-radius: 100px;
+    background: var(--k-fill);
     background-image: none;
     border: none;
     box-shadow: none;
-    border-radius: 100px;
-    padding: 2px 10px;
-    font-size: 10px;
-    color: #ccc;
+    color: var(--k-fg-2);
+
+    label {
+        font-size: 11.5px;
+        font-weight: 700;
+    }
 
     &:hover {
-        background-color: rgba(255, 255, 255, 0.2);
-        color: #fff;
+        background: var(--k-fill-hover);
+        color: var(--k-fg);
     }
 }
 
-// enter/exit as a transition (not an animation): banners slide between
-// .offscreen and their resting state, and can never replay on surface remaps
-.notification-wrap {
-    transition: transform 300ms cubic-bezier(0.2, 0.9, 0.3, 1), opacity 300ms ease;
+.nc-round {
+    min-width: 22px;
+    min-height: 22px;
+    padding: 0;
+    border-radius: 100px;
+    background: var(--k-fill);
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    color: var(--k-fg-2);
 
-    &.offscreen {
-        transform: translateX(600px);
-        opacity: 0.4;
+    &:hover {
+        background: var(--k-fill-hover);
+        color: var(--k-fg);
     }
+}
+
+// above an expanded group, on the same material so it reads on any wallpaper
+.nc-group-header {
+    margin: 8px 12px 0 12px;
+    padding: 5px 5px 5px 12px;
+    border-radius: 100px;
+    @include panel;
+}
+
+.nc-group-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--k-fg);
+}
+
+.nc-empty {
+    margin: 0 12px;
+    padding: 20px;
+    border-radius: 16px;
+    @include panel;
+}
+
+.nc-empty-icon {
+    color: var(--k-fg-3);
+}
+
+.nc-empty-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--k-fg-3);
 }
