@@ -207,6 +207,29 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     let selfRef: Astal.Window | null = null
     let dockBoxRef: Gtk.Widget | null = null
 
+    // Every window's box, asked of the compositor rather than read off
+    // Astal's Client objects. Astal caches a client's geometry and does not
+    // refresh it when a floating window is moved or resized — the same
+    // staleness that leaves `floating` without a notify signal at all
+    // (Aylur/astal#437) — so a floating window dragged over the dock still
+    // reported the position it was opened at, and the dock stayed up on top
+    // of it. The whole auto-hide decision is these numbers; they cannot be
+    // allowed to be a guess.
+    const liveWindows = (): { x: number, y: number, w: number, h: number, ws: number }[] => {
+        try {
+            return JSON.parse(hyprland.message("j/clients"))
+                .filter((c: any) => c.mapped && !c.hidden)
+                .map((c: any) => ({
+                    x: c.at[0], y: c.at[1], w: c.size[0], h: c.size[1],
+                    ws: c.workspace?.id ?? -1,
+                }))
+        } catch {
+            // IPC down or a reply we cannot read: nothing is known to cover
+            // the strip, so the dock shows. A visible dock is the safe end.
+            return []
+        }
+    }
+
     // is the cursor inside the area that keeps the dock alive? That is the
     // strip the pill occupies (its horizontal span only — leaving sideways
     // hides just like leaving upward) plus a thin band along the bottom
@@ -299,6 +322,8 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
         get(activeWorkspace)
         get(geometryTick)
+        // windows opening and closing, so the answer does not wait for a tick
+        get(clients)
 
         const activeId = hyprland.get_monitors()
             .find(m => m.name === gdkmonitor.get_connector())
@@ -310,11 +335,11 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         // maximised window did.
         const geo = gdkmonitor.get_geometry()
         const stripTop = geo.y + geo.height - (selfRef?.get_height() ?? 80)
-        const covered = get(clients).some(client =>
-            client.workspace.id === activeId
-            && client.y + client.height > stripTop
-            && client.x < geo.x + geo.width
-            && client.x + client.width > geo.x)
+        const covered = liveWindows().some(win =>
+            win.ws === activeId
+            && win.y + win.h > stripTop
+            && win.x < geo.x + geo.width
+            && win.x + win.w > geo.x)
 
         return !covered
     })
