@@ -6,6 +6,7 @@ import { exec } from "ags/process"
 import { Gdk } from "ags/gtk4"
 import App from "ags/app"
 import GLib from "gi://GLib"
+import Gio from "gi://Gio"
 
 const HOME = GLib.getenv("HOME")
 const CONFIG_FOLDER = `${HOME}/.config/kiwi-shell`
@@ -99,7 +100,7 @@ function reloadConfig() {
     }
 }
 
-monitorFile(CONFIG_FILE, () => {
+function scheduleReload() {
     if (reloadTimeout !== null) {
         GLib.source_remove(reloadTimeout)
     }
@@ -108,7 +109,27 @@ monitorFile(CONFIG_FILE, () => {
         reloadConfig()
         return GLib.SOURCE_REMOVE
     })
-})
+}
+
+// A file monitor follows the file's inode. Editors (and writeFileAsync) save
+// by renaming a new file over config.json, after which in-place writes, like
+// kiwi-settings', went unseen. So re-watch whenever the file is replaced.
+// (monitorFile also keeps the monitor referenced; a bare Gio monitor held in
+// a module variable was garbage-collected within seconds.)
+let configMonitor: Gio.FileMonitor | null = null
+
+function watchConfig() {
+    configMonitor?.cancel()
+    configMonitor = monitorFile(CONFIG_FILE, (_path, event) => {
+        // (a plain CREATED is re-watched by monitorFile itself)
+        if (event === Gio.FileMonitorEvent.RENAMED || event === Gio.FileMonitorEvent.MOVED_IN) {
+            watchConfig()
+        }
+        scheduleReload()
+    })
+}
+
+watchConfig()
 
 export async function writeConf() {
     const currentConf = conf()
