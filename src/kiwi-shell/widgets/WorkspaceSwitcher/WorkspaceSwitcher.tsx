@@ -8,18 +8,43 @@ import { isValidClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
+import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
+import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, focusWorkspace, type BindOp } from "../../hypr"
 import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
 
 const hyprland = Hyprland.get_default()
 
+// the canvas height cards start at; with many workspaces they shrink until
+// the rows fit on screen
 const CARD_HEIGHT = 140
+const MIN_CARD_HEIGHT = 64
+const CARD_HEIGHT_STEP = 8
+const CARD_SPACING = 8
+// what a card adds around its canvas (.window-preview padding and border,
+// the title bar) and the panel's padding, see appSwitcher.scss
+const CARD_CHROME_WIDTH = 12
+const CARD_CHROME_HEIGHT = 36
+const PANEL_PADDING = 24
+
+// cards draw windows at card height / monitor height, so for any window no
+// taller than its monitor a frame of card height is sharp enough
+reservePreviewSize(0, CARD_HEIGHT)
+
+// A window as the switcher draws it, in layout coordinates, snapshotted when
+// the switcher opens. Later windows are drawn over earlier ones.
+interface MiniWindow {
+    client: Hyprland.Client
+    x: number
+    y: number
+    width: number
+    height: number
+}
 
 export const [isVisible, setVisibility] = createState(false)
 const [selectedId, setSelectedId] = createState(1)
 const [displayedIds, setDisplayedIds] = createState<number[]>([])
-// per-workspace client snapshot, taken when the switcher opens
-const [wsClients, setWsClients] = createState<Map<number, Hyprland.Client[]>>(new Map())
+const [wsWindows, setWsWindows] = createState<Map<number, MiniWindow[]>>(new Map())
 
 // ─── Workspace switcher keybinds (shortcuts.workspace_switcher, default Super+Tab)
 // Same architecture as the app switcher, all in the root submap: binde for
@@ -130,20 +155,40 @@ export function toggleWorkspaceSwitcher(cmd: string) {
     }
 }
 
-function showSwitcher() {
-    const byWs = new Map<number, Hyprland.Client[]>()
-    for (const client of hyprland.get_clients()) {
-        if (!isValidClient(client)) continue
-        const id = client.get_workspace()?.get_id() ?? 0
-        if (id <= 0) continue
-        byWs.set(id, [...(byWs.get(id) ?? []), client])
+// Geometry and stacking straight from the compositor: Astal's client
+// geometry goes stale after moves and resizes, and it has no stacking order.
+// Floating windows sit above tiled ones, the most recently focused on top.
+function snapshotWindows(): Map<number, MiniWindow[]> {
+    let raw: any[] = []
+    try {
+        raw = JSON.parse(hyprland.message("j/clients"))
+    } catch (e) {
+        log.error("failed to read clients:", e)
     }
+    const stacked = raw
+        .filter(c => c.mapped && !c.hidden && (c.workspace?.id ?? 0) > 0)
+        .sort((a, b) => (Number(a.floating) - Number(b.floating)) || (b.focusHistoryID - a.focusHistoryID))
+    const byWs = new Map<number, MiniWindow[]>()
+    for (const c of stacked) {
+        // Astal strips the 0x prefix from addresses
+        const client = hyprland.get_client(String(c.address).replace("0x", ""))
+        if (!client || !isValidClient(client)) continue
+        const id = c.workspace.id
+        byWs.set(id, [...(byWs.get(id) ?? []), {
+            client, x: c.at[0], y: c.at[1], width: c.size[0], height: c.size[1],
+        }])
+    }
+    return byWs
+}
+
+function showSwitcher() {
+    const byWs = snapshotWindows()
     const last = Math.max(0, ...byWs.keys())
     const current = hyprland.focusedWorkspace?.id ?? 1
     // the first workspace through the empty one just after the last
     // occupied one, so there is always a fresh workspace to jump to
     const count = Math.max(last + 1, current)
-    setWsClients(byWs)
+    setWsWindows(byWs)
     setDisplayedIds(Array.from({ length: count }, (_, i) => i + 1))
     setSelectedId(current)
     setVisibility(true)
@@ -165,6 +210,14 @@ function confirmAndClose() {
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
+    // cards wrap into rows instead of running off screen, like the app
+    // switcher, and shrink when the rows would be too tall. Built only while
+    // open: every open gets a fresh snapshot, and closed cards let go of
+    // their frames.
+    const layout = createComputed(get => get(isVisible)
+        ? layoutCards(get(displayedIds), get(popupGdkMonitor) ?? gdkmonitor)
+        : { height: CARD_HEIGHT, rows: [] })
+
     return (
         <window
             css={conf(conf => `--primary: ${conf.primary_color};`)}
@@ -182,11 +235,16 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
                 <box
                     $type="center"
                     class="app-switch-container"
-                    spacing={8}
+                    orientation={Gtk.Orientation.VERTICAL}
+                    spacing={CARD_SPACING}
                     halign={Gtk.Align.CENTER}
                 >
-                    <For each={displayedIds}>
-                        {(id) => <WorkspaceCard id={id} />}
+                    <For each={layout.as(l => l.rows)}>
+                        {(row) => (
+                            <box spacing={CARD_SPACING} halign={Gtk.Align.CENTER}>
+                                {row.map(id => <WorkspaceCard id={id} height={layout.get().height} />)}
+                            </box>
+                        )}
                     </For>
                 </box>
             </centerbox>
@@ -213,99 +271,139 @@ function workspaceGeometry(id: number) {
     }
 }
 
-// A capture-free workspace preview: a miniature of the workspace's window
-// layout, built from live client geometry, one rounded rect + app icon per
-// window.
-function WorkspaceCard({ id }: { id: number }) {
-    // geometry is read per open inside the effect below — the popup can
-    // land on a different monitor each time
-    const [width, setWidth] = createState(Math.round(CARD_HEIGHT * 16 / 9))
-    const [entries, setEntries] = createState<string[]>([])
-    const [empty, setEmpty] = createState(true)
+function canvasWidth(id: number, height: number): number {
+    const geo = workspaceGeometry(id)
+    return Math.round(height * geo.width / geo.height)
+}
 
-    const container = (
-        <box
-            orientation={Gtk.Orientation.VERTICAL}
-            spacing={0}
-            class="window-preview"
-        >
+// Rows within 85% of the monitor, like the app switcher, from the largest
+// card height whose rows also fit its height. Rows hold equally many cards
+// where the widths allow it, so 7 cards read as 4 + 3 rather than 6 + 1.
+function layoutCards(ids: number[], monitor: Gdk.Monitor): { height: number, rows: number[][] } {
+    const area = monitor.get_geometry()
+    const maxWidth = area.width * 0.85 - 2 * PANEL_PADDING
+    const maxHeight = area.height * 0.85 - 2 * PANEL_PADDING
+    const cardWidth = (id: number, height: number) =>
+        canvasWidth(id, height) + CARD_CHROME_WIDTH + CARD_SPACING
+    const fits = (row: number[], height: number) =>
+        row.reduce((sum, id) => sum + cardWidth(id, height), -CARD_SPACING) <= maxWidth
+
+    for (let height = CARD_HEIGHT; ; height -= CARD_HEIGHT_STEP) {
+        const greedy: number[][] = []
+        for (const id of ids) {
+            const row = greedy[greedy.length - 1]
+            if (row && fits([...row, id], height)) row.push(id)
+            else greedy.push([id])
+        }
+        const perRow = Math.ceil(ids.length / Math.max(1, greedy.length))
+        const even = Array.from({ length: greedy.length }, (_, i) => ids.slice(i * perRow, (i + 1) * perRow))
+            .filter(row => row.length > 0)
+        const rows = even.length === greedy.length && even.every(row => fits(row, height)) ? even : greedy
+        const total = rows.length * (height + CARD_CHROME_HEIGHT) + (rows.length - 1) * CARD_SPACING
+        if (total <= maxHeight || height - CARD_HEIGHT_STEP < MIN_CARD_HEIGHT)
+            return { height, rows }
+    }
+}
+
+// A workspace preview: the wallpaper with the workspace's windows at their
+// positions, each showing its latest capture (an app icon until there is one).
+function WorkspaceCard({ id, height }: { id: number, height: number }) {
+    const geo = workspaceGeometry(id)
+    const width = canvasWidth(id, height)
+    const scale = height / geo.height
+    const windows = wsWindows.get().get(id) ?? []
+    const entries = [...new Set(windows.map(w => entryForClient(w.client)))]
+
+    const wallpaper = new Gtk.Picture({ contentFit: Gtk.ContentFit.COVER, canShrink: true })
+    const path = wallpaperPath.get()
+    if (path) loadThumbnail(path, width, height).then(t => wallpaper.set_paintable(t))
+
+    const canvas = new Gtk.Fixed()
+    for (const win of windows) {
+        const w = Math.max(6, Math.round(win.width * scale))
+        const h = Math.max(6, Math.round(win.height * scale))
+        canvas.put(
+            <MiniWindowView client={win.client} width={w} height={h} /> as Gtk.Widget,
+            Math.round((win.x - geo.x) * scale),
+            Math.round((win.y - geo.y) * scale),
+        )
+    }
+
+    const card = (
+        <box orientation={Gtk.Orientation.VERTICAL} spacing={0} class="window-preview">
             <box class="preview-title-bar" spacing={5}>
                 <label class="ws-number" label={`${id}`} xalign={0} />
-                <For each={entries}>
-                    {(entry) => <AppIconImage entry={entry} pixelSize={13} cssClass="ws-app-icon" />}
-                </For>
+                {entries.map(entry => <AppIconImage entry={entry} pixelSize={13} cssClass="ws-app-icon" />)}
             </box>
-            <overlay>
-                <Gtk.Fixed
-                    class="ws-canvas"
-                    widthRequest={width}
-                    heightRequest={CARD_HEIGHT}
-                    $={(self: Gtk.Fixed) => {
-                        createEffect(() => {
-                            if (!isVisible()) return
-                            const geo = workspaceGeometry(id)
-                            const cardWidth = Math.round(CARD_HEIGHT * geo.width / geo.height)
-                            setWidth(cardWidth)
-                            const clients = wsClients().get(id) ?? []
-                            setEntries([...new Set(clients.map(entryForClient))])
-                            setEmpty(clients.length === 0)
-
-                            let child = self.get_first_child()
-                            while (child) {
-                                const next = child.get_next_sibling()
-                                self.remove(child)
-                                child = next
-                            }
-                            for (const c of clients) {
-                                const w = Math.max(6, Math.round(c.get_width() * cardWidth / geo.width))
-                                const h = Math.max(6, Math.round(c.get_height() * CARD_HEIGHT / geo.height))
-                                const icon = Math.max(8, Math.min(20, Math.round(Math.min(w, h) * 0.55)))
-                                self.put(
-                                    (
-                                        <overlay>
-                                            <box class="ws-mini-window" widthRequest={w} heightRequest={h} />
-                                            <box
-                                                $type="overlay"
-                                                halign={Gtk.Align.CENTER}
-                                                valign={Gtk.Align.CENTER}
-                                            >
-                                                <AppIconImage
-                                                    entry={entryForClient(c)}
-                                                    pixelSize={icon}
-                                                    cssClass="ws-mini-icon"
-                                                />
-                                            </box>
-                                        </overlay>
-                                    ) as Gtk.Widget,
-                                    Math.round((c.get_x() - geo.x) * cardWidth / geo.width),
-                                    Math.round((c.get_y() - geo.y) * CARD_HEIGHT / geo.height),
-                                )
-                            }
-                        })
-                    }}
-                />
-                {/* a theme icon, not a "＋" label: the fullwidth plus glyph
-                    only exists in CJK fonts and renders as tofu without one */}
-                <Gtk.Image
-                    $type="overlay"
-                    class="ws-plus"
-                    iconName="list-add-symbolic"
-                    pixelSize={24}
-                    visible={empty}
-                    halign={Gtk.Align.CENTER}
-                    valign={Gtk.Align.CENTER}
-                />
-            </overlay>
+            {/* a Picture's natural size is the whole image — the scroll-less
+                viewport holds the canvas at its computed size */}
+            <Gtk.ScrolledWindow
+                class="ws-canvas"
+                overflow={Gtk.Overflow.HIDDEN}
+                hscrollbarPolicy={Gtk.PolicyType.NEVER}
+                vscrollbarPolicy={Gtk.PolicyType.NEVER}
+                widthRequest={width}
+                heightRequest={height}
+            >
+                <overlay>
+                    {wallpaper}
+                    <box $type="overlay">{canvas}</box>
+                    {/* a theme icon, not a "＋" label: the fullwidth plus glyph
+                        only exists in CJK fonts and renders as tofu without one */}
+                    <Gtk.Image
+                        $type="overlay"
+                        class="ws-plus"
+                        iconName="list-add-symbolic"
+                        pixelSize={Math.round(24 * height / CARD_HEIGHT)}
+                        visible={windows.length === 0}
+                        halign={Gtk.Align.CENTER}
+                        valign={Gtk.Align.CENTER}
+                    />
+                </overlay>
+            </Gtk.ScrolledWindow>
         </box>
     ) as Gtk.Box
 
     createEffect(() => {
         if (selectedId() === id && isVisible()) {
-            container.add_css_class("selected")
+            card.add_css_class("selected")
         } else {
-            container.remove_css_class("selected")
+            card.remove_css_class("selected")
         }
     })
 
-    return container
+    return card
+}
+
+function MiniWindowView({ client, width, height }: { client: Hyprland.Client, width: number, height: number }) {
+    const address = client.get_address()
+    const [texture, setTexture] = createState<Gdk.Texture | null>(getCachedTexture(address))
+    // fresh captures come straight from the cache; stale ones are retaken
+    captureWindowToTexture(address).then(t => {
+        if (t) setTexture(t)
+    })
+    const icon = Math.max(8, Math.min(20, Math.round(Math.min(width, height) * 0.55)))
+
+    return (
+        <Gtk.ScrolledWindow
+            class="ws-mini-window"
+            overflow={Gtk.Overflow.HIDDEN}
+            hscrollbarPolicy={Gtk.PolicyType.NEVER}
+            vscrollbarPolicy={Gtk.PolicyType.NEVER}
+            widthRequest={width}
+            heightRequest={height}
+        >
+            <overlay>
+                <Gtk.Picture canShrink contentFit={Gtk.ContentFit.COVER} paintable={texture} />
+                <box
+                    $type="overlay"
+                    halign={Gtk.Align.CENTER}
+                    valign={Gtk.Align.CENTER}
+                    visible={texture(t => !t)}
+                >
+                    <AppIconImage entry={entryForClient(client)} pixelSize={icon} cssClass="ws-mini-icon" />
+                </box>
+            </overlay>
+        </Gtk.ScrolledWindow>
+    )
 }

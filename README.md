@@ -135,8 +135,8 @@ See the [App Switcher Guide](./docs/AppSwitcherKeybinds.md) for the manual setup
 ### Workspace Switcher (Super+Tab)
 
 Super+Tab cycles through a workspace overview — workspace 1 through the first
-empty workspace after the last occupied one, each shown as a miniature of its
-window layout. Hold Super and press Tab (Shift+Tab for backwards), release
+empty workspace after the last occupied one, each shown with its windows on
+the wallpaper. Hold Super and press Tab (Shift+Tab for backwards), release
 Super to switch, Escape to abort. Registered automatically unless `SUPER+TAB`
 is already bound; custom keys can call `kiwictl workspaces
 open-next|previous|confirm|close` the same way as the app switcher.
