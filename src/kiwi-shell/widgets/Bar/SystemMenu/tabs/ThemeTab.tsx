@@ -1,132 +1,80 @@
-import { createState, createEffect } from "ags"
+import { createState, type Accessor } from "ags"
 import { Gtk, Gdk } from "ags/gtk4"
-import { exec, execAsync } from "ags/process"
+import { execAsync } from "ags/process"
 import Gio from "gi://Gio"
+import Pango from "gi://Pango"
 
 import { conf, setConf, writeConf } from "../../../config"
 import { logger } from "../../../../log"
 const log = logger("theme")
 import { Icon } from "../../../iconNames";
+import {
+    wallpaperPath,
+    refreshWallpaper,
+    setWallpaper,
+    wallpaperFolder,
+    listWallpapers,
+    wallpaperName,
+    prettyFolder,
+    loadThumbnail,
+} from "../../../services/wallpaper"
 
-function getCurrentWallpaper(connector?: string): string | null {
-    try {
-        const output = exec("awww query")
-        const lines = output.split("\n").filter(l => l.includes("image: "))
-        
-        const line = connector 
-            ? lines.find(l => l.includes(connector)) ?? lines[0]
-            : lines[0]
-            
-        const match = line?.match(/image:\s*(.+)$/)
-        return match ? match[1].trim() : null
-    } catch (error) {
-        execAsync("awww-daemon").catch(() => {})
-        log.debug("awww daemon not running, starting...")
-    }
-    return null
+// The system appearance is org.gnome.desktop.interface color-scheme: it is what
+// xdg-desktop-portal serves, so GTK4/libadwaita, Qt, browsers and Electron apps
+// follow it directly. Anything that can't (GTK3 themes, compositor colours)
+// is up to the desktop config to sync from the same key.
+const INTERFACE_SCHEMA = "org.gnome.desktop.interface"
+const interfaceSettings = Gio.SettingsSchemaSource.get_default()?.lookup(INTERFACE_SCHEMA, true)
+    ? new Gio.Settings({ schema_id: INTERFACE_SCHEMA })
+    : null
+
+const readDarkMode = () => interfaceSettings?.get_string("color-scheme") === "prefer-dark"
+const [darkMode, storeDarkMode] = createState(readDarkMode())
+interfaceSettings?.connect("changed::color-scheme", () => storeDarkMode(readDarkMode()))
+
+function setDarkMode(dark: boolean) {
+    if (dark === readDarkMode()) return
+    interfaceSettings?.set_string("color-scheme", dark ? "prefer-dark" : "prefer-light")
 }
 
-const [wallpaperPath, storeWallpaperPath] = createState<string | null>(null)
-
-let retryInterval: number | null = null
-
-function setupWallpaperPolling() {
-    const path = getCurrentWallpaper()
-    if (path) {
-        storeWallpaperPath(path)
-        if (retryInterval) {
-            clearInterval(retryInterval)
-            retryInterval = null
-        }
-        return
-    }
-    
-    if (!retryInterval) {
-        log.debug("Starting wallpaper polling...")
-        // capped: without awww installed this would otherwise spawn two
-        // processes every 2s for the lifetime of the shell
-        let attempts = 0
-        retryInterval = setInterval(() => {
-            const path = getCurrentWallpaper()
-            if (path) {
-                log.debug("Successfully connected to awww daemon")
-                storeWallpaperPath(path)
-            } else if (++attempts < 15) {
-                return
-            } else {
-                log.debug("Giving up on awww daemon")
-            }
-            clearInterval(retryInterval!)
-            retryInterval = null
-        }, 2000) as unknown as number
-    }
-}
-
-setupWallpaperPolling()
+const [wallpapers, setWallpapers] = createState<string[]>([])
 
 const rgba = new Gdk.RGBA()
 rgba.parse(conf().primary_color)
 
 export default function ThemeTab({visible}) {
-    const [texture, setTexture] = createState<Gdk.Texture | null>(null)
-
-    createEffect(() => {
-        const path = wallpaperPath()
-        if (!path) {
-            setTexture(null)
-            return
-        }
-        try {
-            const file = Gio.File.new_for_path(path)
-            const t = Gdk.Texture.new_from_file(file)
-            setTexture(t)
-        } catch (e) {
-            log.error("Failed to load texture:", e)
-            setTexture(null)
-        }
-    })
-
     return (
-        <box visible={visible} orientation={Gtk.Orientation.VERTICAL}>
+        <box
+            visible={visible}
+            orientation={Gtk.Orientation.VERTICAL}
+            onMap={() => {
+                // the menu may have been closed while something else changed it
+                refreshWallpaper()
+                const found = listWallpapers()
+                if (found.join("\n") !== wallpapers.get().join("\n")) setWallpapers(found)
+            }}
+        >
+            <box visible={interfaceSettings !== null} orientation={Gtk.Orientation.VERTICAL}>
+                <box class="large-header">
+                    Appearance
+                </box>
+                <box class="appearance-segmented" hexpand={true} homogeneous={true}>
+                    <AppearanceSegment dark={false} label="Light" iconName="weather-clear-symbolic" />
+                    <AppearanceSegment dark={true} label="Dark" iconName="weather-clear-night-symbolic" />
+                </box>
+            </box>
             <box class="large-header">
                 Wallpaper
             </box>
-            <box class="wallpaper-section">
-                <box hexpand={true} />
-                <box
-                    class="wallpaper-buttons"
-                    spacing={6}
-                    valign={Gtk.Align.CENTER}
-                >
-                    <button onClicked={() => promptWallpaper()} >
-                        <box halign={Gtk.Align.CENTER}>
-                            <label label="Select File" />
-                        </box>
-                    </button>
-                    <button valign={Gtk.Align.CENTER} vexpand={false} visible={false}>
-                        <Icon
-                            halign={Gtk.Align.CENTER}
-                            iconName="media-playlist-shuffle-symbolic"
-                            pixelSize={14}
-                        />
-                    </button>
-                </box>
-
-                <box hexpand={true} />
-                 <Gtk.ScrolledWindow
-                    valign={Gtk.Align.CENTER}
-                    hscrollbarPolicy={Gtk.PolicyType.NEVER}
-                    vscrollbarPolicy={Gtk.PolicyType.NEVER}
-                    css="min-width: 108px; min-height: 54px; border-radius: 4px;"
-                    halign={Gtk.Align.END}
-                >
-                    <Gtk.Picture
-                        class="wallpaper-preview"
-                        paintable={texture}
-                        contentFit={Gtk.ContentFit.COVER}
-                        halign={Gtk.Align.END}
-                    />
-                </Gtk.ScrolledWindow>
+            {/* wallpaper_picker: "card" (default) | "grid" | "row" */}
+            <box visible={wallpaperPicker("card")}>
+                <WallpaperCard />
+            </box>
+            <box visible={wallpaperPicker("grid")}>
+                <WallpaperGrid />
+            </box>
+            <box visible={wallpaperPicker("row")}>
+                <WallpaperRow />
             </box>
             {/* Theme section hidden — kept for future use */}
             <box visible={false} orientation={Gtk.Orientation.VERTICAL}>
@@ -143,6 +91,172 @@ export default function ThemeTab({visible}) {
                     </box>
                 </box>
             </box>
+        </box>
+    )
+}
+
+const wallpaperPicker = (style: string) =>
+    conf(c => (c.wallpaper_picker ?? "card") === style)
+
+function AppearanceSegment({ dark, label, iconName }: { dark: boolean, label: string, iconName: string }) {
+    return (
+        <button
+            class={darkMode(d => d === dark ? "active" : "")}
+            onClicked={() => setDarkMode(dark)}
+        >
+            <box halign={Gtk.Align.CENTER} spacing={6}>
+                <Icon iconName={iconName} pixelSize={14} />
+                <label label={label} />
+            </box>
+        </button>
+    )
+}
+
+// A picture that never asks for more than its CSS size: the scrolled window
+// keeps Gtk.Picture from requesting the image's natural size. Its corners
+// only clip the picture with overflow hidden; border-radius alone doesn't.
+function Thumbnail({ path, width, height, class: className }: {
+    path: Accessor<string | null> | string,
+    width: number,
+    height: number,
+    class: string,
+}) {
+    const [texture, setTexture] = createState<Gdk.Texture | null>(null)
+    const load = (p: string | null) => {
+        if (!p) return setTexture(null)
+        loadThumbnail(p, width, height).then(t => {
+            const current = typeof path === "string" ? path : path.get()
+            if (current === p) setTexture(t)
+        })
+    }
+    if (typeof path === "string") load(path)
+    else {
+        load(path.get())
+        path.subscribe(() => load(path.get()))
+    }
+
+    return (
+        <Gtk.ScrolledWindow
+            class={className}
+            hscrollbarPolicy={Gtk.PolicyType.NEVER}
+            vscrollbarPolicy={Gtk.PolicyType.NEVER}
+            overflow={Gtk.Overflow.HIDDEN}
+            css={`min-width: ${width}px; min-height: ${height}px;`}
+        >
+            <Gtk.Picture paintable={texture} contentFit={Gtk.ContentFit.COVER} />
+        </Gtk.ScrolledWindow>
+    )
+}
+
+function shuffleWallpaper() {
+    const current = wallpaperPath.get()
+    const others = listWallpapers().filter(p => p !== current)
+    if (others.length) setWallpaper(others[Math.floor(Math.random() * others.length)])
+}
+
+const currentName = wallpaperPath(p => p ? wallpaperName(p) : "No wallpaper")
+const currentFolder = wallpaperPath(p => p ? prettyFolder(p) : "")
+
+// Card: the current wallpaper large, its name on a scrim, actions on top
+function WallpaperCard() {
+    return (
+        <overlay class="wallpaper-card" hexpand={true}>
+            <Thumbnail class="wallpaper-card-image" path={wallpaperPath} width={268} height={151} />
+            <box $type="overlay" class="wallpaper-card-scrim" valign={Gtk.Align.END} spacing={6}>
+                <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.END} hexpand={true}>
+                    <label class="wallpaper-name" label={currentName} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.END} />
+                    <label class="wallpaper-folder" label={currentFolder} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.MIDDLE} />
+                </box>
+                <button class="wallpaper-icon-button" valign={Gtk.Align.END} tooltipText="Random from folder" onClicked={shuffleWallpaper}>
+                    <Icon iconName="media-playlist-shuffle-symbolic" pixelSize={14} />
+                </button>
+                <button class="wallpaper-choose" valign={Gtk.Align.END} onClicked={promptWallpaper}>
+                    <label label="Change…" />
+                </button>
+            </box>
+        </overlay>
+    )
+}
+
+// Grid: every picture in the wallpaper folder, the current one ringed
+function WallpaperGrid() {
+    return (
+        <Gtk.FlowBox
+            class="wallpaper-grid"
+            hexpand={true}
+            homogeneous={true}
+            minChildrenPerLine={3}
+            maxChildrenPerLine={3}
+            rowSpacing={8}
+            columnSpacing={8}
+            selectionMode={Gtk.SelectionMode.NONE}
+            $={self => {
+                const tiles = new Map<string, Gtk.Widget>()
+                const markCurrent = () => {
+                    const current = wallpaperPath.get()
+                    for (const [path, tile] of tiles) {
+                        if (path === current) tile.add_css_class("current")
+                        else tile.remove_css_class("current")
+                    }
+                }
+                // built with plain Gtk: these come and go outside any JSX scope
+                const rebuild = () => {
+                    self.remove_all()
+                    tiles.clear()
+                    for (const path of wallpapers.get()) {
+                        const tile = gridTile(path)
+                        tiles.set(path, tile)
+                        self.append(tile)
+                    }
+                    const add = new Gtk.Button({
+                        cssClasses: ["wallpaper-thumb", "add"],
+                        tooltipText: "Choose a picture…",
+                        child: new Gtk.Image({ iconName: "list-add-symbolic", pixelSize: 16 }),
+                    })
+                    add.connect("clicked", promptWallpaper)
+                    self.append(add)
+                    markCurrent()
+                }
+                rebuild()
+                wallpapers.subscribe(rebuild)
+                wallpaperPath.subscribe(markCurrent)
+            }}
+        />
+    )
+}
+
+function gridTile(path: string): Gtk.Widget {
+    const picture = new Gtk.Picture({ contentFit: Gtk.ContentFit.COVER })
+    const frame = new Gtk.ScrolledWindow({
+        cssClasses: ["wallpaper-thumb-image"],
+        hscrollbarPolicy: Gtk.PolicyType.NEVER,
+        vscrollbarPolicy: Gtk.PolicyType.NEVER,
+        overflow: Gtk.Overflow.HIDDEN,
+        child: picture,
+    })
+    frame.set_size_request(76, 48)
+    loadThumbnail(path, 76, 48).then(texture => picture.set_paintable(texture))
+
+    const tile = new Gtk.Button({ cssClasses: ["wallpaper-thumb"], tooltipText: wallpaperName(path), child: frame })
+    tile.connect("clicked", () => setWallpaper(path))
+    return tile
+}
+
+// Row: a compact list row, the way a settings list shows a file
+function WallpaperRow() {
+    return (
+        <box class="wallpaper-row" hexpand={true} spacing={8}>
+            <Thumbnail class="wallpaper-row-image" path={wallpaperPath} width={64} height={40} />
+            <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand={true}>
+                <label class="wallpaper-name" label={currentName} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.END} />
+                <label class="wallpaper-folder" label={currentFolder} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.MIDDLE} />
+            </box>
+            <button class="wallpaper-icon-button" valign={Gtk.Align.CENTER} tooltipText="Random from folder" onClicked={shuffleWallpaper}>
+                <Icon iconName="media-playlist-shuffle-symbolic" pixelSize={14} />
+            </button>
+            <button class="wallpaper-icon-button" valign={Gtk.Align.CENTER} tooltipText="Choose a picture…" onClicked={promptWallpaper}>
+                <Icon iconName="document-open-symbolic" pixelSize={14} />
+            </button>
         </box>
     )
 }
@@ -207,35 +321,18 @@ function rgbaToHex(rgba: any): string {
 }
 
 function promptWallpaper() {
-    execAsync(["bash", "-c", `zenity --file-selection \
-        --title="Select a Wallpaper" \
-        --file-filter="Image files | *.jpg *.jpeg *.png *.gif *.pnm *.tga *.tiff *.tif *.webp *.bmp *.farbfeld *.ff *.svg" \
-        --file-filter="All files | *" \
-        2>/dev/null`])
+    execAsync([
+        "zenity", "--file-selection",
+        "--title=Choose a Wallpaper",
+        `--filename=${wallpaperFolder()}/`,
+        "--file-filter=Image files | *.jpg *.jpeg *.png *.gif *.pnm *.tga *.tiff *.tif *.webp *.bmp *.farbfeld *.ff *.svg",
+        "--file-filter=All files | *",
+    ])
         .then((path) => {
             const cleanPath = path.trim()
-            if (!cleanPath) return
-
-            if (conf().auto_color) {
-                execAsync(`kiwi-settings auto-color "${cleanPath}"`)
-            }
-
-            execAsync(`awww img "${cleanPath}" --transition-type wipe --transition-fps 120`)
-                .then(() => {
-                    storeWallpaperPath(cleanPath)
-                })
-                .catch((error) => {
-                    log.error("Failed to set wallpaper:", error)
-                })
+            if (cleanPath) setWallpaper(cleanPath)
         })
         .catch(() => {
             log.info("Wallpaper selection cancelled or failed.")
         })
-}
-
-export function cleanup() {
-    if (retryInterval) {
-        clearInterval(retryInterval)
-        retryInterval = null
-    }
 }

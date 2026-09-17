@@ -58,32 +58,122 @@
     }
   }
 
-  .wallpaper-section {
-      padding: 34px 16px;
-  }
+  .appearance-segmented {
+    margin: 16px 16px 22px;
+    padding: 3px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.1);
 
-  .wallpaper-preview {
-    border-radius: 8px;
-  }
-
-  .wallpaper-buttons {
     button {
-      border: none;
-      background: rgba(255, 255, 255, 0.09);
-      box-shadow: none;
-      border-radius: 12px;
+      background: none;
+      border-radius: 11px;
+      padding: 4px 10px;
       font-size: 12px;
-      padding: 2px 8px;
-      color: #ededed;
-
       &:hover {
-        background: rgba(255, 255, 255, 0.15);
-        color: #ffffff;
+        background: rgba(255, 255, 255, 0.08);
       }
-      label {
-        // margin-right: 6px;
+      &.active {
+        background: rgba(255, 255, 255, 0.22);
+        color: #fff;
       }
     }
+  }
+
+  // wallpaper section: shared by the card, grid and row designs
+  .wallpaper-name {
+    font-size: 13px;
+    font-weight: bold;
+    color: #ffffff;
+  }
+  .wallpaper-folder {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+  }
+  .wallpaper-icon-button, .wallpaper-choose {
+    border: none;
+    box-shadow: none;
+    border-radius: 12px;
+    font-size: 12px;
+    color: #ededed;
+    background: rgba(255, 255, 255, 0.12);
+    &:hover {
+      background: rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+    }
+  }
+  .wallpaper-icon-button {
+    padding: 4px;
+    min-width: 0;
+    min-height: 0;
+  }
+  .wallpaper-choose {
+    padding: 3px 10px;
+    min-height: 0;
+  }
+
+  .wallpaper-card {
+    margin: 14px 16px 18px;
+  }
+  .wallpaper-card-image {
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .wallpaper-card-scrim {
+    padding: 28px 8px 8px 10px;
+    border-radius: 0 0 10px 10px;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+    .wallpaper-icon-button, .wallpaper-choose {
+      background: rgba(255, 255, 255, 0.2);
+      &:hover {
+        background: rgba(255, 255, 255, 0.32);
+      }
+    }
+  }
+
+  .wallpaper-grid {
+    margin: 14px 16px 18px;
+    flowboxchild {
+      padding: 0;
+    }
+  }
+  .wallpaper-thumb {
+    padding: 2px;
+    border-radius: 9px;
+    background: none;
+    border: 2px solid transparent;
+    &:hover {
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    &.current {
+      border-color: var(--primary, #ffffff);
+    }
+    &.add {
+      min-height: 48px;
+      // inside the ring, the size of a thumbnail
+      background-clip: content-box;
+      background-color: rgba(255, 255, 255, 0.08);
+      color: rgba(255, 255, 255, 0.7);
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.14);
+        border-color: transparent;
+        color: #ffffff;
+      }
+    }
+  }
+  .wallpaper-thumb-image {
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .wallpaper-row {
+    margin: 14px 16px 18px;
+    padding: 8px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .wallpaper-row-image {
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.08);
   }
 
   .unkown-devices {
