@@ -298,9 +298,12 @@ function filePathOf(str: string | null | undefined): string | null {
 }
 
 function desktopEntryIcon(n: Notifd.Notification): string | null {
-    const de = n.desktopEntry
-    if (!de) return null
-    const base = de.endsWith(".desktop") ? de.slice(0, -".desktop".length) : de
+    return n.desktopEntry ? entryIcon(n.desktopEntry) : null
+}
+
+// the Icon= key of an installed application id, or null
+function entryIcon(id: string): string | null {
+    const base = id.endsWith(".desktop") ? id.slice(0, -".desktop".length) : id
     for (const candidate of [base, base.toLowerCase()]) {
         const info = GioUnix.DesktopAppInfo.new(candidate + ".desktop")
         const iconName = info?.get_string("Icon")
@@ -311,12 +314,32 @@ function desktopEntryIcon(n: Notifd.Notification): string | null {
 
 type Source = { name: string } | { path: string }
 
-// the app's own icon: desktop entry, then app_icon (name or file)
+const asSource = (icon: string): Source =>
+    filePathOf(icon) ? { path: icon } : { name: icon }
+
+// Who sent this, in the order the sender is most sure about it: the
+// desktop-entry hint, then app_name, which is a desktop id often enough to be
+// worth asking, then app_icon.
+//
+// An app handing over an absolute path to its own bundled logo steps around
+// the icon theme, and its notification ends up wearing different artwork from
+// its own dock icon — kitty does exactly this. So when the answer is a path
+// and the file is named after an installed application, the theme has an
+// opinion about that app and it wins.
 function appIconSource(n: Notifd.Notification): Source | null {
     const fromEntry = desktopEntryIcon(n)
-    if (fromEntry) return filePathOf(fromEntry) ? { path: fromEntry } : { name: fromEntry }
+    if (fromEntry) return asSource(fromEntry)
+
+    const fromName = n.appName ? entryIcon(n.appName) : null
+    if (fromName) return asSource(fromName)
+
     const path = filePathOf(n.appIcon)
-    if (path) return { path }
+    if (path) {
+        const stem = GLib.path_get_basename(path).replace(/\.[^.]+$/, "")
+        const themed = entryIcon(stem)
+        if (themed && !filePathOf(themed)) return { name: themed }
+        return { path }
+    }
     return n.appIcon ? { name: n.appIcon } : null
 }
 
