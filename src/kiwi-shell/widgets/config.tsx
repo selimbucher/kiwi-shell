@@ -13,7 +13,7 @@ const CONFIG_FOLDER = `${HOME}/.config/kiwi-shell`
 const CONFIG_FILE = `${CONFIG_FOLDER}/config.json`
 const HYPR_FILE = `${CONFIG_FOLDER}/hypr.conf`
 
-const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
+export const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
 const DEFAULT_CONFIG_FILE = `${ROOT}/defaultConfig.json`
 const NIX_CONFIG_FILE = `${CONFIG_FOLDER}/nix-config.json`
 

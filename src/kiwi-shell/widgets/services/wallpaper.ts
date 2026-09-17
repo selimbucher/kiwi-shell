@@ -5,11 +5,13 @@ import Gio from "gi://Gio"
 import GLib from "gi://GLib"
 import GdkPixbuf from "gi://GdkPixbuf"
 
-import { conf } from "../config"
+import { conf, ROOT } from "../config"
 import { logger } from "../../log"
 const log = logger("wallpaper")
 
 const HOME = GLib.get_home_dir()
+// the wallpapers kiwi-shell ships, see assets/wallpapers/CREDITS.md
+const INCLUDED_WALLPAPERS = `${ROOT}/assets/wallpapers`
 const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tif", ".tiff"]
 
 export const [wallpaperPath, storeWallpaperPath] = createState<string | null>(null)
@@ -17,7 +19,15 @@ export const [wallpaperPath, storeWallpaperPath] = createState<string | null>(nu
 function parseQuery(output: string): string | null {
     const line = output.split("\n").find(l => l.includes("image: "))
     const match = line?.match(/image:\s*(.+)$/)
-    return match ? match[1].trim() : null
+    return match ? sameIncluded(match[1].trim()) : null
+}
+
+// A picture with an included wallpaper's file name (they carry the Unsplash
+// photo id) is that wallpaper: a copy in ~/Pictures, or the included one from
+// before an update. Treat it as the included one, so it isn't listed twice.
+function sameIncluded(path: string): string {
+    const included = `${INCLUDED_WALLPAPERS}/${GLib.path_get_basename(path)}`
+    return GLib.file_test(included, GLib.FileTest.EXISTS) ? included : path
 }
 
 function queryWallpaper(): string | null {
@@ -76,26 +86,18 @@ export function setWallpaper(path: string) {
             .catch(error => log.error("Failed to match accent color:", error))
     }
     execAsync(["awww", "img", path, "--transition-type", "wipe", "--transition-fps", "120"])
-        .then(() => storeWallpaperPath(path))
+        .then(() => storeWallpaperPath(sameIncluded(path)))
         .catch(error => log.error("Failed to set wallpaper:", error))
 }
 
-// ~/Pictures/Wallpapers when it exists, else the folder of the current one
-export function wallpaperFolder(): string {
-    const pictures = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES) ?? `${HOME}/Pictures`
-    const library = `${pictures}/Wallpapers`
-    if (GLib.file_test(library, GLib.FileTest.IS_DIR)) return library
-    const current = wallpaperPath.get()
-    return current ? GLib.path_get_dirname(current) : pictures
+// where the file picker starts
+export function pictureFolder(): string {
+    return GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES) ?? `${HOME}/Pictures`
 }
 
+// the included wallpapers, and the current one first when it's your own
 export function listWallpapers(): string[] {
-    // awww reports resolved paths, so list the folder by its resolved path too
-    // (a symlinked ~/Pictures would otherwise never match the current one)
-    let folder = wallpaperFolder()
-    try {
-        folder = exec(["realpath", "-e", folder]).trim() || folder
-    } catch {}
+    const folder = INCLUDED_WALLPAPERS
     const paths: string[] = []
     try {
         const enumerator = Gio.File.new_for_path(folder).enumerate_children(
@@ -129,7 +131,9 @@ export function wallpaperName(path: string): string {
         .join(" ")
 }
 
-export function prettyFolder(path: string): string {
+// the line under the name: the source for Unsplash photos, else the folder
+export function wallpaperDetail(path: string): string {
+    if (/-[A-Za-z0-9_-]{11}-unsplash\.[^.]+$/.test(path)) return "Photo on Unsplash"
     const folder = GLib.path_get_dirname(path)
     return folder.startsWith(HOME) ? `~${folder.slice(HOME.length)}` : folder
 }

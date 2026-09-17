@@ -12,10 +12,10 @@ import {
     wallpaperPath,
     refreshWallpaper,
     setWallpaper,
-    wallpaperFolder,
+    pictureFolder,
     listWallpapers,
     wallpaperName,
-    prettyFolder,
+    wallpaperDetail,
     loadThumbnail,
 } from "../../../services/wallpaper"
 
@@ -148,14 +148,8 @@ function Thumbnail({ path, width, height, class: className }: {
     )
 }
 
-function shuffleWallpaper() {
-    const current = wallpaperPath.get()
-    const others = listWallpapers().filter(p => p !== current)
-    if (others.length) setWallpaper(others[Math.floor(Math.random() * others.length)])
-}
-
 const currentName = wallpaperPath(p => p ? wallpaperName(p) : "No wallpaper")
-const currentFolder = wallpaperPath(p => p ? prettyFolder(p) : "")
+const currentDetail = wallpaperPath(p => p ? wallpaperDetail(p) : "")
 
 // Card: the current wallpaper large, its name on a scrim, actions on top
 function WallpaperCard() {
@@ -165,11 +159,8 @@ function WallpaperCard() {
             <box $type="overlay" class="wallpaper-card-scrim" valign={Gtk.Align.END} spacing={6}>
                 <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.END} hexpand={true}>
                     <label class="wallpaper-name" label={currentName} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.END} />
-                    <label class="wallpaper-folder" label={currentFolder} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.MIDDLE} />
+                    <label class="wallpaper-folder" label={currentDetail} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.MIDDLE} />
                 </box>
-                <button class="wallpaper-icon-button" valign={Gtk.Align.END} tooltipText="Random from folder" onClicked={shuffleWallpaper}>
-                    <Icon iconName="media-playlist-shuffle-symbolic" pixelSize={14} />
-                </button>
                 <button class="wallpaper-choose" valign={Gtk.Align.END} onClicked={promptWallpaper}>
                     <label label="Change…" />
                 </button>
@@ -178,7 +169,7 @@ function WallpaperCard() {
     )
 }
 
-// Grid: every picture in the wallpaper folder, the current one ringed
+// Grid: the included wallpapers, the current one ringed
 function WallpaperGrid() {
     return (
         <Gtk.FlowBox
@@ -249,11 +240,8 @@ function WallpaperRow() {
             <Thumbnail class="wallpaper-row-image" path={wallpaperPath} width={64} height={40} />
             <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand={true}>
                 <label class="wallpaper-name" label={currentName} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.END} />
-                <label class="wallpaper-folder" label={currentFolder} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.MIDDLE} />
+                <label class="wallpaper-folder" label={currentDetail} xalign={0} maxWidthChars={1} ellipsize={Pango.EllipsizeMode.MIDDLE} />
             </box>
-            <button class="wallpaper-icon-button" valign={Gtk.Align.CENTER} tooltipText="Random from folder" onClicked={shuffleWallpaper}>
-                <Icon iconName="media-playlist-shuffle-symbolic" pixelSize={14} />
-            </button>
             <button class="wallpaper-icon-button" valign={Gtk.Align.CENTER} tooltipText="Choose a picture…" onClicked={promptWallpaper}>
                 <Icon iconName="document-open-symbolic" pixelSize={14} />
             </button>
@@ -324,7 +312,7 @@ function promptWallpaper() {
     execAsync([
         "zenity", "--file-selection",
         "--title=Choose a Wallpaper",
-        `--filename=${wallpaperFolder()}/`,
+        `--filename=${pictureFolder()}/`,
         "--file-filter=Image files | *.jpg *.jpeg *.png *.gif *.pnm *.tga *.tiff *.tif *.webp *.bmp *.farbfeld *.ff *.svg",
         "--file-filter=All files | *",
     ])
