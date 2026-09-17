@@ -153,7 +153,7 @@ is registered automatically unless your config already binds plain
 ### Shortcuts
 
 The launcher and both switchers take their keys from the `shortcuts` setting
-(also under Keyboard in kiwi-settings); changes apply immediately:
+(also under Keybinds in kiwi-settings); changes apply immediately:
 
 ```json
 "shortcuts": {
