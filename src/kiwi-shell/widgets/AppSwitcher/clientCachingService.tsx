@@ -3,7 +3,7 @@ const log = logger("app-capture")
 import { Gdk } from "ags/gtk4"
 import AppCapture from "gi://AppCapture?version=1.0"
 import Hyprland from "gi://AstalHyprland"
-import { isMinimized } from "../Dock/dock-state"
+import { isValidClient } from "../Dock/dock-state"
 
 // How long a cached texture is considered fresh.
 // Switcher opens under this threshold → instant display, no capture fired.
@@ -18,11 +18,15 @@ const NEW_WINDOW_CAPTURE_DELAY_MS = 800
 // every window. Skipped if a capture for this address is already fresh.
 const FOCUSED_POLL_INTERVAL_MS = 6_000
 
-// Backstop in case the C library never emits either signal (e.g. compositor
-// stalled). C-side handles its own timeouts at 1.5s for the wlr-mapping race
-// and reports failure synchronously for everything else, so this should
-// effectively never fire.
+// Backstop in case the C library never emits either signal. C-side times out
+// on its own after 1.5s (wlr-mapping race) or 2s (no frame from the
+// compositor), so this should effectively never fire.
 const SAFETY_TIMEOUT_MS = 5_000
+
+// Windows open when the shell starts are captured once this long after, so
+// their previews are there before they are focused. Minimized ones included:
+// they only move to a special workspace and capture fine.
+const STARTUP_CAPTURE_DELAY_MS = 1_500
 
 const capturer = new AppCapture.Capture()
 const hyprland = Hyprland.get_default()
@@ -35,10 +39,27 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>()
 
+// ─── Frame size ────────────────────────────────────────────────────────────────
+// A full HiDPI frame is ~20 MB and the cache holds one per window, while a
+// preview shows a fraction of that. Each place that shows captures reserves
+// its largest size (logical px); frames are downscaled in C to no less than
+// the largest reservation at the highest monitor scale.
+let minWidth = 0
+let minHeight = 0
+
+export function reservePreviewSize(width: number, height: number) {
+    minWidth = Math.max(minWidth, width)
+    minHeight = Math.max(minHeight, height)
+}
+
+function applyMinSize() {
+    const scale = Math.max(1, ...hyprland.get_monitors().map(m => m.get_scale()))
+    capturer.set_min_size(Math.ceil(minWidth * scale), Math.ceil(minHeight * scale))
+}
+
 // ─── Concurrency queue ─────────────────────────────────────────────────────────
-// Only one capture runs at a time. The C library itself has shared per-frame
-// state (shm_fd, dimensions, pixel buffer) so concurrent captures would
-// clobber each other.
+// Only one capture runs at a time. The C library's signals don't say which
+// window a frame belongs to, so concurrent captures couldn't be told apart.
 let activeCapture = false
 const captureQueue: Array<() => void> = []
 
@@ -48,16 +69,19 @@ function drainQueue() {
 }
 
 // ─── Core capture ──────────────────────────────────────────────────────────────
-// Internal — enqueues a live capture and updates the cache on success.
+// Internal — enqueues a live capture and updates the cache on success. A
+// failed capture resolves to the last good frame, if there is one.
 function captureNow(address: string): Promise<Gdk.Texture | null> {
-    // a minimized window is unmapped, so a capture would fail or grab
-    // garbage — serve whatever the cache holds from before it was stashed
-    const client = hyprland.get_clients().find(c => c.get_address() === address)
-    if (client && isMinimized(client))
-        return Promise.resolve(cache.get(address)?.texture ?? null)
-
     return new Promise((resolve) => {
         captureQueue.push(() => {
+            // closed while queued: Hyprland never answers a capture of a
+            // window that is gone, which would stall the queue until the
+            // C-side timeout
+            if (!hyprland.get_client(address)) {
+                resolve(cache.get(address)?.texture ?? null)
+                Promise.resolve().then(drainQueue)
+                return
+            }
             activeCapture = true
             let readyId = 0
             let failedId = 0
@@ -68,7 +92,7 @@ function captureNow(address: string): Promise<Gdk.Texture | null> {
                 if (failedId) { capturer.disconnect(failedId); failedId = 0 }
                 if (safetyId) { clearTimeout(safetyId);        safetyId = null }
                 activeCapture = false
-                resolve(result)
+                resolve(result ?? cache.get(address)?.texture ?? null)
                 Promise.resolve().then(drainQueue)
             }
 
@@ -99,6 +123,7 @@ function captureNow(address: string): Promise<Gdk.Texture | null> {
                 finish(null)
             }, SAFETY_TIMEOUT_MS)
 
+            applyMinSize()
             capturer.capture_by_handle(address)
         })
         drainQueue()
@@ -200,6 +225,14 @@ hyprland.connect("notify::clients", () => {
 
     knownAddresses = new Set(current.keys())
 })
+
+// ─── Proactive capture: on startup ────────────────────────────────────────────
+setTimeout(() => {
+    for (const client of hyprland.get_clients()) {
+        if (isValidClient(client) && !cache.has(client.get_address()))
+            captureNow(client.get_address())
+    }
+}, STARTUP_CAPTURE_DELAY_MS)
 
 // ─── Public API ────────────────────────────────────────────────────────────────
 // Latest cached snapshot, if any — synchronous, never triggers a capture.

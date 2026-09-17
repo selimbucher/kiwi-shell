@@ -6,7 +6,7 @@ import Hyprland from "gi://AstalHyprland"
 import { DockContextIcon } from "./dock-utils"
 import { mapVersion } from "../desktopEntries"
 import { entryForClient, AppIconImage } from "../appIcon"
-import { captureWindowToTexture, freshClientSize, getCachedTexture } from "../AppSwitcher/clientCachingService"
+import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { closeWindow, clientSelector } from "../../hypr"
 import { conf } from "../config"
 import { logger } from "../../log"
@@ -271,13 +271,15 @@ function WindowPreviews(
 const DOCK_SHOT_HEIGHT = 112
 const dockRawWidth = (w: number, h: number) =>
     h > 0 ? Math.round(DOCK_SHOT_HEIGHT * w / h) : 192
-const dockClampWidth = (w: number) => Math.min(300, Math.max(120, w))
+const DOCK_SHOT_MIN_WIDTH = 120
+const dockClampWidth = (w: number) => Math.min(300, Math.max(DOCK_SHOT_MIN_WIDTH, w))
+reservePreviewSize(DOCK_SHOT_MIN_WIDTH, DOCK_SHOT_HEIGHT)
 
 // compositor geometry, never capture pixel sizes — a window hanging off a
 // workspace edge yields a clipped capture that would warp the tile
 const dockRawClientWidth = (client: Hyprland.Client) => {
-    // minimized → size from the snapshot: the compositor geometry reflects
-    // the hidden scratchpad layout, not the frame being shown
+    // minimized → size from the frame being shown: it can predate the move
+    // to the scratchpad workspace, whose layout may have resized the window
     if (isMinimized(client)) {
         const cached = getCachedTexture(client.get_address())
         if (cached) return dockRawWidth(cached.get_width(), cached.get_height())
@@ -362,20 +364,31 @@ function WindowPreviewItem({ client, pickerOpen, popdown }: {
                 widthRequest={texture(() =>
                     dockClampWidth(dockRawClientWidth(client)))}
             >
-                <Gtk.Picture
-                    canShrink={true}
-                    contentFit={texture(t => {
-                        const raw = dockRawClientWidth(client)
-                        if (raw !== dockClampWidth(raw)) return Gtk.ContentFit.COVER
-                        // stale pre-retile frame → fill and crop until the
-                        // settle-recapture replaces it
-                        if (t && Math.abs(dockRawWidth(t.get_width(), t.get_height()) - raw) > 6)
-                            return Gtk.ContentFit.COVER
-                        return Gtk.ContentFit.CONTAIN
-                    })}
-                    widthRequest={-1}
-                    paintable={texture}
-                />
+                <overlay>
+                    <Gtk.Picture
+                        canShrink={true}
+                        contentFit={texture(t => {
+                            const raw = dockRawClientWidth(client)
+                            if (raw !== dockClampWidth(raw)) return Gtk.ContentFit.COVER
+                            // stale pre-retile frame → fill and crop until the
+                            // settle-recapture replaces it
+                            if (t && Math.abs(dockRawWidth(t.get_width(), t.get_height()) - raw) > 6)
+                                return Gtk.ContentFit.COVER
+                            return Gtk.ContentFit.CONTAIN
+                        })}
+                        widthRequest={-1}
+                        paintable={texture}
+                    />
+                    {/* until the window has a capture */}
+                    <box
+                        $type="overlay"
+                        halign={Gtk.Align.CENTER}
+                        valign={Gtk.Align.CENTER}
+                        visible={texture(t => !t)}
+                    >
+                        <AppIconImage entry={entryForClient(client)} pixelSize={48} cssClass="dock-preview-icon" />
+                    </box>
+                </overlay>
             </Gtk.ScrolledWindow>
         </box>
     )

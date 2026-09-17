@@ -7,7 +7,7 @@ import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
 import { conf } from "../config"
 import { playSound } from "../sound"
-import { captureWindowToTexture, freshClientSize, getCachedTexture } from "./clientCachingService"
+import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
@@ -236,6 +236,9 @@ const PREVIEW_HEIGHT = 170
 const MIN_TILE_WIDTH = 140
 const MAX_TILE_WIDTH = 720
 
+// a clamped tile zooms its frame to cover both the minimum width and the height
+reservePreviewSize(MIN_TILE_WIDTH, PREVIEW_HEIGHT)
+
 function rawAspectWidth(w: number, h: number): number {
     return h > 0 ? Math.round(PREVIEW_HEIGHT * w / h) : 280
 }
@@ -252,9 +255,9 @@ function aspectWidth(w: number, h: number): number {
 // clipped capture, and sizing from it would warp the tile. Astal client
 // geometry (stale after resizes) is only the fallback.
 function rawPreviewWidth(client: any): number {
-    // a minimized window is unmapped: its compositor geometry reflects the
-    // hidden scratchpad layout, while the frame on display is the cached
-    // pre-minimize snapshot — size from the snapshot instead
+    // a minimized window's frame can predate its move to the scratchpad
+    // workspace, whose layout may have resized it — size from the frame
+    // on display instead
     if (isMinimized(client)) {
         const cached = getCachedTexture(client.get_address())
         if (cached) return rawAspectWidth(cached.get_width(), cached.get_height())
@@ -396,6 +399,15 @@ export function WindowPreview({ client }: { client: any }) {
                         paintable={texture}
                     />
                 </Gtk.ScrolledWindow>
+                {/* until the window has a capture */}
+                <box
+                    $type="overlay"
+                    halign={Gtk.Align.CENTER}
+                    valign={Gtk.Align.CENTER}
+                    visible={texture(t => !t)}
+                >
+                    <AppIconImage entry={entryForClient(client)} pixelSize={64} cssClass="switcher-badge-icon" />
+                </box>
                 {/* the recognition anchor — thumbnails of same-app windows
                     look alike, the badge says which app at a glance */}
                 <box
@@ -403,6 +415,7 @@ export function WindowPreview({ client }: { client: any }) {
                     class="switcher-badge"
                     halign={Gtk.Align.END}
                     valign={Gtk.Align.END}
+                    visible={texture(t => !!t)}
                 >
                     <AppIconImage entry={entryForClient(client)} pixelSize={40} cssClass="switcher-badge-icon" />
                 </box>
