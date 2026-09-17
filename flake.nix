@@ -152,7 +152,7 @@
             --prefix LD_LIBRARY_PATH : "${app-capture}/lib" \
             --prefix LD_LIBRARY_PATH : "${hyprland-shortcuts}/lib"
 
-          # Start Wrapper: argv/instance guards, log rotation, tee to the log
+          # Start Wrapper: argv/instance guards, log rotation, capped tee to the log
           cat << 'EOF' > $out/bin/${pname}
           #!/usr/bin/env bash
           if [ "$#" -gt 0 ]; then
@@ -168,10 +168,23 @@
           LOG_FILE="$HOME/.cache/kiwi-shell.log"
           mkdir -p "$(dirname "$LOG_FILE")"
           [ -f "$LOG_FILE" ] && mv -f "$LOG_FILE" "$LOG_FILE.old"
-          BIN_PATH_PLACEHOLDER 2>&1 | tee "$LOG_FILE"
+          # like tee, but once the log reaches 5 MiB it moves to .old and
+          # starts over, so a long session can't grow it without bound
+          export KIWI_LOG_FILE="$LOG_FILE"
+          BIN_PATH_PLACEHOLDER 2>&1 | LC_ALL=C AWK_PLACEHOLDER -v max=$((5 * 1024 * 1024)) '
+            {
+              print; fflush()
+              print > ENVIRON["KIWI_LOG_FILE"]; fflush(ENVIRON["KIWI_LOG_FILE"])
+              size += length($0) + 1
+              if (size >= max) {
+                close(ENVIRON["KIWI_LOG_FILE"])
+                system("mv -f -- \"$KIWI_LOG_FILE\" \"$KIWI_LOG_FILE.old\"")
+                size = 0
+              }
+            }'
           EOF
 
-          sed -i "s|BIN_PATH_PLACEHOLDER|$out/bin/.${pname}-core|; s|GDBUS_PLACEHOLDER|${pkgs.glib.bin}/bin/gdbus|" $out/bin/${pname}
+          sed -i "s|BIN_PATH_PLACEHOLDER|$out/bin/.${pname}-core|; s|GDBUS_PLACEHOLDER|${pkgs.glib.bin}/bin/gdbus|; s|AWK_PLACEHOLDER|${pkgs.gawk}/bin/awk|" $out/bin/${pname}
           chmod +x $out/bin/${pname}
 
           # Controller Script
