@@ -7,12 +7,18 @@ import { exec } from "ags/process"
 const tray = AstalTray.get_default()
 const trayItems = createBinding(tray, 'items')
 
+// An empty tray must unmap its whole window, not just hide the box: a shown
+// layer window with nothing to draw never attaches a buffer, and Hyprland
+// answers each of its commits with a new configure. GTK acks and commits
+// again, so the compositor redrew the screen every frame while idle.
+export const hasTrayItems = trayItems.as(items => items.length !== 0)
+
 export default function Tray() {
     return (
         <box
             class="Tray"
             spacing={0}
-            visible={trayItems.as(items => items.length !== 0)}
+            visible={hasTrayItems}
             $={(self) => {
                 const unsub = trayItems.subscribe(() => {
                     GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {

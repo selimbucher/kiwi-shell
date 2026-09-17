@@ -12,7 +12,7 @@ import SystemMenu, { systemMenuOpen, closeSystemMenu } from "./SystemMenu/System
 import { closeNc } from "../Notifications/NotificationCenter"
 import Workspaces from "./Workspaces"
 import PowerMenu from "./PowerMenu"
-import Tray from "./Tray"
+import Tray, { hasTrayItems } from "./Tray"
 import { conf } from "../config"
 import { Icon, iconTheme, wifiIcon } from "../iconNames"
 
@@ -54,7 +54,7 @@ export default function Bar({
     return [
         <window
             css={windowCss}
-            visible
+            visible={hasTrayItems}
             name="ags-bar-tray"
             class={windowClass}
             gdkmonitor={gdkmonitor}
