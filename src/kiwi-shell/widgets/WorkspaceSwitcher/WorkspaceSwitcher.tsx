@@ -7,6 +7,7 @@ import Hyprland from "gi://AstalHyprland"
 import { isValidClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
+import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
@@ -220,10 +221,11 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
 
     return (
         <window
+            namespace={LAYER_NAMESPACE}
             css={conf(conf => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-workspace-switcher"
-            class={conf.as((conf: any) => `WorkspaceSwitcher theme-${conf.theme}`)}
+            class={themeClasses(t => `WorkspaceSwitcher ${t}`)}
             gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
             exclusivity={Astal.Exclusivity.NORMAL}
             anchor={Astal.WindowAnchor.CENTER | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}

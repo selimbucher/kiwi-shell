@@ -1,11 +1,11 @@
+@use 'theme' as *;
+
 .Prompt {
     background-color: rgba(0, 0, 0, 0.4);
 }
 
 .prompt-container {
-    // translucent (>= layerrule ignore_alpha 0.5) so Hyprland's layer blur
-    // reads through as frosted glass instead of solid black
-    background-color: rgba(0, 0, 0, 0.6);
+    @include panel;
     padding: 24px;
     border-radius: 12px;
     min-width: 275px;
@@ -18,7 +18,7 @@
 }
 
 .prompt-text {
-    color: rgba(222, 222, 222, 1);
+    color: var(--k-fg-2);
 }
 
 .single-entry {

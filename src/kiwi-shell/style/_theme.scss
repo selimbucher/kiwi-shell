@@ -1,0 +1,217 @@
+// The shell's colours as tokens, set on every themed window by its
+// theme-<style> and appearance-<light|dark> classes (services/theme.ts).
+// Components only use these, so a style is nothing but a set of values.
+//
+//   panel          bar pills, dock, notification cards, launcher, switchers
+//   menu           popover menus (system menu, tray, context menus)
+//   panel-hover    a panel under the pointer (notification cards)
+//   sheen          background-image over a panel
+//   border         the panel's 1px edge
+//   highlight      box-shadow of a panel (inner light edge, outer hairline);
+//                  never none, so it can be combined with another shadow
+//   fg .. fg-4     text: primary, secondary, tertiary, faint
+//   fill ..        controls on a panel: rest, hover, active, subtle hover
+//   divider        separators
+//   tile, -on, -hover  workspace dots: empty, with windows, hovered. Solid:
+//                  over a translucent panel an alpha fill takes the
+//                  wallpaper's colour and the dots go muddy.
+//   trough         slider and switch tracks
+//   well           placeholder behind images and previews
+//   preview-bar    title bars of window previews
+//   stack-1, -2    the cards peeking out below a collapsed group
+//   close          round close buttons over cards
+//   text-shadow    for text on thin glass
+//   icon-filter    turns image icons the text colour
+//
+// No drop shadows: most panels sit in windows sized to the panel, which cut a
+// shadow off in a hard line.
+
+@mixin dark-text {
+    --k-fg: #ffffff;
+    --k-fg-2: rgba(255, 255, 255, 0.87);
+    --k-fg-3: rgba(255, 255, 255, 0.66);
+    --k-fg-4: rgba(255, 255, 255, 0.45);
+    --k-fill: rgba(255, 255, 255, 0.1);
+    --k-fill-hover: rgba(255, 255, 255, 0.16);
+    --k-fill-active: rgba(255, 255, 255, 0.22);
+    --k-fill-subtle: rgba(255, 255, 255, 0.07);
+    --k-divider: rgba(255, 255, 255, 0.1);
+    --k-tile: #5f5f5f;
+    --k-tile-on: #cacaca;
+    --k-tile-hover: #ffffff;
+    --k-trough: rgba(255, 255, 255, 0.2);
+    --k-well: rgba(255, 255, 255, 0.05);
+    --k-text-shadow: none;
+    // symbolic icons drawn as images, forced to the text colour
+    --k-icon-filter: brightness(10);
+}
+
+@mixin light-text {
+    --k-fg: rgba(0, 0, 0, 0.88);
+    --k-fg-2: rgba(0, 0, 0, 0.76);
+    --k-fg-3: rgba(0, 0, 0, 0.56);
+    --k-fg-4: rgba(0, 0, 0, 0.4);
+    --k-fill: rgba(0, 0, 0, 0.06);
+    --k-fill-hover: rgba(0, 0, 0, 0.1);
+    --k-fill-active: rgba(0, 0, 0, 0.15);
+    --k-fill-subtle: rgba(0, 0, 0, 0.04);
+    --k-divider: rgba(0, 0, 0, 0.08);
+    --k-tile: #c3c3c9;
+    --k-tile-on: #6e6e76;
+    --k-tile-hover: #3a3a40;
+    --k-trough: rgba(0, 0, 0, 0.12);
+    --k-well: rgba(0, 0, 0, 0.04);
+    --k-text-shadow: none;
+    --k-icon-filter: brightness(0.15);
+}
+
+// ─── Granite: solid ───────────────────────────────────────────────────────────
+
+@mixin granite-dark {
+    @include dark-text;
+    --k-panel: rgba(0, 0, 0, 0.9);
+    --k-menu: rgba(0, 0, 0, 0.93);
+    --k-panel-hover: rgba(22, 22, 24, 0.92);
+    --k-sheen: none;
+    --k-border: rgba(56, 56, 56, 0.9);
+    --k-highlight: inset 0 0 0 0 transparent;
+    --k-preview-bar: #000000;
+    --k-stack-1: rgba(30, 30, 33, 0.95);
+    --k-stack-2: rgba(20, 20, 22, 0.9);
+    --k-close: rgba(44, 44, 48, 0.98);
+}
+
+@mixin granite-light {
+    @include light-text;
+    --k-panel: rgba(250, 250, 251, 0.94);
+    --k-menu: rgba(250, 250, 251, 0.97);
+    --k-panel-hover: rgba(255, 255, 255, 0.97);
+    --k-sheen: none;
+    --k-border: rgba(0, 0, 0, 0.1);
+    --k-highlight: inset 0 0 0 0 transparent;
+    --k-preview-bar: #ececef;
+    --k-stack-1: rgba(236, 236, 239, 0.96);
+    --k-stack-2: rgba(226, 226, 230, 0.94);
+    --k-close: rgba(255, 255, 255, 0.98);
+}
+
+// ─── Acrylic: dense glass ─────────────────────────────────────────────────────
+
+@mixin acrylic-dark {
+    @include dark-text;
+    --k-panel: rgba(28, 28, 30, 0.84);
+    --k-menu: rgba(28, 28, 30, 0.9);
+    --k-panel-hover: rgba(40, 40, 43, 0.86);
+    --k-sheen: none;
+    --k-border: rgba(255, 255, 255, 0.08);
+    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --k-preview-bar: rgba(0, 0, 0, 0.6);
+    --k-stack-1: rgba(44, 44, 48, 0.9);
+    --k-stack-2: rgba(36, 36, 40, 0.85);
+    --k-close: rgba(58, 58, 62, 0.97);
+}
+
+@mixin acrylic-light {
+    @include light-text;
+    --k-panel: rgba(255, 255, 255, 0.8);
+    --k-menu: rgba(255, 255, 255, 0.86);
+    --k-panel-hover: rgba(255, 255, 255, 0.88);
+    --k-sheen: none;
+    --k-border: rgba(255, 255, 255, 0.95);
+    --k-highlight: inset 0 1px 0 #ffffff, 0 0 0 1px rgba(0, 0, 0, 0.06);
+    --k-preview-bar: rgba(255, 255, 255, 0.85);
+    --k-stack-1: rgba(250, 250, 252, 0.8);
+    --k-stack-2: rgba(244, 244, 248, 0.7);
+    --k-close: rgba(255, 255, 255, 0.97);
+}
+
+// ─── Tinted Glass: smoke and frost ────────────────────────────────────────────
+
+@mixin tinted-dark {
+    @include dark-text;
+    --k-panel: rgba(46, 46, 50, 0.58);
+    --k-menu: rgba(46, 46, 50, 0.72);
+    --k-panel-hover: rgba(58, 58, 63, 0.64);
+    --k-sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 50%);
+    --k-border: rgba(255, 255, 255, 0.08);
+    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --k-preview-bar: rgba(0, 0, 0, 0.5);
+    --k-stack-1: rgba(70, 70, 76, 0.5);
+    --k-stack-2: rgba(70, 70, 76, 0.3);
+    --k-close: rgba(62, 62, 66, 0.96);
+    --k-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --k-tile: #6f6f76;
+    --k-tile-on: #d2d2d8;
+}
+
+@mixin tinted-light {
+    @include light-text;
+    --k-panel: rgba(246, 246, 248, 0.62);
+    --k-menu: rgba(246, 246, 248, 0.78);
+    --k-panel-hover: rgba(250, 250, 252, 0.74);
+    --k-sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 60%);
+    --k-border: rgba(255, 255, 255, 0.35);
+    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    --k-preview-bar: rgba(255, 255, 255, 0.7);
+    --k-stack-1: rgba(236, 236, 240, 0.55);
+    --k-stack-2: rgba(236, 236, 240, 0.32);
+    --k-close: rgba(250, 250, 252, 0.96);
+    --k-tile: #bdbdc4;
+    --k-tile-on: #6a6a72;
+}
+
+// ─── Clear Glass: the same in light and dark ──────────────────────────────────
+
+@mixin clear {
+    @include dark-text;
+    --k-panel: rgba(0, 0, 0, 0.12);
+    --k-menu: rgba(0, 0, 0, 0.24);
+    --k-panel-hover: rgba(0, 0, 0, 0.18);
+    --k-sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 50%);
+    --k-border: rgba(255, 255, 255, 0.3);
+    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    --k-preview-bar: rgba(0, 0, 0, 0.4);
+    --k-stack-1: rgba(255, 255, 255, 0.14);
+    --k-stack-2: rgba(255, 255, 255, 0.08);
+    --k-close: rgba(40, 40, 44, 0.7);
+    --k-fill: rgba(255, 255, 255, 0.14);
+    --k-fill-hover: rgba(255, 255, 255, 0.22);
+    --k-fill-active: rgba(255, 255, 255, 0.3);
+    --k-fill-subtle: rgba(255, 255, 255, 0.1);
+    --k-text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    --k-tile: #8a8a92;
+    --k-tile-on: #e6e6ec;
+}
+
+window {
+    @include granite-dark;
+
+    &.theme-granite.appearance-light { @include granite-light; }
+    &.theme-acrylic.appearance-dark { @include acrylic-dark; }
+    &.theme-acrylic.appearance-light { @include acrylic-light; }
+    &.theme-tinted.appearance-dark { @include tinted-dark; }
+    &.theme-tinted.appearance-light { @include tinted-light; }
+    &.theme-clear { @include clear; }
+}
+
+// a panel: tokens only, per component radius and padding stay with it
+@mixin panel {
+    background-color: var(--k-panel);
+    background-image: var(--k-sheen);
+    border: 1px solid var(--k-border);
+    box-shadow: var(--k-highlight);
+    color: var(--k-fg);
+}
+
+@mixin menu {
+    background-color: var(--k-menu);
+    background-image: var(--k-sheen);
+    border: 1px solid var(--k-border);
+    box-shadow: var(--k-highlight);
+    color: var(--k-fg-2);
+}
+
+// thin glass needs the text lifted off busy backgrounds
+window label {
+    text-shadow: var(--k-text-shadow);
+}

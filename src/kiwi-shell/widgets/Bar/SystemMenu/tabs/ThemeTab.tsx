@@ -5,6 +5,7 @@ import Gio from "gi://Gio"
 import Pango from "gi://Pango"
 
 import { conf, setConf, writeConf } from "../../../config"
+import { THEME_STYLES, themeStyle } from "../../../services/theme"
 import { logger } from "../../../../log"
 const log = logger("theme")
 import { Icon } from "../../../iconNames";
@@ -250,11 +251,10 @@ function WallpaperRow() {
 }
 
 function ThemeSelector() {
-    const options = ["Dark", "Glass"];
-    const myOptions = Gtk.StringList.new(options);
+    const names = ["Granite", "Acrylic", "Tinted Glass", "Clear Glass"];
+    const myOptions = Gtk.StringList.new(names);
 
-    const currentTheme = conf().theme || "default";
-    const foundIndex = options.findIndex(opt => opt.toLowerCase() === currentTheme);
+    const foundIndex = THEME_STYLES.indexOf(themeStyle.get());
     const defaultIndex = foundIndex !== -1 ? foundIndex : 0;
 
     return (
@@ -263,10 +263,9 @@ function ThemeSelector() {
             selected={defaultIndex}
             enableSearch={false}
             onNotifySelected={(self) => {
-                const selectedItem = self.get_selected_item();
-                if (!selectedItem) return;
-                const textValue = selectedItem.get_string();
-                setConf({ ...conf(), theme: textValue.toLowerCase() });
+                const style = THEME_STYLES[self.get_selected()];
+                if (!style) return;
+                setConf({ ...conf(), theme: style });
                 writeConf();
 
                 let parent = self.get_parent();

@@ -10,6 +10,7 @@ import { hyprland, list, unpinnedList, DOCK_HIDE_TIMEOUT, JUMP_ANIMATION_CLASS_T
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
+import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
 import { playSound } from "../sound"
 import Cairo from "gi://cairo"
 import GLib from "gi://GLib"
@@ -273,18 +274,23 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     return [(
         <window
-            css={conf.as(conf =>
-                `
-                --primary: ${conf.primary_color};
-                --dock-margin: ${conf.dock_margin}px;
+            namespace={LAYER_NAMESPACE}
+            css={createComputed(get => {
+                const c = get(conf)
+                return `
+                --primary: ${c.primary_color};
+                --dock-margin: ${c.dock_margin}px;
                 --jumptime: ${JUMP_ANIMATION_CLASS_TIMEOUT}ms;
-                --icon-size: ${conf.dock_icon_size}px;
+                --icon-size: ${c.dock_icon_size}px;
                 --dock-slide-duration: ${DOCK_SLIDE_DURATION}ms;
-                --dock-slide-distance: ${conf.dock_icon_size + 68}px;
+                --dock-slide-distance: ${c.dock_icon_size + 68}px;
                 `
-            )}
+            })}
             name="ags-dock"
-            class={conf.as(conf => `Dock theme-${conf.theme}${conf.dock_full_width ? " dock-full" : ""}`)}
+            class={createComputed(get => {
+                const c = get(conf)
+                return `Dock ${get(themeClasses)}${c.dock_full_width ? " dock-full" : ""}`
+            })}
             gdkmonitor={gdkmonitor}
             visible={true}
             exclusivity={conf.as(conf =>
@@ -353,6 +359,7 @@ function EdgeSensor({ gdkmonitor, poke }: {
 }) {
     return (
         <window
+            namespace={LAYER_NAMESPACE}
             name="ags-dock-sensor"
             class="edge-sensor-bottom"
             gdkmonitor={gdkmonitor}

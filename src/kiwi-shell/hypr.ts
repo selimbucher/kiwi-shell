@@ -80,6 +80,11 @@ export async function evalLua(code: string, label?: string): Promise<boolean> {
     return send(`eval ${code}`, label ?? code.slice(0, 60))
 }
 
+// a hyprlang keyword (classic config only; lua configs use evalLua)
+export function keyword(command: string, label?: string): Promise<boolean> {
+    return send(`keyword ${command}`, label ?? command.slice(0, 60))
+}
+
 // one action, spelled for each dialect
 async function dispatch(lua: string, hyprlang: string, quiet = false): Promise<boolean> {
     const cmd = await dialect() === "lua" ? lua : hyprlang

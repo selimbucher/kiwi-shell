@@ -7,6 +7,7 @@ import { readFile, writeFileAsync } from "ags/file"
 import { exec, execAsync } from "ags/process"
 
 import { conf } from "./config"
+import { themeClasses, LAYER_NAMESPACE } from "./services/theme"
 import Hyprland from "gi://AstalHyprland"
 import { Icon } from "./iconNames"
 import { playSound } from "./sound";
@@ -15,15 +16,14 @@ import { popupGdkMonitor, destroyWindow } from "./monitors"
 export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
+            namespace={LAYER_NAMESPACE}
             css={conf.as(conf => 
                 `
                 --primary: ${conf.primary_color};
                 `
             )}
             name="ags-prompt"
-            class={conf.as(conf =>
-                `Prompt theme-${conf.theme}`
-            )}
+            class={themeClasses(t => `Prompt ${t}`)}
             gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
             exclusivity={Astal.Exclusivity.IGNORE}
             anchor={Astal.WindowAnchor.LEFT | Astal.WindowAnchor.BOTTOM | Astal.WindowAnchor.RIGHT | Astal.WindowAnchor.TOP}

@@ -1,10 +1,11 @@
+@use 'theme' as *;
 
 .powermenu-toggle {
     padding: 0 3px;
     border-radius: 50%;
     background: none;
     &:hover {
-        background-color: rgba(255,255,255,0.1);
+        background-color: var(--k-fill);
     }
     > button {
         padding: 0;
@@ -19,13 +20,11 @@
     margin-top: 10px;
 }
 .power-popover contents {
-    background-color: rgba(0,0,0,0.9);
-    border: 1px #000 solid;
+    @include menu;
     border-radius: 8px;
     padding: 12px;
-    box-shadow: none;
     button {
         padding: 12px;
-        background-color: rgba(255,255,255,0.05);
+        background-color: var(--k-fill-subtle);
     }
 }

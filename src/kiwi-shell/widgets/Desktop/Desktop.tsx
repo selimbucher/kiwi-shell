@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, onCleanup } from "ags"
+import { createState, createComputed, onCleanup } from "ags"
 import { destroyWindow } from "../monitors"
 import { readFile, writeFileAsync } from "ags/file"
 import Gio from "gi://Gio"
@@ -8,6 +8,7 @@ import GioUnix from "gi://GioUnix"
 import GLib from "gi://GLib"
 import Pango from "gi://Pango"
 import { conf } from "../config"
+import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
 import { openPath } from "../Dock/dock-utils"
 import { logger } from "../../log"
 const log = logger("desktop")
@@ -797,8 +798,9 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     return (
         <window
+            namespace={LAYER_NAMESPACE}
             name="ags-desktop"
-            class={conf.as((conf: any) => `Desktop theme-${conf.theme}`)}
+            class={themeClasses(t => `Desktop ${t}`)}
             gdkmonitor={gdkmonitor}
             // IGNORE: cover the full monitor (under bar and dock) so the
             // rubber band isn't clipped at the exclusive zones; the icon

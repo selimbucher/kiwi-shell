@@ -7,6 +7,7 @@ import GLib from "gi://GLib"
 import Pango from "gi://Pango"
 import Apps from "gi://AstalApps"
 import { conf } from "../config"
+import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
 import { mapVersion } from "../desktopEntries"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, type BindOp } from "../../hypr"
@@ -195,10 +196,11 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     return (
         <window
+            namespace={LAYER_NAMESPACE}
             css={conf.as((conf: any) => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-launcher"
-            class={conf.as((conf: any) => `Launcher theme-${conf.theme}`)}
+            class={themeClasses(t => `Launcher ${t}`)}
             gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
             exclusivity={Astal.Exclusivity.IGNORE}
             anchor={Astal.WindowAnchor.TOP | Astal.WindowAnchor.BOTTOM | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}

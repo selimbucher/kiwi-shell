@@ -10,7 +10,7 @@ menubutton popover {
 menubutton modelbutton {
   padding: 5px;
   border-radius: 6px;
-  color: rgba(222,222,222,1);
+  color: var(--k-fg-2);
 }
 
 modelbutton label {
@@ -19,12 +19,12 @@ modelbutton label {
 
 separator {
   margin: 4px 0;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--k-divider);
   min-height: 1px;
 }
 
 switch {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--k-trough);
   &:checked {
     background: var(--primary);
   }
@@ -32,7 +32,7 @@ switch {
   
   slider {
     border-radius: 1000px;
-    box-shadow: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     background: white;
     min-width: 20px;
     min-height: 0;
@@ -41,12 +41,12 @@ switch {
 
 
 button {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--k-fill);
   border: none;
   box-shadow: none;
-  color: rgb(175, 175, 175);
+  color: var(--k-fg-3);
   &:hover {
-    color: #fff;
+    color: var(--k-fg);
   }
 
   transition-property: color, background-color;
@@ -57,7 +57,7 @@ button {
     background: var(--primary);
     color: #000;
     &:hover {
-      background: rgba(255, 255, 255, 0.85);
+      background-image: linear-gradient(rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.2));
     }
   }
 }
@@ -67,13 +67,13 @@ scale {
   trough {
     min-height: 10px;
     border-radius: 8px;
-    background-color: rgba(255,255,255,0.2); // Background color
+    background-color: var(--k-trough);
   }
   
   highlight {
     border-radius: 8px;
     margin: 0px;
-    background-color: var(--primary); // Fill/progress color
+    background-color: var(--primary);
   }
   
   slider {

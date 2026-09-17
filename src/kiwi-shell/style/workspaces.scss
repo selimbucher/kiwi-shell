@@ -1,19 +1,19 @@
+@use 'theme' as *;
+
 .workspaces-container {
     //background-color: red;
     min-width: 160px;
 }
 
 .workspaces {
-    border: 1px rgba(56, 56, 56, 0.9) solid;
-    background-color: rgba(0, 0, 0, 0.9);
-    color: #fff;
+    @include panel;
     border-radius: 20px;
     font-weight: 400;
     padding: 0 10px;
 
     .mic-access {
         color: orange;
-        border-left: #1f1f1f 1px solid;
+        border-left: var(--k-divider) 1px solid;
         margin-left: 6px;
         padding-left: 6px;
         margin-top: 6px;
@@ -33,20 +33,20 @@
             min-width: 0px;
             min-height: 6px;
             margin: 13px 0;
-            background-color: #5f5f5f;
+            background-color: var(--k-tile);
             border-radius: 13px;
         }
 
         &.filled .tile {
             min-width: 20px;
-            background-color: #cacaca;
+            background-color: var(--k-tile-on);
         }
 
 
         &:hover {
             // min-width: 20px;
             .tile {
-                background-color: #fff;
+                background-color: var(--k-tile-hover);
             }
         }
 

@@ -1,8 +1,7 @@
+@use 'theme' as *;
+
 .system-menu-popover contents {
-  background-color: rgba(0, 0, 0, 0.93);
-  border: none;
-  border-top: #1a1a1a 2px solid;
-  box-shadow: unset;
+  @include menu;
   min-width: 300px;
   padding: 12px;
   margin-right: 0;
@@ -18,7 +17,7 @@
   }
 
   .arrow-button {
-    filter: brightness(10);
+    filter: var(--k-icon-filter);
   }
 
   .theme-settings {
@@ -28,7 +27,7 @@
   .system-percentage {
     font-weight: bold;
     font-size: 13px;
-    color: rgba(222,222,222,1);
+    color: var(--k-fg-2);
     margin-left: 4px;
 
     .percent-symbol {
@@ -49,12 +48,12 @@
   }
   dropdown button {
     padding: 0 12px;
-    background: rgba(255, 255, 255, 0.1);
-    color: #ededed;
+    background: var(--k-fill);
+    color: var(--k-fg-2);
 
     &:hover {
-      background: rgba(255, 255, 255, 0.15);
-      color: #fff;
+      background: var(--k-fill-hover);
+      color: var(--k-fg);
     }
   }
 
@@ -62,7 +61,7 @@
     margin: 16px 16px 22px;
     padding: 3px;
     border-radius: 14px;
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--k-fill);
 
     button {
       background: none;
@@ -70,11 +69,11 @@
       padding: 4px 10px;
       font-size: 12px;
       &:hover {
-        background: rgba(255, 255, 255, 0.08);
+        background: var(--k-fill-subtle);
       }
       &.active {
-        background: rgba(255, 255, 255, 0.22);
-        color: #fff;
+        background: var(--k-fill-active);
+        color: var(--k-fg);
       }
     }
   }
@@ -83,22 +82,22 @@
   .wallpaper-name {
     font-size: 13px;
     font-weight: bold;
-    color: #ffffff;
+    color: var(--k-fg);
   }
   .wallpaper-folder {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--k-fg-3);
   }
   .wallpaper-icon-button, .wallpaper-choose {
     border: none;
     box-shadow: none;
     border-radius: 12px;
     font-size: 12px;
-    color: #ededed;
-    background: rgba(255, 255, 255, 0.12);
+    color: var(--k-fg-2);
+    background: var(--k-fill);
     &:hover {
-      background: rgba(255, 255, 255, 0.2);
-      color: #ffffff;
+      background: var(--k-fill-hover);
+      color: var(--k-fg);
     }
   }
   .wallpaper-icon-button {
@@ -116,13 +115,21 @@
   }
   .wallpaper-card-image {
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--k-well);
   }
   .wallpaper-card-scrim {
     padding: 28px 8px 8px 10px;
     border-radius: 0 0 10px 10px;
     background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+    // over the picture: light on the dark scrim in every theme
+    .wallpaper-name {
+      color: #ffffff;
+    }
+    .wallpaper-folder {
+      color: rgba(255, 255, 255, 0.7);
+    }
     .wallpaper-icon-button, .wallpaper-choose {
+      color: #ffffff;
       background: rgba(255, 255, 255, 0.2);
       &:hover {
         background: rgba(255, 255, 255, 0.32);
@@ -142,7 +149,7 @@
     background: none;
     border: 2px solid transparent;
     &:hover {
-      border-color: rgba(255, 255, 255, 0.25);
+      border-color: var(--k-fill-active);
     }
     &.current {
       border-color: var(--primary, #ffffff);
@@ -151,29 +158,29 @@
       min-height: 48px;
       // inside the ring, the size of a thumbnail
       background-clip: content-box;
-      background-color: rgba(255, 255, 255, 0.08);
-      color: rgba(255, 255, 255, 0.7);
+      background-color: var(--k-fill-subtle);
+      color: var(--k-fg-3);
       &:hover {
-        background-color: rgba(255, 255, 255, 0.14);
+        background-color: var(--k-fill);
         border-color: transparent;
-        color: #ffffff;
+        color: var(--k-fg);
       }
     }
   }
   .wallpaper-thumb-image {
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--k-well);
   }
 
   .wallpaper-row {
     margin: 14px 16px 18px;
     padding: 8px;
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.07);
+    background: var(--k-fill-subtle);
   }
   .wallpaper-row-image {
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--k-well);
   }
 
   .unkown-devices {
@@ -187,13 +194,13 @@
     }
     
     button {
-      background: rgba(255, 255, 255, 0.1);
+      background: var(--k-fill);
       box-shadow: none;
       border: none;
       padding: 8px 10px;
       font-size: 17px;
       font-weight: lighter;
-      color: #fff;
+      color: var(--k-fg);
       border-radius: 14px;
       label {
         margin-right: 4px;
@@ -205,7 +212,7 @@
         margin-right: 8px;
       }
       &:hover {
-        background-color: rgba(255, 255, 255, 0.15);
+        background-color: var(--k-fill-hover);
       }
       &.active {
         background: var(--primary);
@@ -216,7 +223,7 @@
   }
 
   .time {
-    color: rgba(222,222,222,1);
+    color: var(--k-fg-2);
     font-size: 64px;
     font-weight: 30;
   }
@@ -252,10 +259,10 @@
     border: none;
     border-radius: 8px;
     &:hover {
-      background: rgba(255, 255, 255, 0.08);
+      background: var(--k-fill-subtle);
     }
     &.active {
-      color: #fff;
+      color: var(--k-fg);
     }
   }
 
@@ -272,14 +279,14 @@
     margin: -5px 0;
     margin-left: 8px;
     transition: transform 500ms ease;
-    color: #727272;
+    color: var(--k-fg-4);
     &:hover {
-      color: #868686;
+      color: var(--k-fg-3);
     }
   }
 
   .quick-toggles {
-    background: rgba(255, 255, 255, 0.2);
+    background: var(--k-fill-active);
     min-height: 65px;
     min-width: 65px;
     margin-right: 5px;
@@ -294,7 +301,7 @@
   }
 
   .tab-container {
-    border-top: #222222 1px solid;
+    border-top: var(--k-divider) 1px solid;
     
     padding-top: 14px;
     //min-height: 130px;
@@ -309,7 +316,7 @@
 
     .large-header {
       font-size: 14px;
-      color: rgba(222,222,222,1);
+      color: var(--k-fg-2);
     }
 
     .sliders {
@@ -335,22 +342,22 @@
 
       .audio-devices {
         button {
-          background: rgba(255, 255, 255, 0.1);
+          background: var(--k-fill);
           box-shadow: none;
           border: none;
           padding: 6px 10px;
           font-size: 14px;
           font-weight: lighter;
-          color: #fff;
+          color: var(--k-fg);
           border-radius: 12px;
           &:hover {
-            background-color: rgba(255, 255, 255, 0.15);
+            background-color: var(--k-fill-hover);
           }
           // Selected device: a clearly lighter row plus an accent checkmark.
           // Avoid var(--primary) here (it doesn't resolve on the popover
           // surface) and don't set color:#000 (it made the check invisible).
           &.active {
-            background: rgba(255, 255, 255, 0.22);
+            background: var(--k-fill-active);
           }
         }
         .check {
@@ -362,17 +369,17 @@
 
     .media-player {
       label {
-        color: rgba(222,222,222,1);
+        color: var(--k-fg-2);
       }
       padding: 12px;
-      background-color: rgba(255, 255, 255, 0.1);
+      background-color: var(--k-fill);
       border-radius: 8px;
       .cover-art {
         border-radius: 6px;
         margin-right: 12px;
         
         .generic-container {
-          background: rgba(255, 255, 255, 0.1);
+          background: var(--k-fill);
           padding: 16px;
         }
         
@@ -402,7 +409,7 @@
         scale {
           padding: 0;
           highlight {
-            background-color: #fff;
+            background-color: var(--k-fg);
           }
         }
       }

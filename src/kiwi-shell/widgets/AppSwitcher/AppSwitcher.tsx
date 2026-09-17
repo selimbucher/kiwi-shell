@@ -6,6 +6,7 @@ import { createState, createComputed, createEffect, For, createBinding, onCleanu
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
 import { conf } from "../config"
+import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
 import { playSound } from "../sound"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
@@ -212,10 +213,11 @@ function closeClientFromSwitcher(client: any) {
 export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
+            namespace={LAYER_NAMESPACE}
             css={conf(conf => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-app-switcher"
-            class={conf.as((conf: any) => `AppSwitcher theme-${conf.theme}`)}
+            class={themeClasses(t => `AppSwitcher ${t}`)}
             gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
             exclusivity={Astal.Exclusivity.NORMAL}
             anchor={Astal.WindowAnchor.CENTER | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}

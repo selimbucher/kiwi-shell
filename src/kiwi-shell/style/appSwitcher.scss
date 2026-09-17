@@ -1,14 +1,14 @@
+@use 'theme' as *;
+
 .app-switch-container {
-    // lowered alpha (from 0.75) so the Hyprland layer blur reads through as
-    // frosted glass, while staying >= the layerrule ignore_alpha 0.5 threshold
-    background-color: rgba(32, 32, 32, 0.55);
+    @include panel;
     padding: 24px;
     border-radius: 8px;
 }
 
 // joined with the screenshot below into one window-like block
 .preview-title-bar {
-    background-color: #000;
+    background-color: var(--k-preview-bar);
     border-radius: 6px 6px 0 0;
     padding: 4px 8px;
 }
@@ -27,15 +27,15 @@
     // solid ground so the ✕ stays legible over the title text it covers;
     // the ring extends it in the bar color, keeping a small text-free gap
     // around the circle
-    background-color: #000;
-    box-shadow: 0 0 0 3px #000;
-    color: #b0b0b0;
+    background-color: var(--k-close);
+    box-shadow: 0 0 0 3px var(--k-close);
+    color: var(--k-fg-3);
     opacity: 0;
     transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease;
 
     &:hover {
-        color: #fff;
-        background-color: rgba(60, 60, 60, 0.95);
+        color: var(--k-fg);
+        background-image: linear-gradient(var(--k-fill-hover), var(--k-fill-hover));
     }
 }
 
@@ -57,7 +57,7 @@
 
 .window-preview-container {
     border-radius: 0 0 6px 6px;
-    background-color: rgba(255, 255, 255, 0.04);
+    background-color: var(--k-well);
 }
 
 .switcher-badge {
@@ -69,13 +69,13 @@
 }
 
 .selected {
-    background-color: rgba(255, 255, 255, 0.075);
+    background-color: var(--k-fill-subtle);
     border-radius: 8px;
     border-color: var(--primary);
 }
 
 .preview-title {
-    color: rgba(255, 255, 255, 0.75);
+    color: var(--k-fg-2);
     font-size: 11px;
     padding: 2px 3px;
 }
@@ -85,13 +85,13 @@
 .ws-number {
     font-weight: bold;
     font-size: 12px;
-    color: #fff;
+    color: var(--k-fg);
     margin-right: 6px;
 }
 
 // behind the wallpaper until it has loaded
 .ws-canvas {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: var(--k-well);
     border-radius: 0 0 6px 6px;
 }
 

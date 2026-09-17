@@ -1,3 +1,4 @@
+@use 'style/theme';
 @use 'style/global.scss';
 @use 'style/powerMenu.scss';
 @use 'style/systemMenu.scss';
@@ -11,6 +12,3 @@
 @use 'style/bar.scss';
 @use 'style/prompts.scss';
 @use 'style/notifications.scss';
-
-
-@use 'style/themes/glass.scss';

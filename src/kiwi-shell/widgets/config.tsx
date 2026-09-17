@@ -45,6 +45,16 @@ function deepMerge(defaults: Record<string, any>, overrides: Record<string, any>
     return result
 }
 
+const THEME_STYLES = ["granite", "acrylic", "tinted", "clear"]
+
+// The shell used to have two panel styles, "dark" and "glass". Glass became
+// Clear Glass; dark became Granite, kept dark where no appearance was chosen.
+function migrate(user: Record<string, any>): Record<string, any> {
+    if (THEME_STYLES.includes(user.theme)) return user
+    if (user.theme === "glass") return { ...user, theme: "clear" }
+    return { ...user, theme: "granite", appearance: user.appearance ?? "dark" }
+}
+
 function loadConfig() {
     const defaultContent = readFile(DEFAULT_CONFIG_FILE)
     const defaultConfig = JSON.parse(defaultContent)
@@ -59,7 +69,7 @@ function loadConfig() {
     }
 
     const content = readFile(CONFIG_FILE)
-    return deepMerge(defaultConfig, JSON.parse(content))
+    return deepMerge(defaultConfig, migrate(JSON.parse(content)))
 }
 
 async function writeHypr(primaryColor: string) {
@@ -94,7 +104,7 @@ function reloadConfig() {
         if (!content.trim()) return
         const defaultContent = readFile(DEFAULT_CONFIG_FILE)
         const defaultConfig = JSON.parse(defaultContent)
-        setConf(deepMerge(defaultConfig, JSON.parse(content)))
+        setConf(deepMerge(defaultConfig, migrate(JSON.parse(content))))
     } catch (error) {
         log.error("Failed to reload config:", error)
     }

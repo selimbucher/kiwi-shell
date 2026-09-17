@@ -1,6 +1,8 @@
+@use 'theme' as *;
+
 window.Bar {
   background: transparent;
-  color: #fff;
+  color: var(--k-fg);
   font-family: 'Quicksand';
 
   > box {
@@ -17,25 +19,22 @@ window.Bar {
   }
 
   .MenuButtons, .Tray {
-    background-color: rgba(0, 0, 0, 0.9);
-    color: #fff;
-    border: 1px rgba(56, 56, 56, 0.9) solid;
+    @include panel;
     border-radius: 20px;
     padding: 4px;
     font-weight: 400;
     font-size: 12px;
 
-    
 
     .toggle-powermenu {
       > button {
         padding: 0;
         background: transparent;
         &:hover {
-          background-color: rgba(255, 255, 255, 0.082)
+          background-color: var(--k-fill);
         }
         &:checked {
-          background-color: rgba(255, 255, 255, 0.12)
+          background-color: var(--k-fill-hover);
         }
         padding: 0 0px;
         border-radius: 12px;
@@ -43,7 +42,7 @@ window.Bar {
       }
 
       .icons {
-        color: #ededed;
+        color: var(--k-fg);
         padding: 0 6px;
         > * {
           margin: 0 4px;

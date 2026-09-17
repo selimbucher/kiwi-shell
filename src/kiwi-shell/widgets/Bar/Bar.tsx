@@ -15,6 +15,7 @@ import PowerMenu from "./PowerMenu"
 import Tray, { hasTrayItems } from "./Tray"
 import { conf } from "../config"
 import { Icon, iconTheme, wifiIcon } from "../iconNames"
+import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
 
 const battery = Battery.get_default()
 const network = Network.get_default()
@@ -30,7 +31,8 @@ const { TOP, LEFT, RIGHT } = Astal.WindowAnchor
 const windowCss = conf.as(
     (conf) => `--primary: ${conf.primary_color}; --bar-margin: ${conf.bar_margin}px;`
 )
-const windowClass = conf.as((conf) => `Bar theme-${conf.theme}`)
+
+const windowClass = themeClasses(t => `Bar ${t}`)
 
 export default function Bar({
     gdkmonitor,
@@ -53,6 +55,7 @@ export default function Bar({
 
     return [
         <window
+            namespace={LAYER_NAMESPACE}
             css={windowCss}
             visible={hasTrayItems}
             name="ags-bar-tray"
@@ -68,6 +71,7 @@ export default function Bar({
         </window>,
 
         <window
+            namespace={LAYER_NAMESPACE}
             css={windowCss}
             visible
             name="ags-bar-workspaces"
@@ -83,6 +87,7 @@ export default function Bar({
         </window>,
 
         <window
+            namespace={LAYER_NAMESPACE}
             css={windowCss}
             visible
             name="ags-bar-menu"
