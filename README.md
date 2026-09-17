@@ -18,9 +18,7 @@ If you run into any problems, open an issue on GitHub.
 
 ## Requirements
 
-**Hyprland 0.56 or newer with a lua config** — Kiwi Shell talks to the
-compositor in the lua IPC dialect (hyprlang configs are being phased out
-upstream).
+**Hyprland** — lua configs (0.56+) and classic `hyprland.conf` configs both work.
 
 Make sure the following services are installed and running on your system:
 
@@ -151,6 +149,22 @@ outside the panel) to dismiss. The tap bind only fires when nothing else
 used the Super hold — Super+Tab, Super+drag and friends stay untouched. It
 is registered automatically unless your config already binds plain
 `SUPER_L`; custom keys can call `kiwictl launcher open|close|toggle`.
+
+### Shortcuts
+
+The launcher and both switchers take their keys from the `shortcuts` setting
+(also under Keyboard in kiwi-settings); changes apply immediately:
+
+```json
+"shortcuts": {
+  "launcher": "Super",
+  "app_switcher": "Alt+Tab",
+  "workspace_switcher": "Super+Tab"
+}
+```
+
+A lone modifier is a tap. The switchers take exactly one modifier other than
+Shift: hold it to cycle, release it to confirm.
 
 ### Desktop Icons
 

@@ -3,13 +3,13 @@ const log = logger("workspaces")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, onCleanup } from "ags"
-import { execAsync } from "ags/process"
 import Hyprland from "gi://AstalHyprland"
 import { isValidClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { evalLua, luaBind, luaUnbind, isKiwiBind, describeBind, focusWorkspace } from "../../hypr"
+import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, focusWorkspace, type BindOp } from "../../hypr"
+import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
 
 const hyprland = Hyprland.get_default()
 
@@ -21,61 +21,84 @@ const [displayedIds, setDisplayedIds] = createState<number[]>([])
 // per-workspace client snapshot, taken when the switcher opens
 const [wsClients, setWsClients] = createState<Map<number, Hyprland.Client[]>>(new Map())
 
-// ─── Super+Tab keybinds ───────────────────────────────────────────────────────
-// Same architecture as alt-tab, all in the root submap: binde for cycling,
-// a release bind on SUPER_L to confirm (fires on every plain Super release —
-// the shell no-ops it while the switcher is closed), and SUPER+escape to
-// abort. A press bind on SUPER+SUPER_L (launcher-on-super-tap setups) is
-// unrelated to our release bind and keeps working — we never unbind SUPER_L.
+// ─── Workspace switcher keybinds (shortcuts.workspace_switcher, default Super+Tab)
+// Same architecture as the app switcher, all in the root submap: binde for
+// cycling (Shift goes backwards), a release bind on the modifier to confirm
+// (fires on every plain release — the shell no-ops it while the switcher is
+// closed), and modifier+escape to abort. A launcher tap on the same modifier
+// is unrelated to our release bind and keeps working — outside rebindAll we
+// never unbind the modifier key.
 
-const SUPER_MODMASK = 64
+let registered: Shortcut | null = null
 
 async function registerSuperTabBinds() {
+    const s = shortcut("workspace_switcher")
+    const mod = s.mods[0]
+    const next = combo(s)
+    const previous = combo(s, "SHIFT")
+    const confirm = `${mod} + ${heldModifierKey(s)}`
+    const escape = `${mod} + escape`
     let haveConfirm = false
     let haveEscape = false
     try {
-        const binds = JSON.parse(await execAsync(["hyprctl", "binds", "-j"]))
+        const binds = await currentBinds()
         // any kiwi-described bind counts as ours: the launcher registers its
-        // own SUPER_L release bind (tap-to-open) which must not read as
-        // foreign
+        // own release bind (tap-to-open) which must not read as foreign
         const foreign = binds.find((b: any) =>
             b.submap === "" && !isKiwiBind(b) && (
-                (b.key === "TAB" && (b.modmask === SUPER_MODMASK || b.modmask === (SUPER_MODMASK | 1))) ||
-                // a foreign *release* bind on super itself (a press bind,
-                // like tap-to-launch, is fine)
-                (b.key === "SUPER_L" && b.modmask === SUPER_MODMASK && b.release)
+                (b.key === s.key && (b.modmask === s.modmask || b.modmask === (s.modmask | 1))) ||
+                // a foreign *release* bind on the modifier itself (a press
+                // bind, like tap-to-launch, is fine)
+                (b.key === heldModifierKey(s) && b.modmask === s.modmask && b.release)
             ))
         if (foreign) {
-            log.warn("foreign super-tab bind found, leaving keybinds alone:",
+            log.warn("foreign workspace switcher bind found, leaving keybinds alone:",
                 describeBind(foreign))
             return
         }
-        haveConfirm = binds.some((b: any) => b.description === "kiwi: workspaces confirm")
-        haveEscape = binds.some((b: any) => b.description === "kiwi: workspaces escape")
+        const onCombo = (b: any, description: string, c: string) =>
+            b.description === description && `${b.modmask}` === `${s.modmask}` &&
+            b.key === c.split(" + ").pop()
+        haveConfirm = binds.some((b: any) => onCombo(b, "kiwi: workspaces confirm", confirm))
+        haveEscape = binds.some((b: any) => onCombo(b, "kiwi: workspaces escape", escape))
     } catch (e) {
         log.error("failed to query binds, skipping setup:", e)
         return
     }
 
-    const ok = await evalLua([
-        luaUnbind("SUPER + TAB"),
-        luaUnbind("SUPER + SHIFT + TAB"),
-        luaBind("SUPER + TAB", `hl.dsp.exec_cmd("kiwictl workspaces open-next")`,
-            "kiwi: workspaces next", { repeating: true }),
-        luaBind("SUPER + SHIFT + TAB", `hl.dsp.exec_cmd("kiwictl workspaces previous")`,
-            "kiwi: workspaces prev", { repeating: true }),
-        // never unbind SUPER_L (would take tap-to-launch binds with it), so
-        // only add ours when it isn't registered yet
-        ...(haveConfirm ? [] : [luaBind("SUPER + SUPER_L", `hl.dsp.exec_cmd("kiwictl workspaces confirm")`,
-            "kiwi: workspaces confirm", { release: true, transparent: true })]),
-        ...(haveEscape ? [] : [luaBind("SUPER + escape", `hl.dsp.exec_cmd("kiwictl workspaces close")`,
-            "kiwi: workspaces escape", { release: true })]),
-    ].join("\n"), "super-tab binds")
-    if (ok) log.info("registered super-tab binds")
+    const ops: BindOp[] = [
+        { unbind: next },
+        { unbind: previous },
+        { bind: next, action: { exec: "kiwictl workspaces open-next" },
+            description: "kiwi: workspaces next", flags: { repeating: true } },
+        { bind: previous, action: { exec: "kiwictl workspaces previous" },
+            description: "kiwi: workspaces prev", flags: { repeating: true } },
+    ]
+    // never unbind the modifier key here (would take tap-to-launch binds with
+    // it), so only add ours when it isn't registered yet
+    if (!haveConfirm)
+        ops.push({ bind: confirm, action: { exec: "kiwictl workspaces confirm" },
+            description: "kiwi: workspaces confirm", flags: { release: true, transparent: true } })
+    if (!haveEscape)
+        ops.push({ bind: escape, action: { exec: "kiwictl workspaces close" },
+            description: "kiwi: workspaces escape", flags: { release: true } })
+
+    if (await applyBinds(ops, "workspace switcher binds")) {
+        registered = s
+        log.info(`registered workspace switcher binds on ${next}`)
+    }
 }
 
-registerSuperTabBinds()
-hyprland.connect("config-reloaded", registerSuperTabBinds)
+registerBindSetup("workspaces", registerSuperTabBinds, () => {
+    if (!registered) return []
+    const mod = registered.mods[0]
+    return [
+        { unbind: combo(registered) },
+        { unbind: combo(registered, "SHIFT") },
+        { unbind: `${mod} + ${heldModifierKey(registered)}` },
+        { unbind: `${mod} + escape` },
+    ]
+})
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 export function toggleWorkspaceSwitcher(cmd: string) {

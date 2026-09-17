@@ -17,5 +17,10 @@
   "auto_nightshift": false,
   "nightshift_start": "20:30",
   "nightshift_end": "06:00",
-  "nightshift_intensity": 4000
+  "nightshift_intensity": 4000,
+  "shortcuts": {
+    "launcher": "Super",
+    "app_switcher": "Alt+Tab",
+    "workspace_switcher": "Super+Tab"
+  }
 }

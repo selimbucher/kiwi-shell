@@ -2,7 +2,7 @@ import { Astal, Gtk } from "ags/gtk4"
 import Hyprland from "gi://AstalHyprland"
 import AstalWp from "gi://AstalWp"
 import { createBinding } from "gnim"
-import { evalLua, focusWorkspace } from "../../hypr"
+import { toggleExpo, focusWorkspace } from "../../hypr"
 
 const wp = AstalWp.get_default()
 
@@ -46,9 +46,8 @@ export default function Workspaces() {
       onClicked={() => {
         if (!hypr.focusedWorkspace) return
         if (hypr.focusedWorkspace.id === id) {
-          // hyprexpo exposes no dispatcher under the lua config — call its
-          // plugin API if the plugin is loaded, quietly do nothing otherwise
-          evalLua("if hl.plugin.hyprexpo then hl.plugin.hyprexpo.expo(\"toggle\") end", "expo toggle")
+          // hyprexpo's overview if the plugin is loaded, nothing otherwise
+          toggleExpo()
         } else {
           focusWorkspace(id)
         }

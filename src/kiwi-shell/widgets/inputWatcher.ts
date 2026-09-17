@@ -2,9 +2,7 @@ import { logger } from "../log"
 const log = logger("mediakeys")
 import KiwiShortcuts from "gi://KiwiShortcuts"
 import { brightnessAvailable, kbdAvailable } from "./brightness"
-import { execAsync } from "ags/process"
-import Hyprland from "gi://AstalHyprland"
-import { evalLua, luaBind, luaStr } from "../hypr"
+import { applyBinds, currentBinds, registerBindSetup } from "../hypr"
 
 const SHORTCUT_MAP: Record<string, string> = {
   'volume-up':           'volume',
@@ -35,7 +33,7 @@ async function registerHyprlandBinds() {
   // never unbind these keys (users bind their own actions on them); skip
   // keys that already carry our described bind instead
   try {
-    const binds = JSON.parse(await execAsync(['hyprctl', 'binds', '-j']))
+    const binds = await currentBinds()
     const registered = new Set(binds.map((b: any) => b.description))
     const skipped = keys.filter(key => registered.has(`kiwi: ${KEY_TO_ID[key]}`))
     if (skipped.length > 0)
@@ -49,24 +47,18 @@ async function registerHyprlandBinds() {
     return
   }
 
-  if (await evalLua(keys.map(key => luaBind(
-    key,
-    `hl.dsp.global(${luaStr(`kiwi-shell:${KEY_TO_ID[key]}`)})`,
-    `kiwi: ${KEY_TO_ID[key]}`,
-  )).join('\n'), 'indicator key binds'))
+  if (await applyBinds(keys.map(key => ({
+    bind: key,
+    action: { global: `kiwi-shell:${KEY_TO_ID[key]}` },
+    description: `kiwi: ${KEY_TO_ID[key]}`,
+  })), 'indicator key binds'))
     log.info(`registered global binds: ${keys.join(', ')}`)
 }
 
 let manager: KiwiShortcuts.Manager | null = null
 
 export function watchIndicatorKeys(onKey: (type: string) => void) {
-  registerHyprlandBinds()
-
-  const hyprland = Hyprland.get_default()
-  hyprland.connect('config-reloaded', () => {
-    log.debug('config reloaded — re-registering indicator key binds')
-    registerHyprlandBinds()
-  })
+  registerBindSetup('mediakeys', registerHyprlandBinds)
 
   manager = new KiwiShortcuts.Manager()
 

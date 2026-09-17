@@ -3,21 +3,19 @@ const log = logger("launcher")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, For, Accessor, onCleanup } from "ags"
-import { execAsync } from "ags/process"
 import GLib from "gi://GLib"
 import Pango from "gi://Pango"
 import Apps from "gi://AstalApps"
-import Hyprland from "gi://AstalHyprland"
 import { conf } from "../config"
 import { mapVersion } from "../desktopEntries"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { evalLua, luaBind, isKiwiBind, describeBind } from "../../hypr"
+import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, type BindOp } from "../../hypr"
+import { shortcut, combo, type Shortcut } from "../../shortcuts"
 
 // Spotlight-style launcher: a centered glass search panel on Super+Space.
 // Type to fuzzy-search applications, arrows/Tab to select, Enter to launch,
 // Escape or a click on the backdrop to dismiss.
 
-const hyprland = Hyprland.get_default()
 const apps = new Apps.Apps()
 
 // desktopEntries already watches the application dirs — piggyback on it to
@@ -36,50 +34,58 @@ const results = createComputed(get => {
     return apps.fuzzy_query(text).slice(0, MAX_RESULTS)
 })
 
-// ─── Super tap keybind ────────────────────────────────────────────────────────
-// The launcher opens on a plain Super tap, rofi-style: a release bind on
-// SUPER_L. Hyprland shadows non-transparent binds whenever another bind
-// (key, mouse or scroll) fires while the mod is held — shadowKeybinds() in
-// KeybindManager.cpp — so this only triggers on a clean tap. The workspace
-// switcher's confirm on the same key is a transparent bindrt: it cannot be
-// shadowed, keeps firing after Super+Tab, and is no-op guarded shell-side.
-// Dynamic keywords are wiped on config reload, so this re-runs on
-// config-reloaded. SUPER_L is never unbound wholesale — that would take the
-// workspace confirm bind with it.
+// ─── Launcher keybind (shortcuts.launcher, default: tap Super) ─────────────────
+// A tap is rofi-style: a release bind on the modifier's own key. Hyprland
+// shadows non-transparent binds whenever another bind (key, mouse or scroll)
+// fires while the mod is held — shadowKeybinds() in KeybindManager.cpp — so
+// this only triggers on a clean tap. A switcher's confirm on the same key is
+// a transparent bindrt: it cannot be shadowed, keeps firing after Super+Tab,
+// and is no-op guarded shell-side. Any other shortcut is a plain press bind.
+// Reloads wipe dynamic binds; registerBindSetup re-runs this after each.
+// The combo is only unbound when the shortcut changes (rebindAll), since
+// that also takes a switcher confirm on the same key with it.
 
-const SUPER_MODMASK = 64
+let registered: Shortcut | null = null
 
 async function registerLauncherBind() {
+    const s = shortcut("launcher")
     let haveToggle = false
     try {
-        const binds = JSON.parse(await execAsync(["hyprctl", "binds", "-j"]))
-        // any foreign bind on plain super (press or release — both collide
-        // with tap-to-launch semantics) means the user has their own setup
+        const binds = await currentBinds()
+        // any foreign bind on the same combo (for a tap, press or release —
+        // both collide with tap semantics) means the user has their own setup
         const foreign = binds.find((b: any) =>
-            b.key === "SUPER_L" && b.modmask === SUPER_MODMASK &&
+            b.key === s.key && b.modmask === s.modmask &&
             b.submap === "" && !isKiwiBind(b))
         if (foreign) {
-            log.warn("foreign bind on plain super found, leaving keybinds alone:",
+            log.warn("foreign bind on the launcher shortcut found, leaving keybinds alone:",
                 describeBind(foreign))
             return
         }
-        haveToggle = binds.some((b: any) => b.description === "kiwi: launcher toggle")
+        haveToggle = binds.some((b: any) =>
+            b.description === "kiwi: launcher toggle" && b.key === s.key && b.modmask === s.modmask)
     } catch (e) {
         log.error("failed to query binds, skipping setup:", e)
         return
     }
     if (haveToggle) {
-        log.debug("super-tap bind already in place")
+        registered = s
+        log.debug("launcher bind already in place")
         return
     }
 
-    if (await evalLua(luaBind("SUPER + SUPER_L", `hl.dsp.exec_cmd("kiwictl launcher toggle")`,
-        "kiwi: launcher toggle", { release: true }), "launcher bind"))
-        log.info("registered super-tap launcher bind")
+    if (await applyBinds([{
+        bind: combo(s), action: { exec: "kiwictl launcher toggle" },
+        description: "kiwi: launcher toggle", flags: { release: s.tap },
+    }], "launcher bind")) {
+        registered = s
+        log.info(`registered launcher bind on ${combo(s)}${s.tap ? " (tap)" : ""}`)
+    }
 }
 
-registerLauncherBind()
-hyprland.connect("config-reloaded", registerLauncherBind)
+const launcherUnbinds = (): BindOp[] => registered ? [{ unbind: combo(registered) }] : []
+
+registerBindSetup("launcher", registerLauncherBind, launcherUnbinds)
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 export function toggleLauncher(cmd: string) {

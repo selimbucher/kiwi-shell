@@ -4,20 +4,22 @@ import { createState, createComputed, createBinding } from "ags"
 
 import { primaryColor } from "../config"
 import { exec } from "ags/process"
+import { exitSession } from "../../hypr"
 
 const buttons = [
   { name: "shutdown", icon: "system-shutdown-symbolic", exec: "poweroff", confirm: true},
   { name: "reboot", icon: "system-reboot-symbolic", exec: "reboot", confirm: true },
   { name: "sleep", icon: "bed-symbolic", exec: "systemctl sleep", confirm: false },
   { name: "lock", icon: "object-locked-symbolic", exec: "hyprlock", confirm: false },
-  { name: "lock", icon: "exit-symbolic", exec: "hyprctl dispatch hl.dsp.exit()", confirm: false },
+  { name: "exit", icon: "exit-symbolic", exec: exitSession, confirm: false },
 ]
 
-function PowerButton(icon: string, command: string) {
+function PowerButton(icon: string, command: string | (() => unknown)) {
   return (
     <button
       onClicked={(self) => {
-        exec(command)
+        if (typeof command === "string") exec(command)
+        else command()
       }}
     >
       <Gtk.Image

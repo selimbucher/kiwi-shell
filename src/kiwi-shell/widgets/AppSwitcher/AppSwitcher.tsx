@@ -3,7 +3,6 @@ const log = logger("appswitcher")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, createBinding, onCleanup } from "ags"
-import { execAsync } from "ags/process"
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
 import { conf } from "../config"
@@ -12,7 +11,8 @@ import { captureWindowToTexture, freshClientSize, getCachedTexture } from "./cli
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { evalLua, luaBind, luaUnbind, isKiwiBind, describeBind, closeWindow, clientSelector } from "../../hypr"
+import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, closeWindow, clientSelector, type BindOp } from "../../hypr"
+import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
 
 export const [isVisible, setVisibility] = createState(false)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)
@@ -32,64 +32,84 @@ hyprland.connect("notify::focused-client", () => {
     }
 })
 
-// ─── Alt+Tab keybinds ─────────────────────────────────────────────────────────
+// ─── App switcher keybinds (shortcuts.app_switcher, default Alt+Tab) ─────────
 // Registered on startup and after every config reload (reloads wipe dynamic
-// binds). A foreign ALT+TAB / ALT+ALT_L root bind means the user has their
-// own alt-tab — leave the keyboard alone. The ALT_L release binds must live
-// in the root submap: a bind matches the submap active at key PRESS, and Alt
-// goes down before the submap is entered (isVisible no-ops the stray fires).
+// binds). A foreign root bind on the shortcut or on its modifier's release
+// means the user has their own alt-tab — leave the keyboard alone. The
+// modifier release binds must live in the root submap: a bind matches the
+// submap active at key PRESS, and the modifier goes down before the submap
+// is entered (isVisible no-ops the stray fires).
 
-const ALT_MODMASK = 8
+let registered: Shortcut | null = null
+
+// what a registration on `s` binds, root and submap, for unbinding
+function appSwitcherUnbinds(s: Shortcut): BindOp[] {
+    const release = `${s.mods[0]} + ${heldModifierKey(s)}`
+    return [
+        { unbind: combo(s) },
+        { unbind: release },
+        { submap: "app_switcher", ops: [
+            { unbind: combo(s) },
+            { unbind: release },
+            { unbind: "escape" },
+            { unbind: `${s.mods[0]} + escape` },
+        ] },
+    ]
+}
 
 async function registerAltTabBinds() {
+    const s = shortcut("app_switcher")
+    const entry = combo(s)
+    const release = `${s.mods[0]} + ${heldModifierKey(s)}`
     try {
-        const binds = JSON.parse(await execAsync(["hyprctl", "binds", "-j"]))
+        const binds = await currentBinds()
         const foreign = binds.find((b: any) =>
-            (b.key === "TAB" || b.key === "ALT_L") &&
-            b.modmask === ALT_MODMASK && b.submap === "" && !isKiwiBind(b))
+            (b.key === s.key || b.key === heldModifierKey(s)) &&
+            b.modmask === s.modmask && b.submap === "" && !isKiwiBind(b))
         if (foreign) {
-            log.warn("foreign alt-tab bind found, leaving keybinds alone:",
+            log.warn("foreign app switcher bind found, leaving keybinds alone:",
                 describeBind(foreign))
             return
         }
     } catch (e) {
-        log.error("failed to query binds, skipping alt-tab setup:", e)
+        log.error("failed to query binds, skipping app switcher setup:", e)
         return
     }
 
-    // one eval chunk = atomic and ordered. define_submap appends on
+    // applied atomically and in order. Submap definitions append on
     // redefinition, hence the unbinds inside it first.
-    const ok = await evalLua([
+    const ok = await applyBinds([
         // clear any previous incarnation of the scheme first
-        luaUnbind("ALT + TAB"),
-        luaUnbind("ALT + ALT_L"),
-        `hl.define_submap("app_switcher", function()`,
-        `  ${luaUnbind("ALT + TAB")}`,
-        `  ${luaUnbind("ALT + ALT_L")}`,
-        `  ${luaUnbind("escape")}`,
-        `  ${luaUnbind("ALT + escape")}`,
-        `end)`,
-        // root: entry, and the Alt-release confirm (see comment above)
-        luaBind("ALT + TAB", `hl.dsp.exec_cmd("kiwictl apps open-next")`, "kiwi: apps open"),
-        luaBind("ALT + TAB", `hl.dsp.submap("app_switcher")`, "kiwi: apps submap enter"),
-        luaBind("ALT + ALT_L", `hl.dsp.exec_cmd("kiwictl apps confirm")`, "kiwi: apps confirm",
-            { release: true, transparent: true }),
-        luaBind("ALT + ALT_L", `hl.dsp.submap("reset")`, "kiwi: apps submap reset",
-            { release: true, transparent: true }),
+        ...appSwitcherUnbinds(s),
+        // root: entry, and the modifier-release confirm (see comment above)
+        { bind: entry, action: { exec: "kiwictl apps open-next" }, description: "kiwi: apps open" },
+        { bind: entry, action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
+        { bind: release, action: { exec: "kiwictl apps confirm" }, description: "kiwi: apps confirm",
+            flags: { release: true, transparent: true } },
+        { bind: release, action: { submap: "reset" }, description: "kiwi: apps submap reset",
+            flags: { release: true, transparent: true } },
         // submap: cycling while held, escape failsafes
-        `hl.define_submap("app_switcher", function()`,
-        `  ${luaBind("ALT + TAB", `hl.dsp.exec_cmd("kiwictl apps open-next")`, "kiwi: apps cycle", { repeating: true })}`,
-        `  ${luaBind("escape", `hl.dsp.exec_cmd("kiwictl apps close")`, "kiwi: apps close", { release: true })}`,
-        `  ${luaBind("escape", `hl.dsp.submap("reset")`, "kiwi: apps submap reset", { release: true })}`,
-        `  ${luaBind("ALT + escape", `hl.dsp.exec_cmd("kiwictl apps close")`, "kiwi: apps close", { release: true })}`,
-        `  ${luaBind("ALT + escape", `hl.dsp.submap("reset")`, "kiwi: apps submap reset", { release: true })}`,
-        `end)`,
-    ].join("\n"), "alt-tab binds")
-    if (ok) log.info("registered alt-tab binds (root + app_switcher submap)")
+        { submap: "app_switcher", ops: [
+            { bind: entry, action: { exec: "kiwictl apps open-next" }, description: "kiwi: apps cycle",
+                flags: { repeating: true } },
+            { bind: "escape", action: { exec: "kiwictl apps close" }, description: "kiwi: apps close",
+                flags: { release: true } },
+            { bind: "escape", action: { submap: "reset" }, description: "kiwi: apps submap reset",
+                flags: { release: true } },
+            { bind: `${s.mods[0]} + escape`, action: { exec: "kiwictl apps close" }, description: "kiwi: apps close",
+                flags: { release: true } },
+            { bind: `${s.mods[0]} + escape`, action: { submap: "reset" }, description: "kiwi: apps submap reset",
+                flags: { release: true } },
+        ] },
+    ], "app switcher binds")
+    if (ok) {
+        registered = s
+        log.info(`registered app switcher binds on ${entry} (root + app_switcher submap)`)
+    }
 }
 
-registerAltTabBinds()
-hyprland.connect("config-reloaded", registerAltTabBinds)
+registerBindSetup("appswitcher", registerAltTabBinds,
+    () => registered ? appSwitcherUnbinds(registered) : [])
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 export function toggleAppSwitcher(cmd: string) {
