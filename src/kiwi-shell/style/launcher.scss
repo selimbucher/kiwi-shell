@@ -1,19 +1,42 @@
 @use 'theme' as *;
 
-.Launcher {
-    background: rgba(0, 0, 0, 0.22);
+// The window covers the screen so the panel can float anywhere on it and be
+// clicked away, but it paints nothing: the desktop behind Spotlight stays as
+// it is, the way macOS leaves it. Anything painted here would be painted over
+// the whole screen, and the compositor would blur all of it.
+.Launcher,
+.launcher-backdrop {
+    background: none;
 }
 
+// A menu, not a panel: it is a transient overlay that lands on top of whatever
+// window is open, which is what the menu pane is mixed for. The panel pane is
+// for the bar and the dock, which sit over the wallpaper.
 .launcher-panel {
-    @include panel;
-    border-radius: 26px;
-    padding: 8px;
-    // the launcher window covers the screen, so the shadow has room
-    box-shadow: var(--k-highlight), 0 30px 70px rgba(0, 0, 0, 0.45);
+    @include menu;
+    border-radius: 28px;
+    padding: 10px;
+    // Under the blur threshold on the launcher's layer (SHADOW_ALPHA in
+    // services/theme.ts), or the compositor blurs the wallpaper inside the
+    // shadow and the panel wears a halo.
+    box-shadow: var(--k-highlight), 0 24px 60px rgba(0, 0, 0, 0.1);
+}
+
+// Granite is the solid style, and this is the one surface in it with a lit
+// window behind it rather than the wallpaper — at 0.93 that window ghosts
+// through the panel. Its layer is not blurred either, so unlike the glass
+// styles its shadow can be a real one.
+.theme-granite .launcher-panel {
+    background-color: #050507;
+    box-shadow: var(--k-highlight), 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+
+.theme-granite.appearance-light .launcher-panel {
+    background-color: #fafafb;
 }
 
 .launcher-search-row {
-    padding: 8px 14px;
+    padding: 6px 16px;
 }
 
 .launcher-search-icon {
@@ -25,10 +48,10 @@
     border: none;
     box-shadow: none;
     outline: none;
-    font-size: 20px;
+    font-size: 22px;
     color: var(--k-fg);
-    caret-color: var(--k-fg);
-    min-height: 38px;
+    caret-color: var(--primary);
+    min-height: 42px;
     padding: 0;
 
     placeholder {
@@ -43,19 +66,25 @@
 
 .launcher-results {
     border-top: 1px solid var(--k-divider);
-    margin-top: 4px;
-    padding-top: 8px;
-    padding-bottom: 4px;
+    margin-top: 6px;
+    padding-top: 4px;
+    padding-bottom: 2px;
+}
+
+// which source a run of rows came from, so a window and an app that share a
+// name are told apart without a second look
+.launcher-group {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    color: var(--k-fg-4);
+    padding: 8px 14px 3px 14px;
 }
 
 .launcher-row {
-    border-radius: 16px;
-    padding: 8px 12px;
+    border-radius: 14px;
+    padding: 7px 12px;
     transition: background-color 100ms ease;
-
-    &:hover {
-        background-color: var(--k-fill-subtle);
-    }
 
     &.selected {
         background-color: var(--k-fill-hover);
@@ -64,6 +93,13 @@
 
 .launcher-row-icon {
     filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+
+    // symbolic icons are drawn in the text colour and have no artwork to lift
+    &.symbolic {
+        filter: none;
+        color: var(--k-fg-2);
+        margin: 0 4px;
+    }
 }
 
 .launcher-row-name {
@@ -74,4 +110,22 @@
 .launcher-row-desc {
     font-size: 11px;
     color: var(--k-fg-4);
+}
+
+// what Enter will do, spelled out on the row it would do it to
+.launcher-verb {
+    margin-left: 8px;
+}
+
+.launcher-verb-label {
+    font-size: 11px;
+    color: var(--k-fg-3);
+}
+
+.launcher-verb-key {
+    font-size: 11px;
+    color: var(--k-fg-2);
+    background-color: var(--k-fill);
+    border-radius: 5px;
+    padding: 1px 5px;
 }

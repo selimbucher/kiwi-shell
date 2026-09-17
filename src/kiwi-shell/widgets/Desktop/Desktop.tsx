@@ -7,9 +7,12 @@ import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
 import GLib from "gi://GLib"
 import Pango from "gi://Pango"
+import { subprocess } from "ags/process"
 import { conf } from "../config"
-import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
-import { openPath } from "../Dock/dock-utils"
+import { themeClasses, LAYER } from "../services/theme"
+import { openPath, openTerminal } from "../Dock/dock-utils"
+import { setWallpaper, promptWallpaper } from "../services/wallpaper"
+import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
 import { logger } from "../../log"
 const log = logger("desktop")
 
@@ -189,6 +192,35 @@ function uniqueDest(name: string, dirPath = DESKTOP_DIR): Gio.File {
     }
 }
 
+function newFolder() {
+    const dest = uniqueDest("New Folder")
+    try {
+        dest.make_directory(null)
+    } catch (e) {
+        log.error(`Desktop: failed to create ${dest.get_path()}:`, e)
+    }
+}
+
+function renameItem(item: DesktopItem, name: string) {
+    const clean = name.trim()
+    // a slash would move the file somewhere else entirely
+    if (!clean || clean === item.name || clean.includes("/")) return
+    try {
+        const renamed = Gio.File.new_for_path(item.path).set_display_name(clean, null)
+        // the free-placement map is keyed by path, so without this the file
+        // would come back as a new icon and jump to the first free slot
+        const slot = layout.get(item.path)
+        const dest = renamed.get_path()
+        if (slot && dest) {
+            layout.delete(item.path)
+            layout.set(dest, slot)
+            saveLayout()
+        }
+    } catch (e) {
+        log.error(`Desktop: failed to rename ${item.path}:`, e)
+    }
+}
+
 // returns the paths the files will land on
 function pasteUris(uris: string[], cut: boolean, destDir = DESKTOP_DIR): string[] {
     const created: string[] = []
@@ -263,6 +295,7 @@ const [selected, setSelected] = createState<Set<string>>(new Set())
 
 const selectOnly = (paths: string[]) => setSelected(new Set(paths))
 const clearSelection = () => setSelected(new Set())
+const selectAll = () => selectOnly(items.get().map((i) => i.path))
 
 function toggleSelected(path: string) {
     const next = new Set(selected.get())
@@ -460,6 +493,16 @@ function relayout() {
     if (changed) saveLayout()
 }
 
+// auto-arrange in one shot: forget every remembered slot and let relayout
+// refill the grid from the top-left in sort order. Only free placement can
+// be untidy — auto-arrange never leaves a gap to clean up.
+function cleanUp() {
+    layout.clear()
+    seededAt.clear()
+    saveLayout()
+    relayout()
+}
+
 items.subscribe(relayout)
 // placement mode, dock mode (exclusive zone!) etc. all live in the config
 conf.subscribe(relayout)
@@ -597,8 +640,6 @@ function openWithDialog(item: DesktopItem) {
 }
 
 function DesktopIcon({ item }: { item: DesktopItem }) {
-    let menu: Gtk.Popover
-
     // context-menu / drag actions target the whole selection when the
     // clicked icon is part of it, just the clicked icon otherwise
     const targets = () => {
@@ -607,6 +648,77 @@ function DesktopIcon({ item }: { item: DesktopItem }) {
     }
 
     let wasSelectedOnPress = false
+
+    // ---- inline rename: the entry takes the label's place in the cell ----
+    const [renaming, setRenaming] = createState(false)
+    let renameEntry: Gtk.Entry
+
+    const startRename = () => {
+        renameEntry.text = item.name
+        setRenaming(true)
+    }
+
+    const finishRename = (commit: boolean) => {
+        if (!renaming.get()) return
+        setRenaming(false)
+        if (commit) renameItem(item, renameEntry.text)
+    }
+
+    // one target, and never a launcher: its name is the application's, so
+    // committing it would write the app name over the .desktop file
+    const renameable = item.appInfo
+        ? false
+        : selected.as((sel) => !sel.has(item.path) || sel.size === 1)
+
+    const menuItems: ContextMenuItem[] = [
+        {
+            label: "Open",
+            icon: "document-open-symbolic",
+            onClick: () => targets().forEach(openItem),
+        },
+        {
+            label: "Open With…",
+            icon: "system-run-symbolic",
+            onClick: () => openWithDialog(item),
+        },
+        { separator: true },
+        {
+            label: "Set as Wallpaper",
+            icon: "preferences-desktop-wallpaper-symbolic",
+            visible: !!item.contentType?.startsWith("image/"),
+            onClick: () => setWallpaper(item.path),
+        },
+        {
+            label: "Show in Files",
+            icon: "folder-symbolic",
+            onClick: () => openPath(DESKTOP_DIR),
+        },
+        { separator: true },
+        {
+            label: "Copy",
+            icon: "edit-copy-symbolic",
+            onClick: () => copyItems(targets()),
+        },
+        {
+            label: "Cut",
+            icon: "edit-cut-symbolic",
+            onClick: () => copyItems(targets(), true),
+        },
+        {
+            label: "Rename",
+            icon: "document-edit-symbolic",
+            visible: renameable,
+            onClick: startRename,
+        },
+        { separator: true },
+        {
+            label: "Move to Trash",
+            icon: "user-trash-symbolic",
+            onClick: () => targets().forEach(trashItem),
+        },
+    ]
+
+    const menu = ContextMenu({ items: menuItems, class: "desktop-menu" })
 
     return (
         <box
@@ -622,6 +734,9 @@ function DesktopIcon({ item }: { item: DesktopItem }) {
                 const click = new Gtk.GestureClick()
                 click.set_button(Gdk.BUTTON_PRIMARY)
                 click.connect("pressed", (gesture, nPress) => {
+                    // while the entry is up the cell belongs to it: a
+                    // double-click in the text must not open the file
+                    if (renaming.get()) return
                     if (nPress === 2) {
                         openItem(item)
                         return
@@ -654,6 +769,8 @@ function DesktopIcon({ item }: { item: DesktopItem }) {
                 const drag = new Gtk.DragSource()
                 drag.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
                 drag.connect("prepare", () => {
+                    // selecting text in the rename entry is not a file drag
+                    if (renaming.get()) return null
                     if (!selected.get().has(item.path)) selectOnly([item.path])
                     dragOriginPath = item.path
                     const uris = targets().map((i) =>
@@ -693,59 +810,14 @@ function DesktopIcon({ item }: { item: DesktopItem }) {
                 }
             }}
         >
-            <popover
-                autohide={true}
-                hasArrow={false}
-                hexpand={false}
-                vexpand={false}
-                class="desktop-menu"
-                $={(self) => { menu = self }}
-            >
-                <box orientation={Gtk.Orientation.VERTICAL} spacing={3}>
-                    <button onclicked={() => { menu.popdown(); targets().forEach(openItem) }}>
-                        <box spacing={6}>
-                            <Gtk.Image iconName="document-open-symbolic" pixelSize={16} />
-                            <label halign={Gtk.Align.START} label="Open" />
-                        </box>
-                    </button>
-                    <button onclicked={() => { menu.popdown(); openWithDialog(item) }}>
-                        <box spacing={6}>
-                            <Gtk.Image iconName="system-run-symbolic" pixelSize={16} />
-                            <label halign={Gtk.Align.START} label="Open With…" />
-                        </box>
-                    </button>
-                    <button onclicked={() => { menu.popdown(); copyItems(targets()) }}>
-                        <box spacing={6}>
-                            <Gtk.Image iconName="edit-copy-symbolic" pixelSize={16} />
-                            <label halign={Gtk.Align.START} label="Copy" />
-                        </box>
-                    </button>
-                    <button onclicked={() => { menu.popdown(); copyItems(targets(), true) }}>
-                        <box spacing={6}>
-                            <Gtk.Image iconName="edit-cut-symbolic" pixelSize={16} />
-                            <label halign={Gtk.Align.START} label="Cut" />
-                        </box>
-                    </button>
-                    <button onclicked={() => { menu.popdown(); openPath(DESKTOP_DIR) }}>
-                        <box spacing={6}>
-                            <Gtk.Image iconName="folder-symbolic" pixelSize={16} />
-                            <label halign={Gtk.Align.START} label="Show in Files" />
-                        </box>
-                    </button>
-                    <button onclicked={() => { menu.popdown(); targets().forEach(trashItem) }}>
-                        <box spacing={6}>
-                            <Gtk.Image iconName="user-trash-symbolic" pixelSize={16} />
-                            <label halign={Gtk.Align.START} label="Move to Trash" />
-                        </box>
-                    </button>
-                </box>
-            </popover>
+            {menu}
 
             {item.gicon
                 ? <Gtk.Image gicon={item.gicon} pixelSize={48} class="desktop-item-icon" halign={Gtk.Align.CENTER} />
                 : <Gtk.Image iconName="text-x-generic" pixelSize={48} class="desktop-item-icon" halign={Gtk.Align.CENTER} />}
             <label
                 class="desktop-item-label"
+                visible={renaming((r) => !r)}
                 label={item.name}
                 justify={Gtk.Justification.CENTER}
                 ellipsize={Pango.EllipsizeMode.END}
@@ -754,6 +826,57 @@ function DesktopIcon({ item }: { item: DesktopItem }) {
                 wrapMode={Pango.WrapMode.WORD_CHAR}
                 maxWidthChars={12}
                 halign={Gtk.Align.CENTER}
+            />
+            <entry
+                class="desktop-item-rename"
+                visible={renaming}
+                // narrower than the label it replaces: the icons sit on a
+                // Gtk.Fixed, so an entry that asked for its text's width
+                // would grow the cell over its neighbours
+                widthChars={6}
+                maxWidthChars={10}
+                xalign={0.5}
+                halign={Gtk.Align.CENTER}
+                onActivate={() => finishRename(true)}
+                $={(self) => {
+                    renameEntry = self
+
+                    // focus can only be taken once GTK has mapped the entry,
+                    // and the menu that asked for the rename is still handing
+                    // its keyboard grab back at that moment — an idle lands
+                    // after both
+                    self.connect("map", () => {
+                        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                            // unfocused, the entry can be neither typed in
+                            // nor escaped out of — don't strand the cell
+                            if (!self.grab_focus()) {
+                                finishRename(false)
+                                return GLib.SOURCE_REMOVE
+                            }
+                            // preselect the stem: the extension is almost
+                            // never the part being changed
+                            const name = self.text
+                            const dot = name.startsWith(".")
+                                ? -1 : name.lastIndexOf(".")
+                            self.select_region(0, dot > 0 ? dot : -1)
+                            return GLib.SOURCE_REMOVE
+                        })
+                    })
+
+                    const keys = new Gtk.EventControllerKey()
+                    keys.connect("key-pressed", (_controller, keyval) => {
+                        if (keyval !== Gdk.KEY_Escape) return Gdk.EVENT_PROPAGATE
+                        finishRename(false)
+                        return Gdk.EVENT_STOP
+                    })
+                    self.add_controller(keys)
+
+                    // clicking away abandons the edit rather than committing
+                    // a half-typed name
+                    const focus = new Gtk.EventControllerFocus()
+                    focus.connect("leave", () => finishRename(false))
+                    self.add_controller(focus)
+                }}
             />
         </box>
     )
@@ -765,40 +888,64 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     monH = geometry.height
     monitorRef = gdkmonitor
 
-    let pasteBtn: Gtk.Button
+    // re-read on every popup: the clipboard can change while the menu is shut
+    const [canPaste, setCanPaste] = createState(false)
 
     // context menu for empty desktop space; parented onto the overlay below
-    const pasteMenu = (
-        <popover
-            autohide={true}
-            hasArrow={false}
-            hexpand={false}
-            vexpand={false}
-            class="desktop-menu"
-        >
-            <box orientation={Gtk.Orientation.VERTICAL} spacing={3}>
-                <button
-                    $={(self) => { pasteBtn = self }}
-                    onclicked={() => { pasteMenu.popdown(); pasteFromClipboard() }}
-                >
-                    <box spacing={6}>
-                        <Gtk.Image iconName="edit-paste-symbolic" pixelSize={16} />
-                        <label halign={Gtk.Align.START} label="Paste" />
-                    </box>
-                </button>
-                <button onclicked={() => { pasteMenu.popdown(); openPath(DESKTOP_DIR) }}>
-                    <box spacing={6}>
-                        <Gtk.Image iconName="folder-symbolic" pixelSize={16} />
-                        <label halign={Gtk.Align.START} label="Open in Files" />
-                    </box>
-                </button>
-            </box>
-        </popover>
-    ) as Gtk.Popover
+    const desktopMenu = ContextMenu({
+        class: "desktop-menu",
+        items: [
+            {
+                label: "New Folder",
+                icon: "folder-new-symbolic",
+                onClick: newFolder,
+            },
+            {
+                label: "Paste",
+                icon: "edit-paste-symbolic",
+                sensitive: canPaste,
+                onClick: pasteFromClipboard,
+            },
+            { separator: true },
+            {
+                label: "Change Wallpaper…",
+                icon: "preferences-desktop-wallpaper-symbolic",
+                onClick: promptWallpaper,
+            },
+            {
+                label: "Open Terminal Here",
+                icon: "utilities-terminal-symbolic",
+                onClick: () => openTerminal(DESKTOP_DIR),
+            },
+            {
+                label: "Open in Files",
+                icon: "folder-symbolic",
+                onClick: () => openPath(DESKTOP_DIR),
+            },
+            {
+                label: "Desktop Settings…",
+                icon: "preferences-system-symbolic",
+                onClick: () => subprocess(["kiwi-settings"]),
+            },
+            { separator: true },
+            {
+                label: "Clean Up",
+                icon: "view-grid-symbolic",
+                // auto-arrange has no loose icons to collect
+                visible: conf.as((c: any) => !!c.desktop_free_placement),
+                onClick: cleanUp,
+            },
+            {
+                label: "Select All",
+                icon: "edit-select-all-symbolic",
+                onClick: selectAll,
+            },
+        ],
+    })
 
     return (
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.plain}
             name="ags-desktop"
             class={themeClasses(t => `Desktop ${t}`)}
             gdkmonitor={gdkmonitor}
@@ -850,7 +997,7 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                         return Gdk.EVENT_PROPAGATE
                     }
                     if (ctrl && (keyval === Gdk.KEY_a || keyval === Gdk.KEY_A)) {
-                        selectOnly(items.get().map((i) => i.path))
+                        selectAll()
                         return Gdk.EVENT_STOP
                     }
                     if (keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter) {
@@ -875,8 +1022,8 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         >
             <overlay
                 $={(self) => {
-                    pasteMenu.set_parent(self)
-                    onCleanup(() => pasteMenu.unparent())
+                    desktopMenu.set_parent(self)
+                    onCleanup(() => desktopMenu.unparent())
 
                     // clicking empty desktop space clears the selection;
                     // Ctrl-clicks are spared for additive rubber-banding
@@ -890,17 +1037,17 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     })
                     self.add_controller(click)
 
-                    // right-click on empty space: paste menu at the pointer
+                    // right-click on empty space: desktop menu at the pointer
                     const rightClick = new Gtk.GestureClick()
                     rightClick.set_button(Gdk.BUTTON_SECONDARY)
                     rightClick.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                     rightClick.connect("pressed", (_gesture, _n, x, y) => {
                         if (iconWidgetAt(self, x, y)) return // icon menu handles it
-                        pasteBtn.sensitive = clipboardHasFiles()
-                        pasteMenu.set_pointing_to(new Gdk.Rectangle({
+                        setCanPaste(clipboardHasFiles())
+                        desktopMenu.set_pointing_to(new Gdk.Rectangle({
                             x: Math.round(x), y: Math.round(y), width: 1, height: 1,
                         }))
-                        pasteMenu.popup()
+                        desktopMenu.popup()
                     })
                     self.add_controller(rightClick)
 

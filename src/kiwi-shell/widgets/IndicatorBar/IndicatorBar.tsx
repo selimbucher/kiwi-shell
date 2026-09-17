@@ -8,7 +8,8 @@ import { readFile } from "ags/file"
 
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../iconNames"
 import { conf } from "../config"
-import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
+import { themeClasses, LAYER } from "../services/theme"
+import { dockOverlap } from "../Dock/dock-state"
 import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessAvailable } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 import { watchIndicatorKeys } from "../inputWatcher"
@@ -90,9 +91,9 @@ export default function IndicatorBar({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }
 
   return (
     <window
-      namespace={LAYER_NAMESPACE}
-      css={conf(conf => 
-        `--primary: ${conf.primary_color};`
+      namespace={LAYER.panel}
+      css={createComputed(get =>
+        `--primary: ${get(conf).primary_color}; --indicator-bottom: ${20 + get(dockOverlap)}px;`
       )}
       $={ self => {
         onCleanup(() => destroyWindow(self))

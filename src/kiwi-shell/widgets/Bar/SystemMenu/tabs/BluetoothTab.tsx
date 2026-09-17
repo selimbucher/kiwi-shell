@@ -6,6 +6,7 @@ import { exec } from "ags/process"
 
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
 import { KeyedList } from "../../../KeyedList"
+import { ContextMenu } from "../../../ContextMenu"
 import { logger } from "../../../../log"
 import { registerBluetoothAgent } from "../../../../bluetoothAgent"
 const log = logger("bluetooth")
@@ -39,6 +40,7 @@ adapter?.connect("notify::powered", () => {
 })
 
 const bluetoothEnabledRaw = adapter ? createBinding(adapter, "powered") : null
+const discoveringRaw = adapter ? createBinding(adapter, "discovering") : null
 const devicesBinding = bluetooth ? createBinding(bluetooth, "devices") : null
 
 // A device's address is stable while names resolve during discovery; keying on
@@ -54,6 +56,56 @@ const bluetoothEnabledBinding = createComputed((get) => {
   if (get(btFrozen)) return get(btFrozenValue)
   if (!bluetoothEnabledRaw) return false
   return get(bluetoothEnabledRaw)
+})
+
+// pair() blocks the main loop for as long as bluez takes (10s is normal for a
+// mouse that has gone back to sleep), so the row can only ever show "Pairing…"
+// if it is painted before the call runs. This holds the address it will run on.
+const [pairingAddress, setPairingAddress] = createState("")
+
+const MAC_NAME = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/
+
+// Which section a device belongs to, or null when it should not be listed at
+// all. Row visibility and the two empty states both go through this so they can
+// never disagree about what is on screen.
+//
+// "Other Devices" is strictly for devices that are discoverable RIGHT NOW
+// (in pairing mode). bluez auto-purges unpaired+untrusted registry entries
+// ~30s after discovery ends, so anything that isn't paired/connected/trusted
+// IS a live discovery. Trusted covers the bond-drop relic case (e.g.
+// AirPods re-keying gets refused, Paired flips to no but Trusted survives):
+// such a device is one of ours and must never fall under "Other Devices" —
+// it stays in the known section, where a click re-pairs it.
+function deviceSection(
+  name: string,
+  paired: boolean,
+  connected: boolean,
+  trusted: boolean,
+): "known" | "other" | null {
+  if (!name || MAC_NAME.test(name)) return null
+  return paired || connected || trusted ? "known" : "other"
+}
+
+// KeyedList only knows how many widgets it built, not how many of them the
+// per-row filter above left visible — so the empty states count it themselves.
+const sectionCounts = createComputed((get) => {
+  const counts = { known: 0, other: 0 }
+  for (const device of devicesBinding ? get(devicesBinding) : []) {
+    const section = deviceSection(
+      get(createBinding(device, "name")),
+      get(createBinding(device, "paired")),
+      get(createBinding(device, "connected")),
+      get(createBinding(device, "trusted")),
+    )
+    if (section) counts[section]++
+  }
+  return counts
+})
+
+const otherEmptyLabel = createComputed((get) => {
+  if (get(sectionCounts).other > 0) return ""
+  if (discoveringRaw && get(discoveringRaw)) return "Searching…"
+  return "No devices found"
 })
 
 export function startBluetoothDiscovery() {
@@ -106,6 +158,12 @@ export default function BluetoothTab({ visible }) {
         vexpand={true}
         visible={bluetoothEnabledBinding}
       >
+        <label
+          class="list-empty"
+          halign={Gtk.Align.START}
+          label="No paired devices"
+          visible={sectionCounts((c) => c.known === 0)}
+        />
         {devicesBinding && (
           <KeyedList
             each={devicesBinding}
@@ -129,6 +187,12 @@ export default function BluetoothTab({ visible }) {
         vexpand={true}
         visible={bluetoothEnabledBinding}
       >
+        <label
+          class="list-empty"
+          halign={Gtk.Align.START}
+          label={otherEmptyLabel}
+          visible={otherEmptyLabel((l) => l !== "")}
+        />
         {devicesBinding && (
           <KeyedList
             each={devicesBinding}
@@ -146,22 +210,37 @@ export default function BluetoothTab({ visible }) {
 function Device({ device, paired }) {
   const iconBinding = createBinding(device, "icon")
   const connectedBinding = createBinding(device, "connected")
+  const connectingBinding = createBinding(device, "connecting")
+  const batteryBinding = createBinding(device, "batteryPercentage")
   const deviceName = createBinding(device, "name")
   const pairedBinding = createBinding(device, "paired")
   const trustedBinding = createBinding(device, "trusted")
 
   const visibility = createComputed((get) => {
-    const name = get(deviceName)
-    const isMac = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(name)
-    // "Other Devices" is strictly for devices that are discoverable RIGHT NOW
-    // (in pairing mode). bluez auto-purges unpaired+untrusted registry entries
-    // ~30s after discovery ends, so anything that isn't paired/connected/trusted
-    // IS a live discovery. Trusted covers the bond-drop relic case (e.g.
-    // AirPods re-keying gets refused, Paired flips to no but Trusted survives):
-    // such a device is one of ours and must never fall under "Other Devices" —
-    // it stays in the known section, where a click re-pairs it.
-    const known = get(pairedBinding) || get(connectedBinding) || get(trustedBinding)
-    return known === paired && !!name && !isMac
+    const section = deviceSection(
+      get(deviceName),
+      get(pairedBinding),
+      get(connectedBinding),
+      get(trustedBinding),
+    )
+    return section === (paired ? "known" : "other")
+  })
+
+  // battery_percentage is a 0..1 fraction (astal divides the bluez byte by 100)
+  // and is -1 on anything without a Battery1 interface. A reading left over from
+  // the last session says nothing about a device that isn't connected.
+  const batteryLabel = createComputed((get) => {
+    const percentage = get(batteryBinding)
+    if (!get(connectedBinding) || percentage <= 0) return ""
+    return `${Math.round(percentage * 100)}%`
+  })
+
+  const statusLabel = createComputed((get) => {
+    const pairing = get(pairingAddress)
+    if (pairing !== "" && pairing === device.address) return "Pairing…"
+    if (get(connectingBinding)) return "Connecting…"
+    if (get(connectedBinding)) return "Connected"
+    return ""
   })
 
   const hasIcon = iconBinding.as((s) => !!s)
@@ -203,7 +282,12 @@ function Device({ device, paired }) {
           hexpand={true}
           halign={Gtk.Align.START}
         />
-        <label label="Connected" visible={connectedBinding} />
+        <label
+          class="bt-battery"
+          label={batteryLabel}
+          visible={batteryLabel((b) => b !== "")}
+        />
+        <label label={statusLabel} visible={statusLabel((s) => s !== "")} />
       </box>
     </button>
   )
@@ -215,48 +299,40 @@ function DeviceContextMenu(
   pairedBinding,
   trustedBinding,
 ) {
-  let popover: Gtk.Popover
-
-  const item = (label: string, icon: string, onClicked: () => void, visible) => (
-    <button
-      visible={visible}
-      onClicked={() => {
-        popover.popdown()
-        onClicked()
-      }}
-    >
-      <box>
-        <Icon class="dock-context-icon" iconName={icon} pixelSize={20} />
-        <label halign={Gtk.Align.START} label={label} />
-      </box>
-    </button>
-  )
-
-  return (
-    <popover
-      autohide={true}
-      class="app-context-menu bt-context-menu"
-      $={(self) => {
-        popover = self
-      }}
-    >
-      <box orientation={Gtk.Orientation.VERTICAL} spacing={3}>
-        {item("Connect", "bluetooth-active-symbolic", () => connectDevice(device),
-          createComputed((get) => get(pairedBinding) && !get(connectedBinding)))}
-        {item("Pair & Connect", "bluetooth-active-symbolic", () => pairDevice(device),
-          pairedBinding.as((p) => !p))}
-        {item("Disconnect", "bluetooth-disabled-symbolic", () => disconnectDevice(device),
-          connectedBinding)}
-        {/* Mirrors the "known device" test in Device(): a bond-drop relic (e.g.
-            AirPods that refused re-keying) has paired=no but trusted=yes, and it
-            still holds a bluez registry entry that remove_device() can clear.
-            Gating on paired alone left exactly those devices — the ones you most
-            need to forget — with no Forget item. */}
-        {item("Forget Device", "user-trash-symbolic", () => forgetDevice(device),
-          createComputed((get) => get(pairedBinding) || get(trustedBinding)))}
-      </box>
-    </popover>
-  )
+  return ContextMenu({
+    class: "app-context-menu bt-context-menu",
+    items: [
+      {
+        label: "Connect",
+        icon: "bluetooth-active-symbolic",
+        visible: createComputed((get) => get(pairedBinding) && !get(connectedBinding)),
+        onClick: () => connectDevice(device),
+      },
+      {
+        label: "Pair & Connect",
+        icon: "bluetooth-active-symbolic",
+        visible: pairedBinding.as((p) => !p),
+        onClick: () => pairDevice(device),
+      },
+      {
+        label: "Disconnect",
+        icon: "bluetooth-disabled-symbolic",
+        visible: connectedBinding,
+        onClick: () => disconnectDevice(device),
+      },
+      {
+        // Mirrors the "known device" test in Device(): a bond-drop relic (e.g.
+        // AirPods that refused re-keying) has paired=no but trusted=yes, and it
+        // still holds a bluez registry entry that remove_device() can clear.
+        // Gating on paired alone left exactly those devices — the ones you most
+        // need to forget — with no Forget item.
+        label: "Forget Device",
+        icon: "user-trash-symbolic",
+        visible: createComputed((get) => get(pairedBinding) || get(trustedBinding)),
+        onClick: () => forgetDevice(device),
+      },
+    ],
+  })
 }
 
 function connectDevice(device) {
@@ -292,33 +368,44 @@ function disconnectDevice(device) {
 
 function pairDevice(device) {
   log.debug("Pairing with", device.name)
+  // Pause scanning first: pairing while discovery runs is a common cause of the
+  // AuthenticationTimeout / Page Timeout failures seen with these mice.
+  stopBluetoothDiscovery()
+  setPairingAddress(device.address ?? "")
+
   // pair() is a SYNCHRONOUS bluez call that throws on failure (unlike
   // connect/disconnect which are async) — it blocks the shell until pairing
   // completes or times out. It must be wrapped: the context-menu "Pair &
   // Connect" button calls this with no try/catch, so an uncaught throw here
   // used to crash the handler.
-  // Pause scanning first: pairing while discovery runs is a common cause of the
-  // AuthenticationTimeout / Page Timeout failures seen with these mice.
-  stopBluetoothDiscovery()
-  try {
-    device.pair()
-  } catch (err) {
-    // AlreadyExists → the device is in fact already paired at the bluez level;
-    // fall through to connecting it. Any other error (AuthenticationTimeout /
-    // AuthenticationFailed / ConnectionAttemptFailed "Page Timeout") means the
-    // device didn't complete pairing — surface it and stop rather than
-    // connect-spam. connectDevice() manages discovery itself.
-    if (String(err).includes("AlreadyExists")) {
-      device.trusted = true
-      connectDevice(device)
-    } else {
-      log.error("Pair failed:", err)
-      if (bluetoothTabOpen()) startBluetoothDiscovery()
+  // It runs at PRIORITY_LOW rather than inline because it blocks the frame it
+  // is called from: the redraw that paints "Pairing…" onto the row sits at
+  // GDK_PRIORITY_REDRAW and has to get in first, or the label only appears once
+  // the pairing it announces is already over.
+  GLib.idle_add(GLib.PRIORITY_LOW, () => {
+    try {
+      device.pair()
+    } catch (err) {
+      // AlreadyExists → the device is in fact already paired at the bluez level;
+      // fall through to connecting it. Any other error (AuthenticationTimeout /
+      // AuthenticationFailed / ConnectionAttemptFailed "Page Timeout") means the
+      // device didn't complete pairing — surface it and stop rather than
+      // connect-spam. connectDevice() manages discovery itself.
+      setPairingAddress("")
+      if (String(err).includes("AlreadyExists")) {
+        device.trusted = true
+        connectDevice(device)
+      } else {
+        log.error("Pair failed:", err)
+        if (bluetoothTabOpen()) startBluetoothDiscovery()
+      }
+      return GLib.SOURCE_REMOVE
     }
-    return
-  }
-  device.trusted = true
-  connectDevice(device)
+    setPairingAddress("")
+    device.trusted = true
+    connectDevice(device)
+    return GLib.SOURCE_REMOVE
+  })
 }
 
 function forgetDevice(device) {

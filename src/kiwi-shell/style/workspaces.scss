@@ -33,20 +33,20 @@
             min-width: 0px;
             min-height: 6px;
             margin: 13px 0;
-            background-color: var(--k-tile);
+            background-color: var(--k-quiet);
             border-radius: 13px;
         }
 
         &.filled .tile {
             min-width: 20px;
-            background-color: var(--k-tile-on);
+            background-color: var(--k-quiet-strong);
         }
 
 
         &:hover {
             // min-width: 20px;
             .tile {
-                background-color: var(--k-tile-hover);
+                background-color: var(--k-quiet-hover);
             }
         }
 

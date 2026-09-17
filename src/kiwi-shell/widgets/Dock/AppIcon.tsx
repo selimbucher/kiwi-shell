@@ -3,7 +3,7 @@ import { createState, createComputed, createBinding, createEffect, For } from "a
 import Pango from "gi://Pango"
 import { hyprland, list, setList, saveList, isNixManaged, isValidClient, JUMP_ANIMATION_CLASS_TIMEOUT, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
-import { DockContextIcon } from "./dock-utils"
+import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
 import { mapVersion } from "../desktopEntries"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
@@ -11,6 +11,8 @@ import { closeWindow, clientSelector } from "../../hypr"
 import { conf } from "../config"
 import { logger } from "../../log"
 const log = logger("dock")
+
+const MAX_DOTS = 4
 
 export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v: boolean) => void }) {
     const application = (() => {
@@ -30,6 +32,11 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
         return allClients.filter(client =>
             isValidClient(client) && entryForClient(client) === entry)
     })
+
+    // Past a handful the dots stop reading as a count and start reading as a
+    // smear, and they widen the icon's cell while they are at it. macOS shows
+    // one; four still says "several" at a glance.
+    const dotClients = createComputed(get => get(clientsBinding).slice(0, MAX_DOTS))
 
     const onPinChange = (newPinned: boolean) => {
         setPinned(newPinned)
@@ -161,8 +168,21 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     iconWidget = self
                     const gesture = new Gtk.GestureClick()
                     gesture.set_button(3)
-                    gesture.connect("released", () => {
+                    gesture.connect("released", (_gesture, _nPress, x, y) => {
                         previews.popdown()
+                        // the menu hangs off the box inside the button, so the
+                        // press point has to be rebased onto it; pointing at
+                        // the parent's whole allocation is what made every
+                        // right-click open the menu dead-centre over the icon
+                        const parent = menu.get_parent()
+                        const [ok, bounds] = parent
+                            ? parent.compute_bounds(self)
+                            : [false, null]
+                        menu.set_pointing_to(new Gdk.Rectangle({
+                            x: Math.round(ok ? x - bounds!.get_x() : x),
+                            y: Math.round(ok ? y - bounds!.get_y() : y),
+                            width: 1, height: 1,
+                        }))
                         menu.popup()
                     })
                     self.add_controller(gesture)
@@ -195,8 +215,8 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                         } />
                         <box $type="overlay" class="dots-container" orientation={Gtk.Orientation.VERTICAL}>
                             <box vexpand={true}></box>
-                            <box class="client-dots" halign={Gtk.Align.CENTER} spacing={3}>
-                                <For each={clientsBinding}>
+                            <box class="client-dots" halign={Gtk.Align.CENTER}>
+                                <For each={dotClients}>
                                     {(client) => <ActiveClientDot client={client} />}
                                 </For>
                             </box>
@@ -403,77 +423,70 @@ function ActiveClientDot({ client }: { client: Hyprland.Client }) {
     )
 }
 
+// The dock's pinned list is generated from the Nix config there, so writing
+// it back would be overwritten on the next rebuild. Saying so beats the item
+// quietly not being in the menu.
+const NIX_PIN_HINT = "Pinned apps come from your Nix configuration"
+
 function AppContextMenu(entry, clientsBinding, application, name, pinned, onPinChange, setMenuOpen) {
-    let popover: Gtk.Popover
+    // the actions the .desktop file itself declares — "New Private Window",
+    // "New Incognito Tab", a player's Play/Pause. The app already ships them;
+    // not offering them was the only reason they were missing.
+    const actions: ContextMenuItem[] = (application?.list_actions() ?? [])
+        .map((action: string) => ({
+            label: application.get_action_name(action),
+            icon: "window-new-symbolic",
+            onClick: () => application.launch_action(action, null),
+        }))
 
-    return (
-        <popover
-            autohide={true}
-            hasArrow={false}
-            hexpand={false}
-            vexpand={false}
-            class="app-context-menu"
-            $={(self) => {
-                popover = self
-                self.connect("notify::visible", () => {
-                    setMenuOpen(self.visible)
-                })
-            }}
-        >
-            <box orientation={Gtk.Orientation.VERTICAL} spacing={3}>
-                <button
-                    onclicked={() => {
-                        popover.popdown()
-                        application.launch([], null)
-                    }}
-                >
-                    <box>
-                        <AppIconImage entry={entry} pixelSize={20} cssClass="dock-context-icon" />
-                        <label halign={Gtk.Align.START} label={name} />
-                    </box>
-                </button>
+    const hasWindows = clientsBinding.as(clients => clients.length > 0)
 
-                <button
-                    visible={pinned.as(p => p === true && !isNixManaged)}
-                    onclicked={() => {
-                        popover.popdown()
-                        onPinChange(false)
-                    }}
-                >
-                    <box>
-                        <DockContextIcon icon="unpin-symbolic" />
-                        <label halign={Gtk.Align.START} label="Unpin from Dock" />
-                    </box>
-                </button>
+    const items: ContextMenuItem[] = [
+        {
+            label: name,
+            // not the default .dock-app-icon class: that one carries the
+            // dock's hover lift and its icon-size drop shadow, and the menu
+            // lives inside the very button that triggers them
+            icon: <AppIconImage entry={entry} pixelSize={20} cssClass="context-menu-icon" /> as Gtk.Widget,
+            onClick: () => application.launch([], null),
+        },
+        ...(actions.length ? [{ separator: true } as ContextMenuItem, ...actions] : []),
+        { separator: true },
+        {
+            label: "Unpin from Dock",
+            icon: "unpin-symbolic",
+            visible: pinned.as(p => p === true),
+            sensitive: !isNixManaged,
+            tooltip: isNixManaged ? NIX_PIN_HINT : undefined,
+            onClick: () => onPinChange(false),
+        },
+        {
+            label: "Pin to Dock",
+            icon: "pin-symbolic",
+            visible: pinned.as(p => p === false),
+            sensitive: !isNixManaged,
+            tooltip: isNixManaged ? NIX_PIN_HINT : undefined,
+            onClick: () => onPinChange(true),
+        },
+        { separator: true, visible: hasWindows },
+        {
+            // it always closed every window of the app; only the label lied
+            label: clientsBinding.as(clients =>
+                clients.length > 1 ? "Close All Windows" : "Close Window"),
+            icon: "window-close-symbolic",
+            visible: hasWindows,
+            onClick: () => {
+                for (const client of clientsBinding()) {
+                    closeWindow(clientSelector(client))
+                }
+            },
+        },
+    ]
 
-                <button
-                    visible={pinned.as(p => p === false && !isNixManaged)}
-                    onclicked={() => {
-                        popover.popdown()
-                        onPinChange(true)
-                    }}
-                >
-                    <box>
-                        <DockContextIcon icon="pin-symbolic" />
-                        <label halign={Gtk.Align.START} label="Pin to Dock" />
-                    </box>
-                </button>
-
-                <button
-                    onclicked={() => {
-                        popover.popdown()
-                        for (const client of clientsBinding()) {
-                            closeWindow(clientSelector(client))
-                        }
-                    }}
-                    visible={clientsBinding.as(clients => clients.length > 0)}
-                >
-                    <box>
-                        <DockContextIcon icon="window-close-symbolic" />
-                        <label halign={Gtk.Align.START} label="Close Window" />
-                    </box>
-                </button>
-            </box>
-        </popover>
-    )
+    return ContextMenu({
+        items,
+        class: "app-context-menu",
+        iconSize: 20,
+        onVisible: setMenuOpen,
+    })
 }

@@ -5,34 +5,37 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, For, Accessor, onCleanup } from "ags"
 import GLib from "gi://GLib"
 import Pango from "gi://Pango"
-import Apps from "gi://AstalApps"
 import { conf } from "../config"
-import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
-import { mapVersion } from "../desktopEntries"
+import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, type BindOp } from "../../hypr"
 import { shortcut, combo, type Shortcut } from "../../shortcuts"
+import { search, suggestedApps, GROUP_LABEL, type Result } from "./providers"
+import { evaluate, formatNumber } from "./calc"
 
-// Spotlight-style launcher: a centered glass search panel on Super+Space.
-// Type to fuzzy-search applications, arrows/Tab to select, Enter to launch,
-// Escape or a click on the backdrop to dismiss.
+// Spotlight: a floating search panel on a tap of Super. Type to find an app, a
+// window you already have open, a setting, or the answer to a sum; arrows or
+// Tab to move; Enter to do the thing the row says it will do.
+//
+// The desktop behind it is left alone. macOS doesn't blur it either, and the
+// blur that used to be here was a compositor-wide setting the shell moved on
+// every open and put back on every close — which is what made closing stutter.
+// The panel's own glass comes from its layer rule, which only touches pixels
+// the panel actually paints.
 
-const apps = new Apps.Apps()
-
-// desktopEntries already watches the application dirs — piggyback on it to
-// keep the search index fresh
-mapVersion.subscribe(() => apps.reload())
-
-const MAX_RESULTS = 7
+const MAX_RESULTS = 8
+const SUGGESTIONS = 5
 
 export const [isVisible, setVisibility] = createState(false)
 const [query, setQuery] = createState("")
 const [selectedIdx, setSelectedIdx] = createState(0)
 
-const results = createComputed(get => {
+const results: Accessor<Result[]> = createComputed(get => {
     const text = get(query).trim()
-    if (!text) return [] as Apps.Application[]
-    return apps.fuzzy_query(text).slice(0, MAX_RESULTS)
+    if (!text) return suggestedApps(SUGGESTIONS)
+    const value = evaluate(text)
+    const answer = value === null ? null : { name: formatNumber(value), detail: text }
+    return search(text, answer, MAX_RESULTS)
 })
 
 // ─── Launcher keybind (shortcuts.launcher, default: tap Super) ─────────────────
@@ -105,8 +108,16 @@ export function toggleLauncher(cmd: string) {
 }
 
 let entryRef: Gtk.Entry | null = null
+// the compositor's own layer fade, from animations.nix — the query is only
+// cleared once it has run, so the list does not visibly empty on the way out
+const FADE_MS = 200
+let clearTimer = 0
 
 function showLauncher() {
+    if (clearTimer) {
+        GLib.source_remove(clearTimer)
+        clearTimer = 0
+    }
     setSelectedIdx(0)
     setQuery("")
     entryRef?.set_text("")
@@ -119,7 +130,16 @@ function showLauncher() {
 }
 
 function hideLauncher() {
+    if (!isVisible()) return
     setVisibility(false)
+    if (clearTimer) GLib.source_remove(clearTimer)
+    clearTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, FADE_MS, () => {
+        clearTimer = 0
+        setSelectedIdx(0)
+        setQuery("")
+        entryRef?.set_text("")
+        return GLib.SOURCE_REMOVE
+    })
 }
 
 function moveSelection(step: number) {
@@ -128,60 +148,89 @@ function moveSelection(step: number) {
     setSelectedIdx(((selectedIdx() + step) % count + count) % count)
 }
 
-function launchSelected() {
+function activate(result: Result) {
+    hideLauncher()
+    try {
+        result.activate()
+    } catch (e) {
+        log.error(`activating "${result.name}" failed:`, e)
+    }
+}
+
+function activateSelected() {
     const list = results()
     const target = list[Math.min(selectedIdx(), list.length - 1)]
-    if (!target) return
-    hideLauncher()
-    target.launch()
+    if (target) activate(target)
 }
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
-function ResultRow({ application, index }: {
-    application: Apps.Application
-    index: Accessor<number>
-}) {
-    const rowClass = createComputed(get =>
-        get(selectedIdx) === get(index) ? "launcher-row selected" : "launcher-row")
-    const description = application.get_description()
+
+/** A row's section heading, on the first row of each run of one group. */
+type Row = { result: Result, header: string | null }
+
+const rows: Accessor<Row[]> = createComputed(get =>
+    get(results).map((result, index, all) => ({
+        result,
+        header: index === 0 || all[index - 1].group !== result.group
+            ? GROUP_LABEL[result.group]
+            : null,
+    })))
+
+function ResultRow({ row, index }: { row: Row, index: Accessor<number> }) {
+    const selected = createComputed(get => get(selectedIdx) === get(index))
+    const { result } = row
 
     return (
-        <box
-            class={rowClass}
-            spacing={12}
-            $={(self) => {
-                const click = new Gtk.GestureClick()
-                click.connect("released", () => {
-                    hideLauncher()
-                    application.launch()
-                })
-                self.add_controller(click)
-            }}
-        >
-            <Gtk.Image
-                iconName={application.get_icon_name() || "application-x-executable"}
-                pixelSize={30}
-                class="launcher-row-icon"
-            />
-            <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand>
-                <label
-                    class="launcher-row-name"
-                    label={application.get_name()}
-                    ellipsize={Pango.EllipsizeMode.END}
-                    maxWidthChars={1}
-                    hexpand
-                    xalign={0}
+        <box orientation={Gtk.Orientation.VERTICAL}>
+            {row.header && (
+                <label class="launcher-group" label={row.header} xalign={0} />
+            )}
+            <box
+                class={selected.as(on => on ? "launcher-row selected" : "launcher-row")}
+                spacing={12}
+                $={(self) => {
+                    const click = new Gtk.GestureClick()
+                    click.connect("released", () => activate(result))
+                    self.add_controller(click)
+                    const motion = new Gtk.EventControllerMotion()
+                    // the pointer takes the selection, so clicking and Enter
+                    // never disagree about which row is the live one
+                    motion.connect("enter", () => setSelectedIdx(index()))
+                    self.add_controller(motion)
+                }}
+            >
+                <Gtk.Image
+                    iconName={result.iconName}
+                    gicon={result.gicon}
+                    pixelSize={result.group === "apps" || result.group === "windows" ? 30 : 22}
+                    class={result.group === "apps" || result.group === "windows"
+                        ? "launcher-row-icon" : "launcher-row-icon symbolic"}
                 />
-                {description && (
+                <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand>
                     <label
-                        class="launcher-row-desc"
-                        label={description}
+                        class="launcher-row-name"
+                        label={result.name}
                         ellipsize={Pango.EllipsizeMode.END}
                         maxWidthChars={1}
                         hexpand
                         xalign={0}
                     />
-                )}
+                    {result.detail && (
+                        <label
+                            class="launcher-row-desc"
+                            label={result.detail}
+                            ellipsize={Pango.EllipsizeMode.END}
+                            maxWidthChars={1}
+                            hexpand
+                            xalign={0}
+                        />
+                    )}
+                </box>
+                {/* what Enter does, on the row it would do it to */}
+                <box class="launcher-verb" valign={Gtk.Align.CENTER} spacing={5} visible={selected}>
+                    <label class="launcher-verb-label" label={result.verb} />
+                    <label class="launcher-verb-key" label="↵" />
+                </box>
             </box>
         </box>
     )
@@ -191,12 +240,12 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // spotlight sits in the upper part of the screen, top edge fixed so the
     // panel only ever grows downwards while results appear
     const marginTop = createComputed(get =>
-        Math.round((get(popupGdkMonitor) ?? gdkmonitor).get_geometry().height * 0.22))
+        Math.round((get(popupGdkMonitor) ?? gdkmonitor).get_geometry().height * 0.2))
     let panelRef: Gtk.Box
 
     return (
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.scrim}
             css={conf.as((conf: any) => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-launcher"
@@ -251,13 +300,13 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     halign={Gtk.Align.CENTER}
                     valign={Gtk.Align.START}
                     marginTop={marginTop}
-                    widthRequest={620}
+                    widthRequest={660}
                     $={(self) => { panelRef = self }}
                 >
-                    <box class="launcher-search-row" spacing={10}>
+                    <box class="launcher-search-row" spacing={12}>
                         <Gtk.Image
                             iconName="system-search-symbolic"
-                            pixelSize={20}
+                            pixelSize={22}
                             class="launcher-search-icon"
                         />
                         <entry
@@ -268,18 +317,18 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                                 setSelectedIdx(0)
                                 setQuery(self.text)
                             }}
-                            onActivate={() => launchSelected()}
+                            onActivate={() => activateSelected()}
                             $={(self) => { entryRef = self }}
                         />
                     </box>
                     <box
                         class="launcher-results"
                         orientation={Gtk.Orientation.VERTICAL}
-                        visible={results.as(r => r.length > 0)}
+                        visible={rows.as(r => r.length > 0)}
                     >
-                        <For each={results}>
-                            {(application: Apps.Application, index: Accessor<number>) => (
-                                <ResultRow application={application} index={index} />
+                        <For each={rows}>
+                            {(row: Row, index: Accessor<number>) => (
+                                <ResultRow row={row} index={index} />
                             )}
                         </For>
                     </box>

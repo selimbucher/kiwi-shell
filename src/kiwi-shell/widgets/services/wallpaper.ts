@@ -95,6 +95,26 @@ export function pictureFolder(): string {
     return GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES) ?? `${HOME}/Pictures`
 }
 
+// lives beside setWallpaper because more than one surface offers it now (the
+// theme tab and the desktop's right-click menu) and the accepted extensions
+// have to stay one list
+export function promptWallpaper() {
+    execAsync([
+        "zenity", "--file-selection",
+        "--title=Choose a Wallpaper",
+        `--filename=${pictureFolder()}/`,
+        "--file-filter=Image files | *.jpg *.jpeg *.png *.gif *.pnm *.tga *.tiff *.tif *.webp *.bmp *.farbfeld *.ff *.svg",
+        "--file-filter=All files | *",
+    ])
+        .then((path) => {
+            const cleanPath = path.trim()
+            if (cleanPath) setWallpaper(cleanPath)
+        })
+        .catch(() => {
+            log.info("Wallpaper selection cancelled or failed.")
+        })
+}
+
 // the included wallpapers, and the current one first when it's your own
 export function listWallpapers(): string[] {
     const folder = INCLUDED_WALLPAPERS

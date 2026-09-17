@@ -6,7 +6,8 @@ import GLib from "gi://GLib"
 import { conf } from "../config"
 import { playSound } from "../sound"
 import { HOME, JUMP_ANIMATION_CLASS_TIMEOUT } from "./dock-state"
-import { openUri, openPath, emptyTrash, DockContextIcon } from "./dock-utils"
+import { openUri, openPath, emptyTrash } from "./dock-utils"
+import { ContextMenu } from "../ContextMenu"
 
 export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void }) {
     const commonDirs = [
@@ -19,33 +20,24 @@ export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) =>
         { name: "Public",    path: `${HOME}/Public`,    icon: "folder-publicshare" },
     ].filter(d => GLib.file_test(d.path, GLib.FileTest.IS_DIR))
 
-    let popover: Gtk.Popover
     const [jumping, setJumping] = createState(false)
 
-    const menu = (
-        <popover
-            autohide={true}
-            hasArrow={false}
-            hexpand={false}
-            vexpand={false}
-            class="app-context-menu"
-            $={(self) => {
-                popover = self
-                self.connect("notify::visible", () => setMenuOpen(self.visible))
-            }}
-        >
-            <box orientation={Gtk.Orientation.VERTICAL} spacing={3}>
-                {commonDirs.map(dir => (
-                    <button onclicked={() => { popover.popdown(); openPath(dir.path) }}>
-                        <box>
-                            <DockContextIcon icon={dir.icon} />
-                            <label halign={Gtk.Align.START} label={dir.name} />
-                        </box>
-                    </button>
-                ))}
-            </box>
-        </popover>
-    )
+    const menu = ContextMenu({
+        class: "app-context-menu",
+        iconSize: 20,
+        onVisible: setMenuOpen,
+        items: [
+            // what the left click does, spelled out — the rest of the menu is
+            // shortcuts past home, so home itself has to be one of them
+            { label: "Home", icon: "user-home", onClick: () => openPath(HOME) },
+            { separator: true },
+            ...commonDirs.map(dir => ({
+                label: dir.name,
+                icon: dir.icon,
+                onClick: () => openPath(dir.path),
+            })),
+        ],
+    })
 
     return (
         <box
@@ -62,7 +54,7 @@ export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) =>
                 $={(self) => {
                     const gesture = new Gtk.GestureClick()
                     gesture.set_button(3)
-                    gesture.connect("released", () => popover.popup())
+                    gesture.connect("released", () => menu.popup())
                     self.add_controller(gesture)
                 }}
             >
@@ -100,43 +92,30 @@ export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void
     _trashMonitor = trashDir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
     _trashMonitor.connect("changed", () => setTrashEmpty(isTrashEmpty()))
 
-    let popover: Gtk.Popover
-
-    const menu = (
-        <popover
-            autohide={true}
-            hasArrow={false}
-            hexpand={false}
-            vexpand={false}
-            class="app-context-menu"
-            $={(self) => {
-                popover = self
-                self.connect("notify::visible", () => setMenuOpen(self.visible))
-            }}
-        >
-            <box orientation={Gtk.Orientation.VERTICAL} spacing={3}>
-                <button onclicked={() => { popover.popdown(); openUri("trash:///") }}>
-                    <box>
-                        <DockContextIcon icon="user-trash" />
-                        <label halign={Gtk.Align.START} label="Open Trash" />
-                    </box>
-                </button>
-                <button
-                    onclicked={() => {
-                        popover.popdown()
-                        if (!trashEmpty()) playSound("trash.wav")
-                        emptyTrash()
-                        setTrashEmpty(true)
-                    }}
-                >
-                    <box>
-                        <DockContextIcon icon="edit-clear-symbolic" />
-                        <label halign={Gtk.Align.START} label="Empty Trash" />
-                    </box>
-                </button>
-            </box>
-        </popover>
-    )
+    const menu = ContextMenu({
+        class: "app-context-menu",
+        iconSize: 20,
+        onVisible: setMenuOpen,
+        items: [
+            {
+                label: "Open Trash",
+                icon: "user-trash",
+                onClick: () => openUri("trash:///"),
+            },
+            {
+                label: "Empty Trash",
+                icon: "edit-clear-symbolic",
+                // the monitor already tracks this; an always-live item on an
+                // empty trash is the only one here that can do nothing
+                sensitive: trashEmpty.as(e => !e),
+                onClick: () => {
+                    playSound("trash.wav")
+                    emptyTrash()
+                    setTrashEmpty(true)
+                },
+            },
+        ],
+    })
 
     return (
         <box
@@ -153,7 +132,7 @@ export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void
                 $={(self) => {
                     const gesture = new Gtk.GestureClick()
                     gesture.set_button(3)
-                    gesture.connect("released", () => popover.popup())
+                    gesture.connect("released", () => menu.popup())
                     self.add_controller(gesture)
 
                     const dropTarget = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE | Gdk.DragAction.COPY)

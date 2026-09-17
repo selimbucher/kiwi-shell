@@ -143,12 +143,25 @@ open-next|previous|confirm|close` the same way as the app switcher.
 
 ### App Launcher (Super)
 
-Tapping Super opens a Spotlight-style launcher: type to fuzzy-search your
-applications, Up/Down or Tab to select, Enter to launch, Escape (or a click
-outside the panel) to dismiss. The tap bind only fires when nothing else
-used the Super hold — Super+Tab, Super+drag and friends stay untouched. It
-is registered automatically unless your config already binds plain
-`SUPER_L`; custom keys can call `kiwictl launcher open|close|toggle`.
+Tapping Super opens a Spotlight-style launcher. Up/Down or Tab to select,
+Enter to run the action named on the selected row, Escape (or a click outside
+the panel) to dismiss. It searches, in this order:
+
+- **Applications** — fuzzy, by name, keywords and executable.
+- **Open Windows** — by window title or app; Enter focuses the window.
+- **Actions** — Lock Screen, Sleep, Log Out, Restart, Shut Down, Light
+  Appearance, Dark Appearance. Matched from the start of a word only, from
+  two characters up.
+- **Result** — `1920/2 + 40*3` and the like, with `+ - * / % ^`, parentheses,
+  `sqrt ln log log2 sin cos tan abs round floor ceil exp` and `pi`/`e`. Enter
+  copies the value.
+- **Search** — the last row always offers the query to DuckDuckGo.
+
+With an empty box it lists your most-launched applications. The tap bind only
+fires when nothing else used the Super hold — Super+Tab, Super+drag and
+friends stay untouched. It is registered automatically unless your config
+already binds plain `SUPER_L`; custom keys can call `kiwictl launcher
+open|close|toggle`.
 
 ### Shortcuts
 

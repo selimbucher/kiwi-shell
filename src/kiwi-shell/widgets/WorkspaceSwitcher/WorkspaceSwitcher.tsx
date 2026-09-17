@@ -7,7 +7,7 @@ import Hyprland from "gi://AstalHyprland"
 import { isValidClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
-import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
+import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
@@ -221,7 +221,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
 
     return (
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.panel}
             css={conf(conf => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-workspace-switcher"

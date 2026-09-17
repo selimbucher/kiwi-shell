@@ -4,6 +4,10 @@
     padding-top: 2px;
 }
 
+.Dock.dock-full {
+    padding-top: 0;
+}
+
 .dock-bar-container {
     animation: dock-activate 400ms ease forwards;
     animation-delay: 60ms;
@@ -27,10 +31,12 @@
 
 .dock-box {
     @include panel;
-    padding: 8px;
-    border-radius: 18px;
-    margin-bottom: 5px;
-    box-shadow: var(--k-highlight), 0 8px 12px rgba(0, 0, 0, 0.3);
+    background-color: var(--k-dock-panel);
+    border-color: var(--k-dock-border);
+    padding: var(--dock-pad-top) var(--dock-pad-x) var(--dock-pad-bottom);
+    border-radius: var(--dock-radius);
+    margin-bottom: var(--dock-bottom);
+    box-shadow: var(--k-highlight), var(--k-dock-shadow);
 }
 
 // windows-taskbar mode: the dock box runs flush across the whole screen
@@ -38,18 +44,27 @@
     .dock-bar {
         padding-left: 0;
         padding-right: 0;
+        // the screen edge frames a taskbar; the pill's outer margin is room
+        // that belongs to the desktop
+        padding-top: 0;
     }
 
     .dock-box {
         border-radius: 0;
         margin-bottom: 0;
         border-width: 1px 0 0 0;
+        // a taskbar is not a pill: the screen edge does the framing, so the
+        // room a pill spends on corners and a gap goes back to the desktop
+        padding-top: var(--taskbar-pad-top);
+        padding-bottom: var(--taskbar-pad-bottom);
     }
 }
 
 .dock-app-icon {
     padding: 0;
-    filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.3));
+    // the shell draws this, not the icon theme — so it has to grow with the
+    // icon, or a 96px icon sits on a shadow built for a 52px one
+    filter: var(--icon-shadow);
 }
 
 .app-launch-button {
@@ -59,10 +74,9 @@
     box-shadow: none;
 
     &:hover {
-        $shift: -6px;
         .dock-app-icon {
-            transform: translateY($shift);
-            filter: drop-shadow(0 6px 5px rgba(0, 0, 0, 0.3));
+            transform: translateY(var(--icon-lift));
+            filter: var(--icon-shadow-lift);
         }
     }
 }
@@ -72,56 +86,32 @@
 }
 
 .client-dots {
-    transform: translateY(4px);
+    transform: translateY(var(--dot-drop));
 }
 
 .active-client-dot {
-    padding: 2.5px;
+    min-width: var(--dot-size);
+    min-height: var(--dot-size);
     border-radius: 100%;
     background-color: var(--k-fg);
     transition: background-color 175ms ease;
+
+    &:not(:first-child) {
+        margin-left: var(--dot-gap);
+    }
 
     &.minimized {
         background-color: var(--k-fg-4);
     }
 }
 
+// The dock's alias of the shared right-click menu (style/_theme.scss). It is
+// what the bluetooth device menu still hand-rolls its popover against, so the
+// class has to carry the whole look, not just the dock's own offset.
 .app-context-menu {
+    @extend .context-menu;
+    // the dock sits on the screen edge: lift the menu off it
     margin-bottom: 10px;
-    contents {
-        @include menu;
-        padding: 6px 4px;
-        margin-right: 0;
-        border-radius: 10px;
-        image {
-            color: var(--k-fg);
-        }
-    }
-
-    button {
-        font-weight: normal;
-        background: none;
-        border: none;
-        box-shadow: none;
-        border-radius: 4px;
-        padding: 2px 4px;
-        padding-right: 8px;
-        color: var(--k-fg-2);
-
-        &:hover {
-            background-color: var(--k-fill);
-            color: var(--k-fg);
-        }
-
-        label {
-            // transform: translateY(1px);
-            margin-left: 2px;
-        }
-    }
-
-    .dock-context-icon {
-        margin: 0 6px;
-    }
 }
 
 .dock-previews {
@@ -184,13 +174,14 @@
     padding-top: 4px;
 }
 
+// macOS keeps a hairline of its own in the gutter, inset well clear of the
+// pill's top and bottom rather than running the full height like a border
 .dock-spacer {
-    border-right: 1px var(--k-divider) solid;
-    margin-right: 6px;
-    padding-right: 6px;
+    min-width: 1px;
+    margin: var(--spacer-pad-y) var(--spacer-pad-x);
+    background-color: var(--k-divider);
+    border-radius: 1px;
     animation: emerge 600ms ease-out;
-    margin-top: 10px;
-    margin-bottom: 10px;
 }
 
 
@@ -200,7 +191,6 @@
 
 .app-launch-button.drag-hover {
     .dock-app-icon {
-        // transform: translateY(-8px);
         filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.8));
     }
 }

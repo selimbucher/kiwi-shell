@@ -41,7 +41,7 @@
     padding: 11px 13px;
     border-radius: 16px;
     @include panel;
-    box-shadow: var(--k-highlight), 0 4px 12px rgba(0, 0, 0, 0.12);
+    box-shadow: var(--k-highlight), var(--k-shadow);
     transition: background-color 140ms ease;
 
     &:hover {
@@ -59,19 +59,24 @@
             0 8px 0 -4px var(--k-stack-1),
             0 15px 0 -8px var(--k-stack-2),
             var(--k-highlight),
-            0 4px 12px rgba(0, 0, 0, 0.12);
+            var(--k-shadow);
     }
 }
 
+// Sized against the rest of the shell rather than against the card: the bar
+// runs at 12px and a dock label at 10px, so a notification setting its title
+// at 13.5px bold was the loudest text on screen for the least important thing
+// on it. macOS keeps the title and the body one step apart in weight and
+// colour, not in size.
 .nc-title {
-    font-size: 13.5px;
-    font-weight: 700;
+    font-size: 12.5px;
+    font-weight: 600;
     color: var(--k-fg);
 }
 
 .nc-message {
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 12px;
+    font-weight: 400;
     color: var(--k-fg-2);
 
     link {
@@ -80,8 +85,8 @@
 }
 
 .nc-time {
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 10.5px;
+    font-weight: 500;
     color: var(--k-fg-3);
 }
 
@@ -149,8 +154,13 @@
 
 // ─── Close button ─────────────────────────────────────────────────────────────
 
-// sits on the card's top-left corner, shown while the pointer is on the card
+// Straddles the card's top-left corner, shown while the pointer is on the card.
+// The offset is measured to the corner's arc, not to the box: against a 16px
+// radius a button centred on the geometric corner hangs off the curve with
+// daylight between the two. r - r/sqrt(2) is how far in the arc actually sits,
+// ~4.7px here, and the card's own 12px/8px margin is the rest of the sum.
 .nc-close {
+    margin: 3px 0 0 7px;
     min-width: 20px;
     min-height: 20px;
     padding: 0;

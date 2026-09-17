@@ -7,6 +7,19 @@ menubutton popover {
 	padding: 0;
 }
 
+// libadwaita gives popover contents a drop shadow of its own, at a higher
+// specificity than our class alone can beat. On a layer the compositor blurs,
+// that shadow comes back as a soft outline around the menu.
+popover.background > contents,
+popover > contents {
+  box-shadow: var(--k-highlight);
+}
+
+popover.background > arrow,
+popover > arrow {
+  box-shadow: none;
+}
+
 menubutton modelbutton {
   padding: 5px;
   border-radius: 6px;

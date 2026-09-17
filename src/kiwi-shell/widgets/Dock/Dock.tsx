@@ -3,14 +3,14 @@ const log = logger("dock")
 import app from "ags/gtk4/app"
 import App from "ags/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { destroyWindow } from "../monitors"
+import { destroyWindow, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, list, unpinnedList, DOCK_HIDE_TIMEOUT, JUMP_ANIMATION_CLASS_TIMEOUT, DOCK_SLIDE_DURATION } from "./dock-state"
+import { hyprland, list, unpinnedList, setDockOverlap, DOCK_HIDE_TIMEOUT, JUMP_ANIMATION_CLASS_TIMEOUT, DOCK_SLIDE_DURATION } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
-import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
+import { themeClasses, LAYER } from "../services/theme"
 import { playSound } from "../sound"
 import Cairo from "gi://cairo"
 import GLib from "gi://GLib"
@@ -110,6 +110,66 @@ export function cascadeDockIcons(scope?: Gtk.Widget) {
     }
 }
 
+// ─── Proportions ──────────────────────────────────────────────────────────────
+// Taken off macOS's dock: a shallow band above the icons, a slightly deeper one
+// below for the running dots, corners rounded about a third of an icon, and no
+// gap between icons beyond the transparent margin the artwork already carries.
+// Every number is a fraction of the icon size, so changing the size in settings
+// moves the whole pill with it instead of leaving the icons rattling around in
+// a box built for 52px.
+const DOCK = {
+    padX: 0.14,
+    padTop: 0.1,
+    padBottom: 0.185,
+    radius: 0.46,     // a third of the pill's height, the way Tahoe rounds it
+    shadowY: 0.045,
+    shadowBlur: 0.1,
+    lift: 0.115,      // how far an icon rises under the pointer
+    liftBlur: 0.1,
+    bottom: 0.1,      // the pill's own gap to the screen edge
+    dot: 0.077,       // running-window dots: diameter, gap, and how far below
+    dotGap: 0.058,    // the icon they hang. The drop centres them in the band
+    dotDrop: 0.096,   // between the artwork and the pill's bottom edge — the
+                      // icon theme's own transparent margin is part of that
+                      // band, which is why the drop is more than half of it.
+    spacerY: 0.21,    // the hairline between groups, inset inside its gutter
+    spacerX: 0.13,
+}
+// Full width is a taskbar, not a pill: no corners, no gap to the screen, and
+// no room spent on either.
+const TASKBAR = { padTop: 0.06, padBottom: 0.19 }
+
+const px = (icon: number, fraction: number, min = 0) =>
+    Math.max(min, Math.round(icon * fraction))
+
+function dockCss(icon: number, margin: number, primary: string) {
+    const shadow = (y: number, blur: number) =>
+        `drop-shadow(0 ${y}px ${blur}px rgba(0, 0, 0, 0.3))`
+    return `
+    --primary: ${primary};
+    --dock-margin: ${margin}px;
+    --jumptime: ${JUMP_ANIMATION_CLASS_TIMEOUT}ms;
+    --icon-size: ${icon}px;
+    --dock-slide-duration: ${DOCK_SLIDE_DURATION}ms;
+    --dock-slide-distance: ${icon + 68}px;
+    --dock-pad-x: ${px(icon, DOCK.padX, 4)}px;
+    --dock-pad-top: ${px(icon, DOCK.padTop, 3)}px;
+    --dock-pad-bottom: ${px(icon, DOCK.padBottom, 7)}px;
+    --dock-radius: ${px(icon, DOCK.radius, 6)}px;
+    --dock-bottom: ${px(icon, DOCK.bottom, 2)}px;
+    --icon-shadow: ${shadow(px(icon, DOCK.shadowY, 1), px(icon, DOCK.shadowBlur, 2))};
+    --icon-lift: -${px(icon, DOCK.lift, 3)}px;
+    --icon-shadow-lift: ${shadow(px(icon, DOCK.lift, 3), px(icon, DOCK.liftBlur, 2))};
+    --dot-size: ${px(icon, DOCK.dot, 3)}px;
+    --dot-gap: ${px(icon, DOCK.dotGap, 2)}px;
+    --dot-drop: ${px(icon, DOCK.dotDrop, 2)}px;
+    --spacer-pad-y: ${px(icon, DOCK.spacerY, 5)}px;
+    --spacer-pad-x: ${px(icon, DOCK.spacerX, 4)}px;
+    --taskbar-pad-top: ${px(icon, TASKBAR.padTop, 2)}px;
+    --taskbar-pad-bottom: ${px(icon, TASKBAR.padBottom, 6)}px;
+    `
+}
+
 // ─── Dock ─────────────────────────────────────────────────────────────────────
 
 // Auto-hide is built so stuck states are structurally impossible:
@@ -135,6 +195,10 @@ const SIDE_SLACK_PX = 24
 
 export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     const [menuOpen, setMenuOpen] = createState(false)
+    // clients announce their arrival and departure but not their geometry, so
+    // the overlap test below is re-run on the reconciler's tick as well
+    const [geometryTick, setGeometryTick] = createState(0)
+    let geometryTicks = 0
     // the dead-man hold: poke() switches it on, only the watchdog switches
     // it off
     const [held, setHeld] = createState(false)
@@ -179,6 +243,25 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         return true // pill bounds unknown — fall back to the full strip
     }
 
+    // Widget-local version of the test below, for pointer events on the dock
+    // window itself. The window spans the whole screen width, and for the
+    // first moments after a reveal its input region does too, so motion
+    // arrives from well beside the pill — treating that as presence is what
+    // made the dock flicker: it held the dock open, the watchdog's stricter
+    // test then dropped it, and the next twitch re-opened it.
+    const pointerOverPill = (x: number, y: number): boolean => {
+        if (!dockBoxRef || !selfRef) return true // bounds unknown: be generous
+        const [ok, bounds] = dockBoxRef.compute_bounds(selfRef)
+        if (!ok || bounds.get_width() <= 0) return true
+        if (y < 0 || y > selfRef.get_height()) return false
+        return x >= bounds.get_x() - SIDE_SLACK_PX
+            && x < bounds.get_x() + bounds.get_width() + SIDE_SLACK_PX
+    }
+
+    const pokeAt = (_c: unknown, x: number, y: number) => {
+        if (pointerOverPill(x, y)) poke()
+    }
+
     const poke = () => {
         if (conf().dock !== "auto-hide") return
         lastEvidence = GLib.get_monotonic_time()
@@ -215,16 +298,25 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         if (get(held) || get(menuOpen)) return true
 
         get(activeWorkspace)
+        get(geometryTick)
 
         const activeId = hyprland.get_monitors()
             .find(m => m.name === gdkmonitor.get_connector())
             ?.activeWorkspace?.id
 
-        const hastiledWindow = get(clients).some(client =>
+        // Only a window that actually reaches the dock's strip counts. The
+        // old test was workspace membership alone, which is why a floating
+        // calculator parked in a corner hid the dock as thoroughly as a
+        // maximised window did.
+        const geo = gdkmonitor.get_geometry()
+        const stripTop = geo.y + geo.height - (selfRef?.get_height() ?? 80)
+        const covered = get(clients).some(client =>
             client.workspace.id === activeId
-        )
+            && client.y + client.height > stripTop
+            && client.x < geo.x + geo.width
+            && client.x + client.width > geo.x)
 
-        return !hastiledWindow
+        return !covered
     })
 
     // The one and only place the input region is written. Idempotent.
@@ -274,17 +366,10 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     return [(
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.dock}
             css={createComputed(get => {
                 const c = get(conf)
-                return `
-                --primary: ${c.primary_color};
-                --dock-margin: ${c.dock_margin}px;
-                --jumptime: ${JUMP_ANIMATION_CLASS_TIMEOUT}ms;
-                --icon-size: ${c.dock_icon_size}px;
-                --dock-slide-duration: ${DOCK_SLIDE_DURATION}ms;
-                --dock-slide-distance: ${c.dock_icon_size + 68}px;
-                `
+                return dockCss(c.dock_icon_size, c.dock_margin, c.primary_color)
             })}
             name="ags-dock"
             class={createComputed(get => {
@@ -304,18 +389,34 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             $={(self) => {
                 selfRef = self
                 onCleanup(() => destroyWindow(self))
+                remeasureOn(self, () => {
+                    const c = conf()
+                    return `${c.dock_icon_size}:${c.dock_margin}:${c.dock_full_width}`
+                }, () => gdkmonitor.get_geometry().width)
 
                 // any pointer or drag activity on the dock is presence
                 // evidence — no leave handling, the watchdog notices absence
                 const motionController = new Gtk.EventControllerMotion()
-                motionController.connect("enter", poke)
-                motionController.connect("motion", poke)
+                motionController.connect("enter", pokeAt)
+                motionController.connect("motion", pokeAt)
                 self.add_controller(motionController)
 
                 const dragMotion = new Gtk.DropControllerMotion()
-                dragMotion.connect("enter", poke)
-                dragMotion.connect("motion", poke)
+                dragMotion.connect("enter", pokeAt)
+                dragMotion.connect("motion", pokeAt)
                 self.add_controller(dragMotion)
+
+                // in auto-hide the dock reserves nothing, so anything else
+                // anchored to the bottom edge lands on top of it unless it
+                // is told how much room the dock is taking
+                const syncOverlap = () => setDockOverlap(
+                    showDock() && conf().dock !== "default"
+                        ? self.get_height()
+                        : 0)
+                showDock.subscribe(syncOverlap)
+                conf.subscribe(syncOverlap)
+                self.connect("map", syncOverlap)
+                onCleanup(() => setDockOverlap(0))
 
                 // immediate region updates on state changes…
                 showDock.subscribe(syncInputRegion)
@@ -327,6 +428,8 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 // bounds), the region self-heals within half a second
                 const reconcileId = GLib.timeout_add(
                     GLib.PRIORITY_DEFAULT, RECONCILE_TICK_MS, () => {
+                        if (conf().dock === "auto-hide")
+                            setGeometryTick(++geometryTicks)
                         syncInputRegion()
                         return GLib.SOURCE_CONTINUE
                     })
@@ -359,7 +462,7 @@ function EdgeSensor({ gdkmonitor, poke }: {
 }) {
     return (
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.plain}
             name="ags-dock-sensor"
             class="edge-sensor-bottom"
             gdkmonitor={gdkmonitor}
@@ -457,10 +560,9 @@ function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
                     <box
                         vexpand={true}
                         class="dock-spacer"
-                        /*visible={createComputed(get =>
+                        visible={createComputed(get =>
                             get(list).length > 0 && get(unpinnedList).length > 0
-                        )}*/
-                       visible={false}
+                        )}
                     />
                     <box>
                         <KeyedList

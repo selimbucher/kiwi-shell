@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { destroyWindow } from "../monitors"
+import { destroyWindow, remeasureOn } from "../monitors"
 import { createPoll } from "ags/time"
 import { createBinding, createComputed, onCleanup } from "ags"
 
@@ -15,7 +15,7 @@ import PowerMenu from "./PowerMenu"
 import Tray, { hasTrayItems } from "./Tray"
 import { conf } from "../config"
 import { Icon, iconTheme, wifiIcon } from "../iconNames"
-import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
+import { themeClasses, LAYER } from "../services/theme"
 
 const battery = Battery.get_default()
 const network = Network.get_default()
@@ -55,7 +55,7 @@ export default function Bar({
 
     return [
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.panel}
             css={windowCss}
             visible={hasTrayItems}
             name="ags-bar-tray"
@@ -65,13 +65,16 @@ export default function Bar({
             anchor={TOP | LEFT}
             application={app}
             layer={Astal.Layer.TOP}
-            $={(self) => onCleanup(() => destroyWindow(self))}
+            $={(self) => {
+                onCleanup(() => destroyWindow(self))
+                remeasureOn(self, () => `${conf().bar_margin}`)
+            }}
         >
             <Tray />
         </window>,
 
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.panel}
             css={windowCss}
             visible
             name="ags-bar-workspaces"
@@ -81,13 +84,16 @@ export default function Bar({
             anchor={TOP}
             application={app}
             layer={Astal.Layer.TOP}
-            $={(self) => onCleanup(() => destroyWindow(self))}
+            $={(self) => {
+                onCleanup(() => destroyWindow(self))
+                remeasureOn(self, () => `${conf().bar_margin}`)
+            }}
         >
             <Workspaces />
         </window>,
 
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.panel}
             css={windowCss}
             visible
             name="ags-bar-menu"
@@ -115,6 +121,7 @@ export default function Bar({
                 })
                 self.add_controller(click)
                 onCleanup(() => destroyWindow(self))
+                remeasureOn(self, () => `${conf().bar_margin}`)
             }}
         >
             <MenuButtons

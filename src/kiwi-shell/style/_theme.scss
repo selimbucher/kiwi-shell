@@ -12,9 +12,19 @@
 //   fg .. fg-4     text: primary, secondary, tertiary, faint
 //   fill ..        controls on a panel: rest, hover, active, subtle hover
 //   divider        separators
-//   tile, -on, -hover  workspace dots: empty, with windows, hovered. Solid:
+//   tab            an unselected tab in the system menu. On dark it is the
+//                  menu's own text colour; on light it goes darker than that,
+//                  so the selected tab is the only lit thing in the row.
+//   quiet, -strong, -hover  a neutral mark whose engaged state is the accent
+//                  colour: workspace dots, menu tabs. Kept light on purpose —
+//                  the accent is a light lilac, so a dark grey beside it reads
+//                  as a hole rather than as "off". Solid, not an alpha fill:
 //                  over a translucent panel an alpha fill takes the
-//                  wallpaper's colour and the dots go muddy.
+//                  wallpaper's colour and the mark goes muddy.
+//   shadow         the drop shadow of a panel that floats over the wallpaper.
+//                  Its alpha is capped under the blur threshold in the glass
+//                  styles — see the ignore_alpha note in services/theme.ts.
+//   dock-panel, -border, -shadow  the dock's, normally the panel's own
 //   trough         slider and switch tracks
 //   well           placeholder behind images and previews
 //   preview-bar    title bars of window previews
@@ -36,9 +46,10 @@
     --k-fill-active: rgba(255, 255, 255, 0.22);
     --k-fill-subtle: rgba(255, 255, 255, 0.07);
     --k-divider: rgba(255, 255, 255, 0.1);
-    --k-tile: #5f5f5f;
-    --k-tile-on: #cacaca;
-    --k-tile-hover: #ffffff;
+    --k-tab: rgba(255, 255, 255, 0.87);
+    --k-quiet: #83838c;
+    --k-quiet-strong: #c8c8ce;
+    --k-quiet-hover: #ffffff;
     --k-trough: rgba(255, 255, 255, 0.2);
     --k-well: rgba(255, 255, 255, 0.05);
     --k-text-shadow: none;
@@ -56,9 +67,10 @@
     --k-fill-active: rgba(0, 0, 0, 0.15);
     --k-fill-subtle: rgba(0, 0, 0, 0.04);
     --k-divider: rgba(0, 0, 0, 0.08);
-    --k-tile: #c3c3c9;
-    --k-tile-on: #6e6e76;
-    --k-tile-hover: #3a3a40;
+    --k-tab: rgba(0, 0, 0, 0.92);
+    --k-quiet: #cdcdd4;
+    --k-quiet-strong: #a7a7b0;
+    --k-quiet-hover: #85858e;
     --k-trough: rgba(0, 0, 0, 0.12);
     --k-well: rgba(0, 0, 0, 0.04);
     --k-text-shadow: none;
@@ -69,6 +81,7 @@
 
 @mixin granite-dark {
     @include dark-text;
+    --k-shadow: 0 10px 26px rgba(0, 0, 0, 0.34);
     --k-panel: rgba(0, 0, 0, 0.9);
     --k-menu: rgba(0, 0, 0, 0.93);
     --k-panel-hover: rgba(22, 22, 24, 0.92);
@@ -83,6 +96,7 @@
 
 @mixin granite-light {
     @include light-text;
+    --k-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
     --k-panel: rgba(250, 250, 251, 0.94);
     --k-menu: rgba(250, 250, 251, 0.97);
     --k-panel-hover: rgba(255, 255, 255, 0.97);
@@ -99,9 +113,10 @@
 
 @mixin acrylic-dark {
     @include dark-text;
-    --k-panel: rgba(28, 28, 30, 0.84);
-    --k-menu: rgba(28, 28, 30, 0.9);
-    --k-panel-hover: rgba(40, 40, 43, 0.86);
+    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
+    --k-panel: rgba(13, 13, 18, 0.80);
+    --k-menu: rgba(13, 13, 18, 0.89);
+    --k-panel-hover: rgba(24, 24, 31, 0.84);
     --k-sheen: none;
     --k-border: rgba(255, 255, 255, 0.08);
     --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
@@ -113,12 +128,13 @@
 
 @mixin acrylic-light {
     @include light-text;
+    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
     --k-panel: rgba(255, 255, 255, 0.8);
     --k-menu: rgba(255, 255, 255, 0.86);
     --k-panel-hover: rgba(255, 255, 255, 0.88);
     --k-sheen: none;
-    --k-border: rgba(255, 255, 255, 0.95);
-    --k-highlight: inset 0 1px 0 #ffffff, 0 0 0 1px rgba(0, 0, 0, 0.06);
+    --k-border: rgba(255, 255, 255, 0.5);
+    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.03);
     --k-preview-bar: rgba(255, 255, 255, 0.85);
     --k-stack-1: rgba(250, 250, 252, 0.8);
     --k-stack-2: rgba(244, 244, 248, 0.7);
@@ -129,41 +145,44 @@
 
 @mixin tinted-dark {
     @include dark-text;
-    --k-panel: rgba(46, 46, 50, 0.58);
-    --k-menu: rgba(46, 46, 50, 0.72);
-    --k-panel-hover: rgba(58, 58, 63, 0.64);
+    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
+    --k-panel: rgba(24, 24, 31, 0.52);
+    --k-menu: rgba(24, 24, 31, 0.68);
+    --k-panel-hover: rgba(38, 38, 47, 0.58);
     --k-sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 50%);
     --k-border: rgba(255, 255, 255, 0.08);
     --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
     --k-preview-bar: rgba(0, 0, 0, 0.5);
-    --k-stack-1: rgba(70, 70, 76, 0.5);
-    --k-stack-2: rgba(70, 70, 76, 0.3);
+    --k-stack-1: rgba(40, 40, 50, 0.5);
+    --k-stack-2: rgba(40, 40, 50, 0.3);
     --k-close: rgba(62, 62, 66, 0.96);
     --k-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-    --k-tile: #6f6f76;
-    --k-tile-on: #d2d2d8;
+    --k-quiet: #90909a;
+    --k-quiet-strong: #d2d2d8;
 }
 
 @mixin tinted-light {
     @include light-text;
+    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
     --k-panel: rgba(246, 246, 248, 0.62);
     --k-menu: rgba(246, 246, 248, 0.78);
     --k-panel-hover: rgba(250, 250, 252, 0.74);
     --k-sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 60%);
-    --k-border: rgba(255, 255, 255, 0.35);
-    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.04);
+    --k-border: rgba(255, 255, 255, 0.2);
+    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.025);
     --k-preview-bar: rgba(255, 255, 255, 0.7);
     --k-stack-1: rgba(236, 236, 240, 0.55);
     --k-stack-2: rgba(236, 236, 240, 0.32);
     --k-close: rgba(250, 250, 252, 0.96);
-    --k-tile: #bdbdc4;
-    --k-tile-on: #6a6a72;
+    --k-quiet: #c6c6ce;
+    --k-quiet-strong: #9d9da7;
 }
 
 // ─── Clear Glass: the same in light and dark ──────────────────────────────────
 
 @mixin clear {
     @include dark-text;
+    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
     --k-panel: rgba(0, 0, 0, 0.12);
     --k-menu: rgba(0, 0, 0, 0.24);
     --k-panel-hover: rgba(0, 0, 0, 0.18);
@@ -179,11 +198,16 @@
     --k-fill-active: rgba(255, 255, 255, 0.3);
     --k-fill-subtle: rgba(255, 255, 255, 0.1);
     --k-text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
-    --k-tile: #8a8a92;
-    --k-tile-on: #e6e6ec;
+    --k-quiet: #a2a2ab;
+    --k-quiet-strong: #e6e6ec;
 }
 
 window {
+    // the dock uses the panel's own pane; the override below is the exception
+    --k-dock-panel: var(--k-panel);
+    --k-dock-border: var(--k-border);
+    --k-dock-shadow: var(--k-shadow);
+
     @include granite-dark;
 
     &.theme-granite.appearance-light { @include granite-light; }
@@ -192,6 +216,17 @@ window {
     &.theme-tinted.appearance-dark { @include tinted-dark; }
     &.theme-tinted.appearance-light { @include tinted-light; }
     &.theme-clear { @include clear; }
+}
+
+// Granite is a solid black slab. Everywhere else it sits against a window, but
+// the dock has wallpaper on three sides, where black reads as a hole cut in
+// the screen — so the dock alone takes Acrylic's pane. It is the only surface
+// Granite blurs (services/theme.ts).
+window.theme-granite.appearance-dark {
+    --k-dock-panel: rgba(16, 16, 22, 0.74);
+    --k-dock-border: rgba(255, 255, 255, 0.08);
+    // blurred, so its shadow has to stay under the blur threshold
+    --k-dock-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
 }
 
 // a panel: tokens only, per component radius and padding stay with it
@@ -209,6 +244,53 @@ window {
     border: 1px solid var(--k-border);
     box-shadow: var(--k-highlight);
     color: var(--k-fg-2);
+}
+
+// Every right-click menu in the shell (widgets/ContextMenu.tsx). The dock's
+// .app-context-menu and the desktop's .desktop-menu are aliases of this — as
+// separate copies they had already drifted apart on padding alone.
+.context-menu {
+    contents {
+        @include menu;
+        padding: 6px 4px;
+        border-radius: 10px;
+
+        image {
+            color: var(--k-fg);
+        }
+    }
+
+    button {
+        font-weight: normal;
+        background: none;
+        border: none;
+        box-shadow: none;
+        border-radius: 4px;
+        padding: 2px 8px;
+        color: var(--k-fg-2);
+
+        &:hover {
+            background-color: var(--k-fill);
+            color: var(--k-fg);
+        }
+
+        // an item with nothing to act on (Paste against a text clipboard, Pin
+        // under a Nix-managed dock): GTK's own dimming barely reads through a
+        // translucent menu sitting on a bright wallpaper
+        &:disabled {
+            color: var(--k-fg-4);
+
+            image {
+                color: var(--k-fg-4);
+            }
+        }
+    }
+
+    // inset past the menu's own padding — a full-bleed rule reads as a crack
+    // across the panel rather than as a gap between two groups
+    separator {
+        margin: 2px 6px;
+    }
 }
 
 // thin glass needs the text lifted off busy backgrounds

@@ -1,5 +1,6 @@
 import app from "ags/gtk4/app"
 import { Gdk, Gtk } from "ags/gtk4"
+import GLib from "gi://GLib"
 import { Accessor, createBinding, createComputed } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { conf } from "./config"
@@ -31,4 +32,31 @@ export const popupGdkMonitor: Accessor<Gdk.Monitor | undefined> = createComputed
 export function destroyWindow(win: Gtk.Window) {
     if (!win.get_realized()) Gtk.Widget.prototype.realize.call(win)
     win.destroy()
+}
+
+// A layer surface keeps the largest size it has ever asked for. Shrink what is
+// inside a panel — smaller dock icons, a smaller margin — and the panel shrinks
+// inside a window that does not, leaving it adrift in dead space until the
+// shell restarts. Clearing the default size makes the window measure itself
+// again. `key` names the settings that change the panel's size.
+//
+// `width` matters for a window anchored to both side edges: asking for the
+// natural width there makes it stop spanning the screen and shrink onto its
+// own contents, which takes the dock's hover strip and its whole full-width
+// mode with it. Such a window passes its monitor's width instead.
+export function remeasureOn(
+    win: Gtk.Window,
+    key: () => string,
+    width: () => number = () => -1,
+) {
+    let last = key()
+    conf.subscribe(() => {
+        const next = key()
+        if (next === last) return
+        last = next
+        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            win.set_default_size(width(), -1)
+            return GLib.SOURCE_REMOVE
+        })
+    })
 }

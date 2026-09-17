@@ -7,7 +7,7 @@ import { readFile, writeFileAsync } from "ags/file"
 import { exec, execAsync } from "ags/process"
 
 import { conf } from "./config"
-import { themeClasses, LAYER_NAMESPACE } from "./services/theme"
+import { themeClasses, LAYER } from "./services/theme"
 import Hyprland from "gi://AstalHyprland"
 import { Icon } from "./iconNames"
 import { playSound } from "./sound";
@@ -16,7 +16,7 @@ import { popupGdkMonitor, destroyWindow } from "./monitors"
 export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.panel}
             css={conf.as(conf => 
                 `
                 --primary: ${conf.primary_color};

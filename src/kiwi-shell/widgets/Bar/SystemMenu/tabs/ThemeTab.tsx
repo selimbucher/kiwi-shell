@@ -1,6 +1,5 @@
 import { createState, type Accessor } from "ags"
 import { Gtk, Gdk } from "ags/gtk4"
-import { execAsync } from "ags/process"
 import Gio from "gi://Gio"
 import Pango from "gi://Pango"
 
@@ -13,11 +12,11 @@ import {
     wallpaperPath,
     refreshWallpaper,
     setWallpaper,
-    pictureFolder,
     listWallpapers,
     wallpaperName,
     wallpaperDetail,
     loadThumbnail,
+    promptWallpaper,
 } from "../../../services/wallpaper"
 
 // The system appearance is org.gnome.desktop.interface color-scheme: it is what
@@ -305,21 +304,4 @@ function rgbaToHex(rgba: any): string {
     const g = Math.round(rgba.green * 255).toString(16).padStart(2, '0')
     const b = Math.round(rgba.blue * 255).toString(16).padStart(2, '0')
     return `${r}${g}${b}`
-}
-
-function promptWallpaper() {
-    execAsync([
-        "zenity", "--file-selection",
-        "--title=Choose a Wallpaper",
-        `--filename=${pictureFolder()}/`,
-        "--file-filter=Image files | *.jpg *.jpeg *.png *.gif *.pnm *.tga *.tiff *.tif *.webp *.bmp *.farbfeld *.ff *.svg",
-        "--file-filter=All files | *",
-    ])
-        .then((path) => {
-            const cleanPath = path.trim()
-            if (cleanPath) setWallpaper(cleanPath)
-        })
-        .catch(() => {
-            log.info("Wallpaper selection cancelled or failed.")
-        })
 }

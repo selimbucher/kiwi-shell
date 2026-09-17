@@ -9,6 +9,13 @@ import { mapVersion } from "../desktopEntries"
 import { entryForClient } from "../appIcon"
 import { clientSelector, focusWindow, moveWindowToWorkspace, raiseWindow, toggleSpecialWorkspace } from "../../hypr"
 
+// How much of the bottom edge the dock is covering right now. Zero in
+// "default" mode, where it reserves its space and nothing else can be under
+// it; the dock's own height while it is shown in auto-hide, so that anything
+// else anchored to that edge — the volume and brightness indicator — can step
+// out of the way.
+export const [dockOverlap, setDockOverlap] = createState(0)
+
 export const DOCK_HIDE_TIMEOUT = 200
 export const JUMP_ANIMATION_CLASS_TIMEOUT = 500
 export const DOCK_SLIDE_DURATION = 400

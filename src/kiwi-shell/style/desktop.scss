@@ -61,29 +61,19 @@
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
 }
 
+// inline rename, in the label's place — sized to the icon cell so a long
+// name scrolls inside the entry instead of widening the grid slot
+.desktop-item-rename {
+    font-size: 12px;
+    min-height: 0;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: var(--k-menu);
+    border: 1px solid var(--k-border);
+    color: var(--k-fg);
+}
+
+// the desktop's alias of the shared right-click menu (style/_theme.scss)
 .desktop-menu {
-    contents {
-        @include menu;
-        padding: 6px 4px;
-        border-radius: 10px;
-
-        image {
-            color: var(--k-fg);
-        }
-    }
-
-    button {
-        font-weight: normal;
-        background: none;
-        border: none;
-        box-shadow: none;
-        border-radius: 4px;
-        padding: 2px 8px;
-        color: var(--k-fg-2);
-
-        &:hover {
-            background-color: var(--k-fill);
-            color: var(--k-fg);
-        }
-    }
+    @extend .context-menu;
 }

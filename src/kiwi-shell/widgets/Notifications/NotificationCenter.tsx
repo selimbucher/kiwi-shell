@@ -6,7 +6,7 @@ import { createComputed, createState, onCleanup } from "ags"
 
 import { conf } from "../config"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
+import { themeClasses, LAYER } from "../services/theme"
 import { AnimatedColumn } from "./AnimatedColumn"
 import { CARD_WIDTH, rowFactory } from "./NotificationCard"
 import { centerOpen, closeCenter, layout, openCenter, setBannerHover } from "./store"
@@ -117,7 +117,7 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
 
     return [(
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.cards}
             css={conf.as(conf => `--primary: ${conf.primary_color};`)}
             visible={shown}
             name="ags-notification-center"
@@ -230,7 +230,7 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
         // Transparent fullscreen window below the column that maps only while
         // the center is open: any click it receives is outside the panel.
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.plain}
             name="ags-nc-backdrop"
             class="nc-backdrop"
             gdkmonitor={monitor}

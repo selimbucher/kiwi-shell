@@ -6,7 +6,7 @@ import { createState, createComputed, createEffect, For, createBinding, onCleanu
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
 import { conf } from "../config"
-import { themeClasses, LAYER_NAMESPACE } from "../services/theme"
+import { themeClasses, LAYER } from "../services/theme"
 import { playSound } from "../sound"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
@@ -213,7 +213,7 @@ function closeClientFromSwitcher(client: any) {
 export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
-            namespace={LAYER_NAMESPACE}
+            namespace={LAYER.panel}
             css={conf(conf => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-app-switcher"
