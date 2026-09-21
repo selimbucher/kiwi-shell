@@ -112,13 +112,15 @@ export function cascadeDockIcons(scope?: Gtk.Widget) {
 
 // ─── Proportions ──────────────────────────────────────────────────────────────
 // Taken off macOS's dock: a shallow band above the icons, a slightly deeper one
-// below for the running dots, corners rounded about a third of an icon, and no
-// gap between icons beyond the transparent margin the artwork already carries.
-// Every number is a fraction of the icon size, so changing the size in settings
-// moves the whole pill with it instead of leaving the icons rattling around in
-// a box built for 52px.
+// below for the running dots, and corners rounded about a third of an icon.
+// Icons keep a gap on top of the transparent margin their artwork carries —
+// with the margin alone the row read as crammed. Every number is a fraction
+// of the icon size, so changing the size in settings moves the whole pill
+// with it instead of leaving the icons rattling around in a box built for
+// 52px.
 const DOCK = {
-    padX: 0.14,
+    padX: 0.2,
+    gap: 0.12,        // between two icons, split over both sides of each
     padTop: 0.1,
     padBottom: 0.185,
     radius: 0.46,     // a third of the pill's height, the way Tahoe rounds it
@@ -153,6 +155,7 @@ function dockCss(icon: number, margin: number, primary: string) {
     --dock-slide-duration: ${DOCK_SLIDE_DURATION}ms;
     --dock-slide-distance: ${icon + 68}px;
     --dock-pad-x: ${px(icon, DOCK.padX, 4)}px;
+    --icon-pad-x: ${px(icon, DOCK.gap / 2, 1)}px;
     --dock-pad-top: ${px(icon, DOCK.padTop, 3)}px;
     --dock-pad-bottom: ${px(icon, DOCK.padBottom, 7)}px;
     --dock-radius: ${px(icon, DOCK.radius, 6)}px;
@@ -183,10 +186,20 @@ function dockCss(icon: number, margin: number, primary: string) {
 //     leave pairs, no one-shot hide timers to lose — if the evidence stops,
 //     the dock hides, full stop.
 //   - The INPUT REGION is a pure function of the current state, re-derived
-//     both on every state change and by a slow reconciler tick, so a stale
-//     region can never outlive half a second.
+//     on every state change and once more when the slide or the icons'
+//     animation has settled, which is when the pill's bounds are final.
+//
+// Nothing runs on a timer while the pointer is elsewhere: the dock's only
+// periodic work is the hold's watchdog, and it lives only while held.
 const HOLD_TICK_MS = 100
-const RECONCILE_TICK_MS = 500
+// A window in the strip hides the dock the moment it gets there and brings
+// it back the moment it leaves: the hold's grace period is for the pointer,
+// not for windows. The strip is measured whenever Hyprland says a window
+// moved in one step (opening, closing, floating, fullscreen, another
+// workspace). It never announces a drag or a resize, and the strip is not
+// polled for them: a window dragged over the dock is noticed at the next
+// such event.
+const COVER_EVENTS = new Set(["changefloatingmode", "fullscreen", "movewindowv2"])
 // thin full-width band at the very bottom edge: traveling along the screen
 // edge (e.g. after summoning the dock from a corner) keeps the hold alive
 const EDGE_BAND_PX = 8
@@ -195,10 +208,9 @@ const SIDE_SLACK_PX = 24
 
 export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     const [menuOpen, setMenuOpen] = createState(false)
-    // clients announce their arrival and departure but not their geometry, so
-    // the overlap test below is re-run on the reconciler's tick as well
-    const [geometryTick, setGeometryTick] = createState(0)
-    let geometryTicks = 0
+    // a window reaches into the dock's strip (measureCover). A state skips
+    // equal values, so only a change reaches the dock.
+    const [covered, setCovered] = createState(false)
     // the dead-man hold: poke() switches it on, only the watchdog switches
     // it off
     const [held, setHeld] = createState(false)
@@ -319,30 +331,25 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         if (mode == "disabled") return false
         if (mode != "auto-hide") return true
         if (get(held) || get(menuOpen)) return true
+        return !get(covered)
+    })
 
-        get(activeWorkspace)
-        get(geometryTick)
-        // windows opening and closing, so the answer does not wait for a tick
-        get(clients)
-
+    // Only a window that actually reaches the dock's strip counts. The old
+    // test was workspace membership alone, which is why a floating calculator
+    // parked in a corner hid the dock as thoroughly as a maximised window did.
+    const measureCover = () => {
+        if (conf().dock !== "auto-hide") return
         const activeId = hyprland.get_monitors()
             .find(m => m.name === gdkmonitor.get_connector())
             ?.activeWorkspace?.id
-
-        // Only a window that actually reaches the dock's strip counts. The
-        // old test was workspace membership alone, which is why a floating
-        // calculator parked in a corner hid the dock as thoroughly as a
-        // maximised window did.
         const geo = gdkmonitor.get_geometry()
         const stripTop = geo.y + geo.height - (selfRef?.get_height() ?? 80)
-        const covered = liveWindows().some(win =>
+        setCovered(liveWindows().some(win =>
             win.ws === activeId
             && win.y + win.h > stripTop
             && win.x < geo.x + geo.width
-            && win.x + win.w > geo.x)
-
-        return !covered
-    })
+            && win.x + win.w > geo.x))
+    }
 
     // The one and only place the input region is written. Idempotent.
     // Invariant: shown ⇒ the region covers the pill. It narrows to the
@@ -387,6 +394,18 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             }
         }
         surface.set_input_region(null)
+    }
+
+    // The pill's bounds are final only once the slide or the icons' animation
+    // has run its course, so the region is written once more then.
+    let settleId: number | null = null
+    const syncWhenSettled = (ms: number) => {
+        if (settleId !== null) GLib.source_remove(settleId)
+        settleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+            settleId = null
+            syncInputRegion()
+            return GLib.SOURCE_REMOVE
+        })
     }
 
     return [(
@@ -443,23 +462,47 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 self.connect("map", syncOverlap)
                 onCleanup(() => setDockOverlap(0))
 
-                // immediate region updates on state changes…
-                showDock.subscribe(syncInputRegion)
-                conf.subscribe(syncInputRegion)
-                lengths.subscribe(syncInputRegion)
-                self.connect("map", syncInputRegion)
-                // …and the reconciler: even if every one of those missed
-                // (icon reflow moved the pill, an animation raced the
-                // bounds), the region self-heals within half a second
-                const reconcileId = GLib.timeout_add(
-                    GLib.PRIORITY_DEFAULT, RECONCILE_TICK_MS, () => {
-                        if (conf().dock === "auto-hide")
-                            setGeometryTick(++geometryTicks)
-                        syncInputRegion()
-                        return GLib.SOURCE_CONTINUE
-                    })
+                // the strip, measured whenever Hyprland says a window moved
+                const unsubscribeCover = [
+                    conf.subscribe(measureCover),
+                    clients.subscribe(measureCover),
+                    activeWorkspace.subscribe(measureCover),
+                ]
+                const eventId = hyprland.connect("event", (_h, event: string) => {
+                    if (COVER_EVENTS.has(event)) measureCover()
+                })
+                self.connect("map", measureCover)
                 onCleanup(() => {
-                    GLib.source_remove(reconcileId)
+                    unsubscribeCover.forEach(unsubscribe => unsubscribe())
+                    hyprland.disconnect(eventId)
+                })
+
+                // the region follows every state change at once, and again
+                // when whatever moved the pill has come to rest: the slide
+                // on a reveal (and the dock's own entrance on map), the icons
+                // growing or shrinking when apps come and go
+                const settleSlide = DOCK_SLIDE_DURATION + 200
+                showDock.subscribe(() => {
+                    syncInputRegion()
+                    if (showDock()) syncWhenSettled(settleSlide)
+                })
+                conf.subscribe(() => {
+                    syncInputRegion()
+                    syncWhenSettled(settleSlide)
+                })
+                lengths.subscribe(() => {
+                    syncInputRegion()
+                    syncWhenSettled(ICON_ANIM_MS + 100)
+                })
+                self.connect("map", () => {
+                    syncInputRegion()
+                    syncWhenSettled(settleSlide)
+                })
+                onCleanup(() => {
+                    if (settleId !== null) {
+                        GLib.source_remove(settleId)
+                        settleId = null
+                    }
                     if (watchdogId !== null) {
                         GLib.source_remove(watchdogId)
                         watchdogId = null
