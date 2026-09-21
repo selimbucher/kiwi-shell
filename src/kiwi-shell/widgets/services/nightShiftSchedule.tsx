@@ -5,6 +5,7 @@ import GLib from "gi://GLib";
 import { execAsync } from "ags/process";
 import { nightShift, setNightShift } from "../Bar/SystemMenu/tabs/SystemTab";
 import type { Accessor } from "ags";
+import { minuteNow } from "./minuteClock";
 
 function timeToMinutes(hhmm: string): number {
     const [h, m] = hhmm.split(":").map(Number);
@@ -88,9 +89,6 @@ export default function nightShiftService() {
     subscribeChanged(conf.as(c => c.nightshift_start), tick);
     subscribeChanged(conf.as(c => c.nightshift_end), tick);
 
-    // schedule boundaries are minute-granular; a 30s tick is plenty
-    GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 30, () => {
-        tick();
-        return GLib.SOURCE_CONTINUE;
-    });
+    // schedule boundaries are minute-granular, like the shell's clock
+    minuteNow.subscribe(tick);
 }

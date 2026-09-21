@@ -2,7 +2,6 @@ import { Gtk } from "ags/gtk4"
 import Pango from "gi://Pango"
 import { exec, execAsync } from "ags/process"
 import { createState, createBinding, createComputed, With } from "ags"
-import { createPoll } from "ags/time"
 import { subprocess } from "ags/process"
 
 import AstalWp from "gi://AstalWp"

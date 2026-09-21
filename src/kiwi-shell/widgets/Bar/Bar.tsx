@@ -1,12 +1,10 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, remeasureOn } from "../monitors"
-import { createPoll } from "ags/time"
 import { createBinding, createComputed, onCleanup } from "ags"
 
 import Battery from "gi://AstalBattery"
 import Network from "gi://AstalNetwork"
-import GLib from "gi://GLib"
 
 import SystemMenu, { systemMenuOpen, closeSystemMenu } from "./SystemMenu/SystemMenu"
 import { closeNc } from "../Notifications/NotificationCenter"
@@ -16,6 +14,7 @@ import Tray, { hasTrayItems } from "./Tray"
 import { conf } from "../config"
 import { Icon, iconTheme, wifiIcon } from "../iconNames"
 import { themeClasses, LAYER } from "../services/theme"
+import { minuteNow } from "../services/minuteClock"
 
 const battery = Battery.get_default()
 const network = Network.get_default()
@@ -137,8 +136,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
     onToggleNcReady: (w: Gtk.Widget) => void
 }) {
     // formatted in-process — no `date` spawn every second
-    const time = createPoll("", 1000, () =>
-        GLib.DateTime.new_now_local().format("%a %b %d  %H:%M") ?? "")
+    const time = minuteNow(t => t.format("%a %b %d  %H:%M") ?? "")
 
     return (
         <box class="MenuButtons">

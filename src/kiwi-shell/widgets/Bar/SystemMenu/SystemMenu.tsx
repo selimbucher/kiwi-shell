@@ -1,6 +1,5 @@
 import { Gtk } from "ags/gtk4"
 import { createState, createBinding, createComputed } from "ags"
-import { createPoll } from "ags/time"
 import AstalBattery from "gi://AstalBattery"
 import Network from "gi://AstalNetwork"
 
@@ -13,6 +12,7 @@ import ThemeTab from "./tabs/ThemeTab"
 import PerformanceTab from "./tabs/PerformanceTab"
 
 import { conf } from "../../config"
+import { minuteNow } from "../../services/minuteClock"
 import { Icon } from "../../iconNames"
 import { playSound } from "../../sound"
 import { closeNc } from "../../Notifications/NotificationCenter"
@@ -25,7 +25,6 @@ import {
   stopBluetoothDiscovery,
 } from "./tabs/BluetoothTab"
 import { execAsync } from "ags/process"
-import GLib from "gi://GLib"
 
 const network = Network.get_default()
 const wifi = network.wifi
@@ -267,8 +266,7 @@ function batteryBarColor(percentage, isCharging, primaryColor) {
 
 function Time() {
   // formatted in-process — no `date` spawn every second
-  const time = createPoll("9:41", 1000, () =>
-    GLib.DateTime.new_now_local().format("%H:%M") ?? "")
+  const time = minuteNow(t => t.format("%H:%M") ?? "")
   return (
     <box class="time">
       <label label={time} />

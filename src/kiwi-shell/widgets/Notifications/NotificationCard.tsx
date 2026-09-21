@@ -9,6 +9,7 @@ import Pango from "gi://Pango"
 import { Accessor, createComputed, createRoot, createState, onCleanup } from "ags"
 
 import { logger } from "../../log"
+import { minuteNow } from "../services/minuteClock"
 import { clientSelector, focusWindow } from "../../hypr"
 import { ColumnFactory } from "./AnimatedColumn"
 import { CardRow, GroupRow, Row, appMatchesClient, clearAll, dismissAll, toggleGroup } from "./store"
@@ -23,12 +24,8 @@ const THUMB_SIZE = 42
 // square images up to this size are pictures of a person, not content
 const AVATAR_MAX_SIZE = 256
 
-// clock for the relative timestamps
-const [nowSec, setNowSec] = createState(Math.floor(Date.now() / 1000))
-GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 30, () => {
-    setNowSec(Math.floor(Date.now() / 1000))
-    return GLib.SOURCE_CONTINUE
-})
+// clock for the relative timestamps, which count in minutes
+const nowSec = minuteNow(t => t.to_unix())
 
 function formatRelativeTime(time: number, now: number): string {
     const diff = Math.max(0, now - time)

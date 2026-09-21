@@ -7,16 +7,13 @@ import { isValidClient } from "../Dock/dock-state"
 
 // How long a cached texture is considered fresh.
 // Switcher opens under this threshold → instant display, no capture fired.
+// The focused window and a window whose size changed since its frame are
+// captured anew regardless (captureWindowToTexture).
 const STALE_MS = 60_000
 
 // How long to wait after a new window appears before capturing it.
 // Gives the window time to render its first frame.
 const NEW_WINDOW_CAPTURE_DELAY_MS = 800
-
-// How often to re-capture the focused window in the background.
-// Keeps the active window's preview reasonably up to date without polling
-// every window. Skipped if a capture for this address is already fresh.
-const FOCUSED_POLL_INTERVAL_MS = 6_000
 
 // Backstop in case the C library never emits either signal. C-side times out
 // on its own after 1.5s (wlr-mapping race) or 2s (no frame from the
@@ -35,6 +32,8 @@ const hyprland = Hyprland.get_default()
 interface CacheEntry {
     texture: Gdk.Texture
     capturedAt: number
+    // the window's size when it was captured, "WxH"
+    size: string | null
 }
 
 const cache = new Map<string, CacheEntry>()
@@ -105,7 +104,9 @@ function captureNow(address: string): Promise<Gdk.Texture | null> {
                     } catch (e) {
                         log.error(`buildTexture failed for ${address}: ${e}`)
                     }
-                    if (texture) cache.set(address, { texture, capturedAt: Date.now() })
+                    if (texture) cache.set(address, {
+                        texture, capturedAt: Date.now(), size: sizeKey(address),
+                    })
                     finish(texture)
                 }
             )
@@ -145,60 +146,35 @@ hyprland.connect("notify::focused-client", () => {
     lastFocusedAddress = newAddr
 })
 
-// ─── Proactive capture: periodic poll of the focused window ───────────────────
-// The focus-change capture only fires when you switch away, so the active
-// window's preview can drift. This interval re-captures it every few seconds.
-// Skipped if the cache entry is already fresh (e.g. focus just changed).
-setInterval(() => {
-    if (!lastFocusedAddress) return
-    const entry = cache.get(lastFocusedAddress)
-    if (entry && Date.now() - entry.capturedAt < FOCUSED_POLL_INTERVAL_MS) return
-    captureNow(lastFocusedAddress)
-}, FOCUSED_POLL_INTERVAL_MS)
+// ─── Window sizes ─────────────────────────────────────────────────────────────
+// Asked of the compositor when a preview is laid out, never polled: Hyprland
+// announces no resize, and Astal's client geometry goes stale after one. One
+// answer serves every tile laid out in the same moment.
+const SIZES_FRESH_MS = 250
+let sizes = new Map<string, [number, number]>()
+let sizesAt = 0
 
-// ─── Proactive capture: resize end ────────────────────────────────────────────
-// Hyprland emits no IPC event for window resizes, so sizes are polled over the
-// raw socket (no process spawn, sub-ms round trip). A size that changed and
-// then held still for one tick means the resize is done → recapture. Covers
-// interactive resizes, resizeactive, and tiling reflows alike.
-const RESIZE_POLL_INTERVAL_MS = 600
-
-const lastSizes = new Map<string, string>()
-const settling = new Set<string>()
-
-setInterval(() => {
-    hyprland.message_async("j/clients", (_src: any, res: any) => {
-        let clients: any[]
-        try {
-            clients = JSON.parse(hyprland.message_finish(res))
-        } catch {
-            return
-        }
-        const seen = new Set<string>()
-        for (const c of clients) {
+function clientSizes(): Map<string, [number, number]> {
+    if (Date.now() - sizesAt < SIZES_FRESH_MS) return sizes
+    try {
+        const next = new Map<string, [number, number]>()
+        for (const c of JSON.parse(hyprland.message("j/clients"))) {
             // Astal strips the 0x prefix from addresses; cache keys follow it
             const addr = String(c.address ?? "").replace("0x", "")
-            if (!addr || !c.mapped) continue
-            seen.add(addr)
-            const size = `${c.size?.[0]}x${c.size?.[1]}`
-            const prev = lastSizes.get(addr)
-            lastSizes.set(addr, size)
-            if (prev === undefined) continue
-            if (size !== prev) {
-                settling.add(addr)
-            } else if (settling.has(addr)) {
-                settling.delete(addr)
-                captureNow(addr)
-            }
+            if (addr && c.mapped && c.size?.length === 2) next.set(addr, [c.size[0], c.size[1]])
         }
-        for (const addr of [...lastSizes.keys()]) {
-            if (!seen.has(addr)) {
-                lastSizes.delete(addr)
-                settling.delete(addr)
-            }
-        }
-    })
-}, RESIZE_POLL_INTERVAL_MS)
+        sizes = next
+        sizesAt = Date.now()
+    } catch {
+        // IPC down: keep the last answer
+    }
+    return sizes
+}
+
+const sizeKey = (address: string) => {
+    const size = clientSizes().get(address)
+    return size ? `${size[0]}x${size[1]}` : null
+}
 
 // ─── Proactive capture: on new window ─────────────────────────────────────────
 // Capture newly opened windows after a short delay so they have time to
@@ -240,15 +216,13 @@ export function getCachedTexture(address: string): Gdk.Texture | null {
     return cache.get(address)?.texture ?? null
 }
 
-// Freshest known window size (logical px), from the 600ms resize poll.
-// Preview sizing uses this rather than Astal client geometry (stale after
-// resizes) or capture pixel sizes (wrong for windows hanging off a
-// workspace edge, whose captures come back clipped).
+// The window's size (logical px), asked of the compositor. Preview sizing
+// uses this rather than Astal client geometry (stale after resizes) or
+// capture pixel sizes (wrong for windows hanging off a workspace edge, whose
+// captures come back clipped).
 export function freshClientSize(address: string): [number, number] | null {
-    const s = lastSizes.get(address)
-    if (!s) return null
-    const [w, h] = s.split("x").map(Number)
-    return Number.isFinite(w) && Number.isFinite(h) && h > 0 ? [w, h] : null
+    const size = clientSizes().get(address)
+    return size && size[1] > 0 ? size : null
 }
 
 // Returns the cached texture immediately if fresh enough.
@@ -257,8 +231,13 @@ export function freshClientSize(address: string): [number, number] | null {
 export function captureWindowToTexture(address: string): Promise<Gdk.Texture | null> {
     const entry = cache.get(address)
 
-    if (entry && Date.now() - entry.capturedAt < STALE_MS)
-        return Promise.resolve(entry.texture)
+    // the focused window is the one changing under the user's hands, and a
+    // resized window's frame has the wrong shape
+    const fresh = entry
+        && Date.now() - entry.capturedAt < STALE_MS
+        && address !== hyprland.get_focused_client()?.get_address()
+        && entry.size === sizeKey(address)
+    if (fresh) return Promise.resolve(entry.texture)
 
     return captureNow(address)
 }

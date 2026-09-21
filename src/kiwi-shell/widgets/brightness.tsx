@@ -1,7 +1,6 @@
 import { monitorFile, readFile } from "ags/file"
 import { exec, execAsync } from "ags/process"
 import { createState } from "ags"
-import { createPoll } from "ags/time"
 
 // ─── Screen brightness ────────────────────────────────────────────────────────
 
@@ -39,9 +38,12 @@ const getKbdCurrent = () =>
     kbdAvailable ? Number(readFile(kbdFile).trim()) / kbdMax : 0
 
 // @ts-ignore
-export const kbdBrightness = kbdAvailable
-    ? createPoll(getKbdCurrent(), 200, getKbdCurrent)
-    : (() => 0)
+export const [kbdBrightness, setKbdBrightness] = createState(getKbdCurrent())
+
+// a write to the file raises a change on it, from the shell or anyone else
+if (kbdAvailable) {
+    monitorFile(kbdFile, () => setKbdBrightness(getKbdCurrent()))
+}
 
 export function setKbdBrightnessLevel(percent: number) {
     if (!kbdAvailable) return

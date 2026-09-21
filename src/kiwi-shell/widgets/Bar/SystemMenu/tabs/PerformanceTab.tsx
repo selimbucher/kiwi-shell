@@ -1,7 +1,6 @@
 import { Gtk } from 'ags/gtk4'
 import { exec } from 'ags/process';
 import { createState, With } from 'ags'
-import { createPoll } from 'ags/time'
 
 import { CircularProgress } from '../../../Misc';
 import { Icon } from "../../../iconNames";
