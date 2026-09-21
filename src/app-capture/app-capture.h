@@ -11,8 +11,8 @@ G_DECLARE_FINAL_TYPE(AppCapture, app_capture, APP, CAPTURE, GObject)
  *
  * Returns: (transfer full): a new #AppCapture.
  * Binds hyprland_toplevel_export_manager_v1, zwlr_foreign_toplevel_manager_v1,
- * and hyprland_toplevel_mapping_manager_v1, then does three roundtrips to
- * enumerate all live windows and map their addresses.
+ * hyprland_toplevel_mapping_manager_v1 and zwp_linux_dmabuf_v1, then does
+ * three roundtrips to enumerate all live windows and map their addresses.
  */
 AppCapture *app_capture_new(void);
 
@@ -22,8 +22,8 @@ AppCapture *app_capture_new(void);
  * @width: minimum frame width in pixels, 0 for any
  * @height: minimum frame height in pixels, 0 for any
  *
- * Later frames are downscaled by the largest whole factor that keeps them at
- * least @width x @height. Both 0 (the default) keeps them at full size.
+ * Later frames are scaled down to no less than @width x @height, keeping
+ * their aspect ratio. Both 0 (the default) keeps them at full size.
  */
 void app_capture_set_min_size(AppCapture *self, gint width, gint height);
 
@@ -34,15 +34,16 @@ void app_capture_set_min_size(AppCapture *self, gint width, gint height);
  *   Accepts both "0x564f60266bd0" and "564f60266bd0" (with or without 0x).
  *
  * Captures one frame of the window. Every call eventually emits exactly one of:
- *   - #AppCapture::frame-ready  (GBytes, gint, gint, gint) on success
+ *   - #AppCapture::frame-ready  (GdkTexture) on success
  *   - #AppCapture::frame-failed (gchararray reason) on failure
  *
  * If the wlr handle for @address has not yet been announced/mapped (race
  * between Hyprland IPC and the wlr foreign-toplevel protocol), the request
  * is queued internally for up to ~1.5 s waiting for the mapping to arrive.
  *
- * Frames arrive as premultiplied BGRA (stride = width * 4), downscaled per
- * app_capture_set_min_size().
+ * Hyprland copies the window into a GPU buffer, which is scaled on the GPU;
+ * shared memory, scaled on the CPU, where that isn't possible. Either way the
+ * texture is scaled per app_capture_set_min_size().
  *
  * Failure reasons emitted via frame-failed:
  *   "no_export_manager"  — wayland init never bound the export protocol
@@ -53,7 +54,8 @@ void app_capture_set_min_size(AppCapture *self, gint width, gint height);
  *   "unsupported_format" — the buffer format isn't one we can convert
  *   "shifted"            — Hyprland rendered the window offset (see app-capture.c)
  *   "alloc_failed"       — memfd_create / ftruncate / mmap failed
- *   "internal"           — defensive fallback (should never fire)
+ *   "internal"           — GTK couldn't read the GPU buffer after all, or a
+ *                          defensive fallback (should never fire)
  */
 void app_capture_capture_by_handle(AppCapture *self, const gchar *address);
 

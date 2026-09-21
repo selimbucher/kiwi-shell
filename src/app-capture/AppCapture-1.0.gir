@@ -6,6 +6,7 @@
 
   <include name="GObject" version="2.0"/>
   <include name="GLib" version="2.0"/>
+  <include name="Gdk" version="4.0"/>
 
   <package name="appcapture"/>
   <c:include name="app-capture.h"/>
@@ -30,7 +31,7 @@
         </return-value>
       </constructor>
 
-      <!-- later frames keep at least width x height; 0 leaves a dimension free -->
+      <!-- later frames are scaled down to no less than width x height; 0 leaves a dimension free -->
       <method name="set_min_size" c:identifier="app_capture_set_min_size">
         <parameters>
           <instance-parameter name="self" transfer-ownership="none">
@@ -68,17 +69,8 @@
           <type name="none" c:type="void"/>
         </return-value>
         <parameters>
-          <parameter name="bytes" transfer-ownership="none">
-            <type name="GLib.Bytes" c:type="GBytes*"/>
-          </parameter>
-          <parameter name="width" transfer-ownership="none">
-            <type name="gint" c:type="gint"/>
-          </parameter>
-          <parameter name="height" transfer-ownership="none">
-            <type name="gint" c:type="gint"/>
-          </parameter>
-          <parameter name="stride" transfer-ownership="none">
-            <type name="gint" c:type="gint"/>
+          <parameter name="texture" transfer-ownership="none">
+            <type name="Gdk.Texture" c:type="GdkTexture*"/>
           </parameter>
         </parameters>
       </glib:signal>

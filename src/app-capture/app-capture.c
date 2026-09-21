@@ -2,16 +2,23 @@
 #include "app-capture.h"
 
 #include <wayland-client.h>
+#include <gtk/gtk.h>
 #include <gdk/wayland/gdkwayland.h>
 #include <sys/mman.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+#include <math.h>
+#include <gbm.h>
+#include <xf86drm.h>
+#include <drm_fourcc.h>
 
 #include "hyprland-toplevel-export-v1.h"
 #include "wlr-foreign-toplevel-management-unstable-v1.h"
 #include "hyprland-toplevel-mapping-v1.h"
+#include "linux-dmabuf-v1.h"
 
 /* =========================================================================
  * Signals
@@ -28,6 +35,11 @@ static guint signals[LAST_SIGNAL] = { 0 };
 /* How long capture_by_handle() will wait for an unknown address's wlr handle
  * to arrive before giving up and emitting frame-failed. */
 #define PENDING_CAPTURE_TIMEOUT_MS 1500
+
+/* GPU copies that may fail in a row, each rescued by shared memory, before
+ * GPU buffers are given up: one can fail for a passing reason, like the
+ * window being resized between the offer and the copy. */
+#define GPU_FAILURES_TO_GIVE_UP 3
 
 /* How long a capture may wait for the compositor. Hyprland copies on the
  * window's monitor's next frame, so this only runs out when that monitor
@@ -64,6 +76,12 @@ typedef struct {
  * Object struct
  * ========================================================================= */
 
+/* a DRM format with one of its buffer layouts */
+typedef struct {
+    uint32_t fourcc;
+    uint64_t modifier;
+} DmabufPair;
+
 struct _AppCapture {
     GObject parent_instance;
 
@@ -74,6 +92,8 @@ struct _AppCapture {
     struct hyprland_toplevel_export_manager_v1 *export_manager;
     struct zwlr_foreign_toplevel_manager_v1    *wlr_manager;
     struct hyprland_toplevel_mapping_manager_v1 *mapping_manager;
+    struct zwp_linux_dmabuf_v1                 *dmabuf;
+    struct zwp_linux_dmabuf_feedback_v1        *feedback;
 
     /* Address → wlr_handle table */
     GPtrArray *toplevels;        /* element-type: ToplevelEntry* */
@@ -84,6 +104,23 @@ struct _AppCapture {
     /* Frames are downscaled to no less than this; 0 leaves a dimension free */
     gint min_width;
     gint min_height;
+
+    /* GPU buffers (see "GPU buffers" below). The feedback is read into the
+     * table and tranche fields, then settled into gpu_pairs on done. */
+    const uint8_t *format_table;
+    size_t         format_table_size;
+    GArray        *tranche_pairs;  /* element-type: DmabufPair, tranche being read */
+    gboolean       tranche_scanout;
+    GArray        *feedback_pairs; /* element-type: DmabufPair, feedback being read */
+    GArray        *gpu_pairs;      /* element-type: DmabufPair, what Hyprland renders into */
+    dev_t          main_device;
+    int            drm_fd;
+    struct gbm_device *gbm;
+    GskRenderer   *renderer;
+    /* GPU copies that failed in a row where shared memory then worked */
+    guint          gpu_failures;
+    /* too many of those, or an import Hyprland refused: shared memory only */
+    gboolean       gpu_broken;
 };
 
 /* =========================================================================
@@ -96,6 +133,7 @@ struct _AppCapture {
 typedef struct {
     AppCapture *self;
     struct hyprland_toplevel_export_frame_v1 *frame;
+    struct zwlr_foreign_toplevel_handle_v1   *wlr_handle;
     guint          timeout_id;
     uint32_t       format;
     uint32_t       width;
@@ -104,6 +142,14 @@ typedef struct {
     int            shm_fd;
     unsigned char *pixels;
     size_t         size;
+    /* the GPU buffer, when Hyprland copies into one */
+    uint32_t       dmabuf_format;  /* 0: Hyprland offered none */
+    struct gbm_bo *bo;
+    struct zwp_linux_buffer_params_v1 *params;
+    struct wl_buffer *buffer;
+    gboolean       on_gpu;
+    /* only shared memory for this one: it retries a failed GPU copy */
+    gboolean       shm_only;
 } Frame;
 
 G_DEFINE_TYPE(AppCapture, app_capture, G_TYPE_OBJECT)
@@ -115,7 +161,8 @@ G_DEFINE_TYPE(AppCapture, app_capture, G_TYPE_OBJECT)
 static void     request_mapping(AppCapture *self, ToplevelEntry *entry);
 static void     emit_frame_failed(AppCapture *self, const char *reason);
 static void     do_capture(AppCapture *self,
-                           struct zwlr_foreign_toplevel_handle_v1 *wlr_handle);
+                           struct zwlr_foreign_toplevel_handle_v1 *wlr_handle,
+                           gboolean shm_only);
 static struct zwlr_foreign_toplevel_handle_v1 *find_wlr_handle(AppCapture *self,
                                                                const char *addr);
 static void     flush_pending_for_address(AppCapture *self, const char *address);
@@ -273,13 +320,170 @@ static void request_mapping(AppCapture *self, ToplevelEntry *entry)
 }
 
 /* =========================================================================
+ * GPU buffers
+ *
+ * A copy into shared memory makes Hyprland render the window into a texture
+ * of its own and read that back to the CPU, on its render thread, where it
+ * holds up the compositor (~8 ms for a 1400x850 window); here the frame was
+ * then averaged down pixel by pixel and uploaded to the GPU again. Given a
+ * GPU buffer (a dmabuf), Hyprland renders the window straight into it and
+ * says when the GPU is done: no readback anywhere. GTK takes the buffer as a
+ * texture without a copy, draws it scaled down to the preview size on the
+ * GPU, and the full frame is let go at once, so the cache only ever holds
+ * previews.
+ *
+ * The buffer must be one Hyprland can render into and GTK can read:
+ *   - allocated with GBM on the GPU Hyprland names as its main device in its
+ *     dmabuf feedback,
+ *   - in a format and layout (modifier) from the feedback's renderer tranches
+ *     (the scanout ones are for displays). Hyprland treats any other pair as
+ *     a protocol error, which would end the whole connection,
+ *   - and one GTK reports it can import.
+ * The buffer is handed over with create, not create_immed: a buffer Hyprland
+ * can't import is then a failed event instead of a dead wl_buffer.
+ *
+ * Shared memory stays for everything else: no GPU, no pair in common, a
+ * failed import, and a copy Hyprland couldn't render into. That last one is
+ * retried in shared memory; when that keeps working where the GPU copy
+ * doesn't, GPU buffers are given up (GPU_FAILURES_TO_GIVE_UP).
+ * ========================================================================= */
+
+/* a format table entry as the compositor lays it out */
+typedef struct {
+    uint32_t fourcc;
+    uint32_t pad;
+    uint64_t modifier;
+} FormatTableEntry;
+
+static void feedback_handle_done(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback)
+{
+    (void)feedback;
+    AppCapture *self = APP_CAPTURE(data);
+    g_array_set_size(self->gpu_pairs, 0);
+    g_array_append_vals(self->gpu_pairs, self->feedback_pairs->data, self->feedback_pairs->len);
+    g_array_set_size(self->feedback_pairs, 0);
+}
+
+static void feedback_handle_format_table(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback, int32_t fd, uint32_t size)
+{
+    (void)feedback;
+    AppCapture *self = APP_CAPTURE(data);
+    if (self->format_table)
+        munmap((void *)self->format_table, self->format_table_size);
+    void *table = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    self->format_table      = table == MAP_FAILED ? NULL : table;
+    self->format_table_size = table == MAP_FAILED ? 0 : size;
+}
+
+static void feedback_handle_main_device(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback, struct wl_array *device)
+{
+    (void)feedback;
+    AppCapture *self = APP_CAPTURE(data);
+    if (device->size == sizeof(dev_t))
+        memcpy(&self->main_device, device->data, sizeof(dev_t));
+}
+
+static void feedback_handle_tranche_done(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback)
+{
+    (void)feedback;
+    AppCapture *self = APP_CAPTURE(data);
+    if (!self->tranche_scanout)
+        g_array_append_vals(self->feedback_pairs, self->tranche_pairs->data, self->tranche_pairs->len);
+    g_array_set_size(self->tranche_pairs, 0);
+    self->tranche_scanout = FALSE;
+}
+
+static void feedback_handle_tranche_target_device(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback, struct wl_array *device)
+{ (void)data; (void)feedback; (void)device; }
+
+static void feedback_handle_tranche_formats(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback, struct wl_array *indices)
+{
+    (void)feedback;
+    AppCapture *self = APP_CAPTURE(data);
+    if (!self->format_table)
+        return;
+    size_t entries = self->format_table_size / sizeof(FormatTableEntry);
+    const FormatTableEntry *table = (const FormatTableEntry *)self->format_table;
+    uint16_t *index;
+    wl_array_for_each(index, indices) {
+        if (*index >= entries)
+            continue;
+        DmabufPair pair = { .fourcc = table[*index].fourcc, .modifier = table[*index].modifier };
+        g_array_append_val(self->tranche_pairs, pair);
+    }
+}
+
+static void feedback_handle_tranche_flags(void *data,
+    struct zwp_linux_dmabuf_feedback_v1 *feedback, uint32_t flags)
+{
+    (void)feedback;
+    AppCapture *self = APP_CAPTURE(data);
+    self->tranche_scanout = (flags & ZWP_LINUX_DMABUF_FEEDBACK_V1_TRANCHE_FLAGS_SCANOUT) != 0;
+}
+
+static const struct zwp_linux_dmabuf_feedback_v1_listener feedback_listener = {
+    .done                  = feedback_handle_done,
+    .format_table          = feedback_handle_format_table,
+    .main_device           = feedback_handle_main_device,
+    .tranche_done          = feedback_handle_tranche_done,
+    .tranche_target_device = feedback_handle_tranche_target_device,
+    .tranche_formats       = feedback_handle_tranche_formats,
+    .tranche_flags         = feedback_handle_tranche_flags,
+};
+
+/* Opens Hyprland's GPU for allocating and a renderer for scaling. Without
+ * either, every capture goes through shared memory. */
+static void gpu_init(AppCapture *self)
+{
+    if (!self->dmabuf || self->gpu_pairs->len == 0 || self->main_device == 0)
+        return;
+
+    drmDevice *device = NULL;
+    if (drmGetDeviceFromDevId(self->main_device, 0, &device) != 0) {
+        g_warning("AppCapture: can't find Hyprland's GPU; using shared memory");
+        return;
+    }
+    if (device->available_nodes & (1 << DRM_NODE_RENDER))
+        self->drm_fd = open(device->nodes[DRM_NODE_RENDER], O_RDWR | O_CLOEXEC);
+    drmFreeDevice(&device);
+    if (self->drm_fd < 0) {
+        g_warning("AppCapture: can't open Hyprland's GPU; using shared memory");
+        return;
+    }
+
+    self->gbm = gbm_create_device(self->drm_fd);
+    if (!self->gbm) {
+        g_warning("AppCapture: GBM refused Hyprland's GPU; using shared memory");
+        return;
+    }
+
+    GError *error = NULL;
+    self->renderer = gsk_gl_renderer_new();
+    if (!gsk_renderer_realize_for_display(self->renderer, gdk_display_get_default(), &error)) {
+        g_warning("AppCapture: no GL renderer (%s); using shared memory", error->message);
+        g_error_free(error);
+        g_clear_object(&self->renderer);
+    }
+}
+
+/* Asks Hyprland to copy into a GPU buffer. FALSE when this frame can't have
+ * one; the copy then goes through shared memory. */
+static gboolean frame_copy_to_gpu(Frame *f);
+
+/* =========================================================================
  * Registry listener
  * ========================================================================= */
 
 static void registry_handle_global(void *data, struct wl_registry *registry,
     uint32_t name, const char *interface, uint32_t version)
 {
-    (void)version;
     AppCapture *self = APP_CAPTURE(data);
 
     if (g_strcmp0(interface,
@@ -301,6 +505,12 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
             hyprland_toplevel_mapping_manager_v1_interface.name) == 0) {
         self->mapping_manager = wl_registry_bind(registry, name,
             &hyprland_toplevel_mapping_manager_v1_interface, 1);
+    }
+    /* version 4 brings the feedback: the GPU and the pairs to use */
+    else if (g_strcmp0(interface, zwp_linux_dmabuf_v1_interface.name) == 0 && version >= 4) {
+        self->dmabuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, 4);
+        self->feedback = zwp_linux_dmabuf_v1_get_default_feedback(self->dmabuf);
+        zwp_linux_dmabuf_feedback_v1_add_listener(self->feedback, &feedback_listener, self);
     }
 }
 
@@ -461,10 +671,25 @@ static uint32_t downscale_factor(AppCapture *self, uint32_t width, uint32_t heig
     return MAX(factor, 1);
 }
 
+/* the size a frame is scaled to: at least min_width x min_height, never up */
+static void preview_size(AppCapture *self, uint32_t width, uint32_t height,
+                         uint32_t *out_width, uint32_t *out_height)
+{
+    double scale = 0;
+    if (self->min_width > 0)
+        scale = MAX(scale, (double)self->min_width / width);
+    if (self->min_height > 0)
+        scale = MAX(scale, (double)self->min_height / height);
+    if (scale <= 0 || scale > 1)
+        scale = 1;
+    *out_width  = MAX(1, (uint32_t)ceil(width * scale));
+    *out_height = MAX(1, (uint32_t)ceil(height * scale));
+}
+
 /* =========================================================================
  * Frame listener
  *
- * Event order: buffer → (linux_dmabuf) → buffer_done → [copy()] → flags → ready|failed
+ * Event order: buffer → linux_dmabuf → buffer_done → [copy()] → flags → ready|failed
  *
  * A frame is freed before its signal is emitted: handlers may start the
  * next capture right away.
@@ -478,6 +703,12 @@ static void frame_free(Frame *f, gboolean tell_compositor)
         munmap(f->pixels, f->size);
     if (f->shm_fd >= 0)
         close(f->shm_fd);
+    if (f->params)
+        zwp_linux_buffer_params_v1_destroy(f->params);
+    if (f->buffer)
+        wl_buffer_destroy(f->buffer);
+    if (f->bo)
+        gbm_bo_destroy(f->bo);
     if (tell_compositor)
         hyprland_toplevel_export_frame_v1_destroy(f->frame);
     else
@@ -494,6 +725,12 @@ static void frame_fail(Frame *f, const char *reason)
     AppCapture *self = f->self;
     frame_free(f, TRUE);
     emit_frame_failed(self, reason);
+}
+
+static void emit_texture(AppCapture *self, GdkTexture *texture)
+{
+    g_signal_emit(self, signals[SIGNAL_FRAME_READY], 0, texture);
+    g_object_unref(texture);
 }
 
 static gboolean frame_timeout_cb(gpointer data)
@@ -523,19 +760,18 @@ static void frame_handle_buffer(void *data,
 static void frame_handle_linux_dmabuf(void *data,
     struct hyprland_toplevel_export_frame_v1 *frame,
     uint32_t format, uint32_t width, uint32_t height)
-{ (void)data; (void)frame; (void)format; (void)width; (void)height; }
-
-static void frame_handle_buffer_done(void *data,
-    struct hyprland_toplevel_export_frame_v1 *frame)
 {
-    Frame      *f    = data;
-    AppCapture *self = f->self;
+    (void)frame;
+    Frame *f = data;
+    /* the same size as the shared-memory buffer; anything else is odd enough
+     * to leave alone */
+    if (width == f->width && height == f->height)
+        f->dmabuf_format = format;
+}
 
-    if (f->width == 0 || f->height == 0 || f->stride < f->width * 4) {
-        g_warning("AppCapture: buffer_done with invalid dimensions");
-        frame_fail(f, "buffer_invalid");
-        return;
-    }
+static void frame_copy_to_shm(Frame *f)
+{
+    AppCapture *self = f->self;
 
     if (!format_supported(f->format)) {
         g_warning("AppCapture: unsupported buffer format 0x%08x", f->format);
@@ -564,13 +800,174 @@ static void frame_handle_buffer_done(void *data,
         0, (int32_t)f->width, (int32_t)f->height, (int32_t)f->stride, f->format);
     wl_shm_pool_destroy(pool);
 
-    hyprland_toplevel_export_frame_v1_copy(frame, buffer, 1);
+    hyprland_toplevel_export_frame_v1_copy(f->frame, buffer, 1);
     wl_buffer_destroy(buffer);
+}
+
+static void frame_handle_buffer_done(void *data,
+    struct hyprland_toplevel_export_frame_v1 *frame)
+{
+    (void)frame;
+    Frame *f = data;
+
+    if (f->width == 0 || f->height == 0 || f->stride < f->width * 4) {
+        g_warning("AppCapture: buffer_done with invalid dimensions");
+        frame_fail(f, "buffer_invalid");
+        return;
+    }
+
+    if (!f->shm_only && frame_copy_to_gpu(f))
+        return;
+    frame_copy_to_shm(f);
+}
+
+static void params_handle_created(void *data,
+    struct zwp_linux_buffer_params_v1 *params, struct wl_buffer *buffer)
+{
+    Frame *f = data;
+    zwp_linux_buffer_params_v1_destroy(params);
+    f->params = NULL;
+    f->buffer = buffer;
+    f->on_gpu = TRUE;
+    hyprland_toplevel_export_frame_v1_copy(f->frame, buffer, 1);
+    wl_display_flush(f->self->display);
+}
+
+static void params_handle_failed(void *data,
+    struct zwp_linux_buffer_params_v1 *params)
+{
+    Frame *f = data;
+    g_warning("AppCapture: Hyprland can't import our GPU buffers; using shared memory");
+    f->self->gpu_broken = TRUE;
+    zwp_linux_buffer_params_v1_destroy(params);
+    f->params = NULL;
+    gbm_bo_destroy(f->bo);
+    f->bo = NULL;
+    frame_copy_to_shm(f);
+    wl_display_flush(f->self->display);
+}
+
+static const struct zwp_linux_buffer_params_v1_listener params_listener = {
+    .created = params_handle_created,
+    .failed  = params_handle_failed,
+};
+
+static gboolean frame_copy_to_gpu(Frame *f)
+{
+    AppCapture *self = f->self;
+    if (!self->gbm || !self->renderer || self->gpu_broken || !f->dmabuf_format)
+        return FALSE;
+
+    /* the layouts Hyprland renders into and GTK reads, for this format */
+    GdkDmabufFormats *readable = gdk_display_get_dmabuf_formats(gdk_display_get_default());
+    GArray *modifiers = g_array_new(FALSE, FALSE, sizeof(uint64_t));
+    for (guint i = 0; i < self->gpu_pairs->len; i++) {
+        DmabufPair *pair = &g_array_index(self->gpu_pairs, DmabufPair, i);
+        if (pair->fourcc == f->dmabuf_format &&
+            gdk_dmabuf_formats_contains(readable, pair->fourcc, pair->modifier))
+            g_array_append_val(modifiers, pair->modifier);
+    }
+    if (modifiers->len > 0)
+        f->bo = gbm_bo_create_with_modifiers2(self->gbm, f->width, f->height, f->dmabuf_format,
+            (const uint64_t *)modifiers->data, modifiers->len, GBM_BO_USE_RENDERING);
+    g_array_unref(modifiers);
+    if (!f->bo)
+        return FALSE;
+
+    uint64_t modifier = gbm_bo_get_modifier(f->bo);
+    f->params = zwp_linux_dmabuf_v1_create_params(self->dmabuf);
+    for (int plane = 0; plane < gbm_bo_get_plane_count(f->bo); plane++) {
+        int fd = gbm_bo_get_fd_for_plane(f->bo, plane);
+        /* the request takes its own copy of the fd */
+        zwp_linux_buffer_params_v1_add(f->params, fd, (uint32_t)plane,
+            gbm_bo_get_offset(f->bo, plane), gbm_bo_get_stride_for_plane(f->bo, plane),
+            (uint32_t)(modifier >> 32), (uint32_t)(modifier & 0xffffffff));
+        close(fd);
+    }
+    zwp_linux_buffer_params_v1_add_listener(f->params, &params_listener, f);
+    zwp_linux_buffer_params_v1_create(f->params, (int32_t)f->width, (int32_t)f->height,
+                                      f->dmabuf_format, 0);
+    return TRUE;
 }
 
 static void frame_handle_flags(void *data,
     struct hyprland_toplevel_export_frame_v1 *frame, uint32_t flags)
 { (void)data; (void)frame; (void)flags; }
+
+/* what GTK needs to let go of a GPU buffer once its texture is gone */
+typedef struct {
+    struct gbm_bo *bo;
+    int            fds[4];
+    int            planes;
+} GpuTextureData;
+
+static void gpu_texture_release(gpointer data)
+{
+    GpuTextureData *d = data;
+    for (int i = 0; i < d->planes; i++)
+        close(d->fds[i]);
+    gbm_bo_destroy(d->bo);
+    g_free(d);
+}
+
+/* The GPU buffer as a texture (no copy), drawn at the preview size on the GPU.
+ * The buffer is released as soon as that draw has been read back. */
+static GdkTexture *gpu_preview(Frame *f)
+{
+    AppCapture *self = f->self;
+    GpuTextureData *d = g_new0(GpuTextureData, 1);
+    d->bo     = f->bo;
+    d->planes = gbm_bo_get_plane_count(f->bo);
+    f->bo     = NULL;
+
+    GdkDmabufTextureBuilder *builder = gdk_dmabuf_texture_builder_new();
+    gdk_dmabuf_texture_builder_set_display(builder, gdk_display_get_default());
+    gdk_dmabuf_texture_builder_set_width(builder, f->width);
+    gdk_dmabuf_texture_builder_set_height(builder, f->height);
+    gdk_dmabuf_texture_builder_set_fourcc(builder, f->dmabuf_format);
+    gdk_dmabuf_texture_builder_set_modifier(builder, gbm_bo_get_modifier(d->bo));
+    gdk_dmabuf_texture_builder_set_premultiplied(builder, TRUE);
+    gdk_dmabuf_texture_builder_set_n_planes(builder, (unsigned)d->planes);
+    for (int plane = 0; plane < d->planes; plane++) {
+        d->fds[plane] = gbm_bo_get_fd_for_plane(d->bo, plane);
+        gdk_dmabuf_texture_builder_set_fd(builder, (unsigned)plane, d->fds[plane]);
+        gdk_dmabuf_texture_builder_set_stride(builder, (unsigned)plane, gbm_bo_get_stride_for_plane(d->bo, plane));
+        gdk_dmabuf_texture_builder_set_offset(builder, (unsigned)plane, gbm_bo_get_offset(d->bo, plane));
+    }
+
+    GError *error = NULL;
+    GdkTexture *frame = gdk_dmabuf_texture_builder_build(builder, gpu_texture_release, d, &error);
+    g_object_unref(builder);
+    if (!frame) {
+        g_warning("AppCapture: GTK can't read the GPU buffer (%s)", error->message);
+        g_error_free(error);
+        gpu_texture_release(d);
+        return NULL;
+    }
+
+    uint32_t width, height;
+    preview_size(self, f->width, f->height, &width, &height);
+    graphene_rect_t bounds = GRAPHENE_RECT_INIT(0, 0, width, height);
+    GskRenderNode *node = gsk_texture_scale_node_new(frame, &bounds, GSK_SCALING_FILTER_TRILINEAR);
+    GdkTexture *preview = gsk_renderer_render_texture(self->renderer, node, &bounds);
+    gsk_render_node_unref(node);
+    g_object_unref(frame);
+    return preview;
+}
+
+static gboolean texture_shifted(GdkTexture *texture)
+{
+    GdkTextureDownloader *downloader = gdk_texture_downloader_new(texture);
+    gdk_texture_downloader_set_format(downloader, GDK_MEMORY_B8G8R8A8_PREMULTIPLIED);
+    gsize stride;
+    GBytes *bytes = gdk_texture_downloader_download_bytes(downloader, &stride);
+    gdk_texture_downloader_free(downloader);
+    gboolean shifted = frame_shifted(g_bytes_get_data(bytes, NULL), WL_SHM_FORMAT_ARGB8888,
+        (uint32_t)gdk_texture_get_width(texture), (uint32_t)gdk_texture_get_height(texture),
+        (uint32_t)stride);
+    g_bytes_unref(bytes);
+    return shifted;
+}
 
 static void frame_handle_ready(void *data,
     struct hyprland_toplevel_export_frame_v1 *frame,
@@ -579,6 +976,24 @@ static void frame_handle_ready(void *data,
     (void)frame; (void)tv_sec_hi; (void)tv_sec_lo; (void)tv_nsec;
     Frame      *f    = data;
     AppCapture *self = f->self;
+
+    if (f->on_gpu) {
+        GdkTexture *preview = gpu_preview(f);
+        if (!preview) {
+            frame_fail(f, "internal");
+            return;
+        }
+        if (texture_shifted(preview)) {
+            g_debug("AppCapture: dropping a shifted frame");
+            g_object_unref(preview);
+            frame_fail(f, "shifted");
+            return;
+        }
+        self->gpu_failures = 0;
+        frame_free(f, TRUE);
+        emit_texture(self, preview);
+        return;
+    }
 
     if (!f->pixels) {
         g_warning("AppCapture: ready fired without a buffer");
@@ -592,22 +1007,41 @@ static void frame_handle_ready(void *data,
         return;
     }
 
+    /* a GPU copy of this window failed where this one worked */
+    if (f->shm_only && !self->gpu_broken && ++self->gpu_failures >= GPU_FAILURES_TO_GIVE_UP) {
+        g_warning("AppCapture: Hyprland can't render into our GPU buffers; using shared memory");
+        self->gpu_broken = TRUE;
+    }
+
     uint32_t width, height;
     GBytes *bytes = to_bgra(f->pixels, f->format, f->width, f->height, f->stride,
                             downscale_factor(self, f->width, f->height), &width, &height);
     frame_free(f, TRUE);
 
-    g_signal_emit(self, signals[SIGNAL_FRAME_READY], 0,
-                  bytes, (gint)width, (gint)height, (gint)(width * 4));
+    GdkTexture *texture = gdk_memory_texture_new((int)width, (int)height,
+        GDK_MEMORY_B8G8R8A8_PREMULTIPLIED, bytes, width * 4);
     g_bytes_unref(bytes);
+    emit_texture(self, texture);
 }
 
 static void frame_handle_failed(void *data,
     struct hyprland_toplevel_export_frame_v1 *frame)
 {
     (void)frame;
+    Frame *f = data;
+
+    /* once more through shared memory, to tell a window that can't be
+     * captured from a GPU buffer Hyprland can't render into */
+    if (f->on_gpu) {
+        AppCapture *self = f->self;
+        struct zwlr_foreign_toplevel_handle_v1 *wlr_handle = f->wlr_handle;
+        frame_free(f, TRUE);
+        do_capture(self, wlr_handle, TRUE);
+        return;
+    }
+
     g_warning("AppCapture: frame capture failed");
-    frame_fail(data, "frame_failed");
+    frame_fail(f, "frame_failed");
 }
 
 static void frame_handle_damage(void *data,
@@ -647,11 +1081,14 @@ static struct zwlr_foreign_toplevel_handle_v1 *find_wlr_handle(AppCapture *self,
 }
 
 static void do_capture(AppCapture *self,
-                       struct zwlr_foreign_toplevel_handle_v1 *wlr_handle)
+                       struct zwlr_foreign_toplevel_handle_v1 *wlr_handle,
+                       gboolean shm_only)
 {
-    Frame *f  = g_new0(Frame, 1);
-    f->self   = self;
-    f->shm_fd = -1;
+    Frame *f      = g_new0(Frame, 1);
+    f->self       = self;
+    f->shm_fd     = -1;
+    f->wlr_handle = wlr_handle;
+    f->shm_only   = shm_only;
     f->frame  = hyprland_toplevel_export_manager_v1_capture_toplevel_with_wlr_toplevel_handle(
         self->export_manager,
         0,           /* overlay_cursor */
@@ -717,7 +1154,7 @@ static void flush_pending_for_address(AppCapture *self, const char *address)
         PendingCapture *pc = g_ptr_array_index(self->pending_captures, i - 1);
         if (g_strcmp0(pc->address, address) != 0) continue;
 
-        do_capture(self, wlr_handle);
+        do_capture(self, wlr_handle, FALSE);
         g_ptr_array_remove_index(self->pending_captures, i - 1);
         /* JS side is single-flight — at most one match expected.
          * Break to avoid issuing two captures against the same shm state. */
@@ -750,8 +1187,25 @@ static void app_capture_finalize(GObject *object)
         zwlr_foreign_toplevel_manager_v1_destroy(self->wlr_manager);
     if (self->shm)
         wl_shm_destroy(self->shm);
+    if (self->feedback)
+        zwp_linux_dmabuf_feedback_v1_destroy(self->feedback);
+    if (self->dmabuf)
+        zwp_linux_dmabuf_v1_destroy(self->dmabuf);
     if (self->registry)
         wl_registry_destroy(self->registry);
+    if (self->renderer) {
+        gsk_renderer_unrealize(self->renderer);
+        g_object_unref(self->renderer);
+    }
+    if (self->gbm)
+        gbm_device_destroy(self->gbm);
+    if (self->drm_fd >= 0)
+        close(self->drm_fd);
+    if (self->format_table)
+        munmap((void *)self->format_table, self->format_table_size);
+    g_array_unref(self->tranche_pairs);
+    g_array_unref(self->feedback_pairs);
+    g_array_unref(self->gpu_pairs);
     G_OBJECT_CLASS(app_capture_parent_class)->finalize(object);
 }
 
@@ -765,8 +1219,8 @@ static void app_capture_class_init(AppCaptureClass *klass)
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_LAST,
         0, NULL, NULL, NULL,
-        G_TYPE_NONE, 4,
-        G_TYPE_BYTES, G_TYPE_INT, G_TYPE_INT, G_TYPE_INT
+        G_TYPE_NONE, 1,
+        GDK_TYPE_TEXTURE
     );
 
     signals[SIGNAL_FRAME_FAILED] = g_signal_new(
@@ -783,6 +1237,10 @@ static void app_capture_init(AppCapture *self)
 {
     self->toplevels        = g_ptr_array_new_with_free_func(toplevel_entry_free);
     self->pending_captures = g_ptr_array_new_with_free_func(pending_capture_free);
+    self->tranche_pairs    = g_array_new(FALSE, FALSE, sizeof(DmabufPair));
+    self->feedback_pairs   = g_array_new(FALSE, FALSE, sizeof(DmabufPair));
+    self->gpu_pairs        = g_array_new(FALSE, FALSE, sizeof(DmabufPair));
+    self->drm_fd           = -1;
 
     GdkDisplay *gdk_display = gdk_display_get_default();
     self->display = gdk_wayland_display_get_wl_display(gdk_display);
@@ -797,8 +1255,11 @@ static void app_capture_init(AppCapture *self)
      * windows, and mapping requests are sent for each one */
     wl_display_roundtrip(self->display);
 
-    /* Third roundtrip: mapping responses (window_address events) arrive */
+    /* Third roundtrip: mapping responses (window_address events) arrive;
+     * the dmabuf feedback has arrived by now too */
     wl_display_roundtrip(self->display);
+
+    gpu_init(self);
 
     if (!self->export_manager)
         g_warning("AppCapture: hyprland_toplevel_export_manager_v1 not found");
@@ -846,7 +1307,7 @@ void app_capture_capture_by_handle(AppCapture *self, const gchar *address)
     struct zwlr_foreign_toplevel_handle_v1 *wlr_handle =
         find_wlr_handle(self, addr);
     if (wlr_handle) {
-        do_capture(self, wlr_handle);
+        do_capture(self, wlr_handle, FALSE);
         return;
     }
 

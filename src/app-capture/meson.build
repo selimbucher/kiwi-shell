@@ -7,10 +7,13 @@ project('app-capture', 'c',
 wayland_client      = dependency('wayland-client')
 wayland_scanner_dep = dependency('wayland-scanner', native: true)
 gobject             = dependency('gobject-2.0')
-gtk4                = dependency('gtk4')
+gtk4                = dependency('gtk4', version: '>= 4.14')
+gbm                 = dependency('gbm')
+libdrm              = dependency('libdrm')
 gir                 = dependency('gobject-introspection-1.0', required: true)
 
 wayland_scanner = find_program('wayland-scanner')
+cc = meson.get_compiler('c')
 
 # ─── Protocol XML files ───────────────────────────────────────────────────────
 # All must exist under protocols/ in the source tree:
@@ -19,11 +22,13 @@ wayland_scanner = find_program('wayland-scanner')
 #   wlr-foreign-toplevel-management-unstable-v1.xml  (swaywm/wlr-protocols)
 #   hyprland-toplevel-mapping-v1.xml    (hyprwm/hyprland-protocols)
 #   ext-foreign-toplevel-list-v1.xml    (wayland-protocols staging)
+#   linux-dmabuf-v1.xml                 (wayland-protocols stable)
 #
 hypr_export_xml  = files('protocols/hyprland-toplevel-export-v1.xml')
 wlr_toplevel_xml = files('protocols/wlr-foreign-toplevel-management-unstable-v1.xml')
 hypr_mapping_xml = files('protocols/hyprland-toplevel-mapping-v1.xml')
 ext_toplevel_xml = files('protocols/ext-foreign-toplevel-list-v1.xml')
+dmabuf_xml       = files('protocols/linux-dmabuf-v1.xml')
 
 # ─── Generate C bindings ──────────────────────────────────────────────────────
 
@@ -68,6 +73,16 @@ ext_toplevel_private_c = custom_target('ext-toplevel-private-c',
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 )
 
+# linux-dmabuf: GPU buffers for Hyprland to copy windows into
+dmabuf_client_h = custom_target('dmabuf-client-h',
+  input: dmabuf_xml, output: 'linux-dmabuf-v1.h',
+  command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
+)
+dmabuf_private_c = custom_target('dmabuf-private-c',
+  input: dmabuf_xml, output: 'linux-dmabuf-v1.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
+)
+
 # ─── Shared library ───────────────────────────────────────────────────────────
 lib = shared_library('appcapture',
   sources: [
@@ -79,6 +94,8 @@ lib = shared_library('appcapture',
     hypr_mapping_private_c,
     hypr_mapping_client_h,
     ext_toplevel_private_c,   # link-time symbol only, no header needed in our code
+    dmabuf_private_c,
+    dmabuf_client_h,
   ],
   include_directories: [
     include_directories('.'),
@@ -87,6 +104,9 @@ lib = shared_library('appcapture',
     wayland_client,
     gobject,
     gtk4,
+    gbm,
+    libdrm,
+    cc.find_library('m', required: false),
   ],
   gnu_symbol_visibility: 'default',
   install: true,

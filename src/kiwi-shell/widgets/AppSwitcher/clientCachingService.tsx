@@ -41,8 +41,9 @@ const cache = new Map<string, CacheEntry>()
 // ─── Frame size ────────────────────────────────────────────────────────────────
 // A full HiDPI frame is ~20 MB and the cache holds one per window, while a
 // preview shows a fraction of that. Each place that shows captures reserves
-// its largest size (logical px); frames are downscaled in C to no less than
-// the largest reservation at the highest monitor scale.
+// its largest size (logical px); the C side scales frames, on the GPU where
+// it can, to no less than the largest reservation at the highest monitor
+// scale.
 let minWidth = 0
 let minHeight = 0
 
@@ -97,14 +98,8 @@ function captureNow(address: string): Promise<Gdk.Texture | null> {
 
             readyId = capturer.connect(
                 "frame-ready",
-                (_obj: any, bytes: any, width: number, height: number, stride: number) => {
-                    let texture: Gdk.Texture | null = null
-                    try {
-                        texture = buildTexture(bytes, width, height, stride)
-                    } catch (e) {
-                        log.error(`buildTexture failed for ${address}: ${e}`)
-                    }
-                    if (texture) cache.set(address, {
+                (_obj: any, texture: Gdk.Texture) => {
+                    cache.set(address, {
                         texture, capturedAt: Date.now(), size: sizeKey(address),
                     })
                     finish(texture)
@@ -242,15 +237,3 @@ export function captureWindowToTexture(address: string): Promise<Gdk.Texture | n
     return captureNow(address)
 }
 
-// ─── buildTexture ──────────────────────────────────────────────────────────────
-function buildTexture(bytes: any, width: number, height: number, stride: number): Gdk.Texture {
-    const builder = new Gdk.MemoryTextureBuilder()
-    builder.set_bytes(bytes)
-    builder.set_width(width)
-    builder.set_height(height)
-    builder.set_stride(stride)
-    // Hyprland exports WL_SHM_FORMAT_XRGB8888.
-    // On little-endian x86 this is B-G-R-X in memory.
-    builder.set_format(Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED)
-    return builder.build()
-}

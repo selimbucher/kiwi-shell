@@ -82,6 +82,8 @@
           gtk4.dev
           glib
           glib.dev
+          libgbm
+          libdrm
         ];
       };
 
