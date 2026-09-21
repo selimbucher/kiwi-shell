@@ -204,16 +204,18 @@
 // dock at full speed, slows to the top and lands at full speed. GTK eases a
 // whole animation rather than each step between keyframes, so the curve is
 // written out in 5% steps and the hop runs linear.
-@mixin hop-frames {
+@mixin hop-frames($height) {
     @for $i from 0 through 20 {
         $t: math.div($i, 20);
-        #{$i * 5%} { transform: translateY(calc(var(--hop-height) * #{-4 * $t * (1 - $t)})); }
+        #{$i * 5%} { transform: translateY(calc(var($height) * #{-4 * $t * (1 - $t)})); }
     }
 }
 
-@keyframes dock-hop { @include hop-frames; }
+@keyframes dock-hop { @include hop-frames(--hop-height); }
 // the same hop again: a new name is what starts it over (dock-state.tsx, Hop)
-@keyframes dock-hop-again { @include hop-frames; }
+@keyframes dock-hop-again { @include hop-frames(--hop-height); }
+// the small rebound that settles the icon once its app is up
+@keyframes dock-hop-settle { @include hop-frames(--hop-settle-height); }
 
 $slide-margin: calc(var(--icon-size) / 2 * -1);
 
@@ -265,6 +267,10 @@ $slide-margin: calc(var(--icon-size) / 2 * -1);
 
 .app-launch-button.hop-again {
     animation: dock-hop-again var(--hop-duration) linear;
+}
+
+.app-launch-button.hop-settle {
+    animation: dock-hop-settle var(--hop-settle-duration) linear;
 }
 
 .fade-in {

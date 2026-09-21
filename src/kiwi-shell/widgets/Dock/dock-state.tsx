@@ -24,14 +24,19 @@ export const hyprland = Hyprland.get_default()
 // ─── Launch bounce ────────────────────────────────────────────────────────────
 // macOS's: an icon clicked to start its app hops, whole hop after whole hop,
 // until the app's first window opens, so a slow start still shows that the
-// click landed. The hop under way always finishes on the dock. An app that
-// never opens a window (one that only starts a service) stops it at the cap.
+// click landed. The hop under way always finishes on the dock, and one small
+// rebound settles it there. An app that never opens a window (one that only
+// starts a service) stops it at the cap.
 export const HOP_MS = 600
+// the rebound's height as a share of a hop's; a throw's time goes with the
+// square root of its height
+export const SETTLE = 0.2
+export const SETTLE_MS = Math.round(HOP_MS * Math.sqrt(SETTLE))
 const LAUNCH_BOUNCE_MAX_MS = 10_000
 
 // The same hop under two names (style/dock.scss): GTK runs a CSS animation
 // once per name, so the next hop starts by switching to the other one.
-export type Hop = "" | "hop" | "hop-again"
+export type Hop = "" | "hop" | "hop-again" | "hop-settle"
 
 const bouncing = new Set<(hop: Hop) => void>()
 
@@ -47,8 +52,12 @@ export function launchBounce(setHop: (hop: Hop) => void) {
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, HOP_MS, () => {
             if (opened || GLib.get_monotonic_time() - began >= LAUNCH_BOUNCE_MAX_MS * 1000) {
                 hyprland.disconnect(addedId)
-                bouncing.delete(setHop)
-                setHop("")
+                setHop("hop-settle")
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, SETTLE_MS, () => {
+                    bouncing.delete(setHop)
+                    setHop("")
+                    return GLib.SOURCE_REMOVE
+                })
             } else {
                 next()
             }
