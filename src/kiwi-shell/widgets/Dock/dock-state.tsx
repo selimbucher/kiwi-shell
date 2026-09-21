@@ -17,10 +17,46 @@ import { clientSelector, focusWindow, moveWindowToWorkspace, raiseWindow, toggle
 export const [dockOverlap, setDockOverlap] = createState(0)
 
 export const DOCK_HIDE_TIMEOUT = 200
-export const JUMP_ANIMATION_CLASS_TIMEOUT = 500
 export const DOCK_SLIDE_DURATION = 400
 
 export const hyprland = Hyprland.get_default()
+
+// ─── Launch bounce ────────────────────────────────────────────────────────────
+// macOS's: an icon clicked to start its app hops, whole hop after whole hop,
+// until the app's first window opens, so a slow start still shows that the
+// click landed. The hop under way always finishes on the dock. An app that
+// never opens a window (one that only starts a service) stops it at the cap.
+export const HOP_MS = 600
+const LAUNCH_BOUNCE_MAX_MS = 10_000
+
+// The same hop under two names (style/dock.scss): GTK runs a CSS animation
+// once per name, so the next hop starts by switching to the other one.
+export type Hop = "" | "hop" | "hop-again"
+
+const bouncing = new Set<(hop: Hop) => void>()
+
+export function launchBounce(setHop: (hop: Hop) => void) {
+    if (bouncing.has(setHop)) return
+    bouncing.add(setHop)
+    let opened = false
+    const addedId = hyprland.connect("client-added", () => { opened = true })
+    const began = GLib.get_monotonic_time()
+    let hops = 0
+    const next = () => {
+        setHop(hops++ % 2 === 0 ? "hop" : "hop-again")
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, HOP_MS, () => {
+            if (opened || GLib.get_monotonic_time() - began >= LAUNCH_BOUNCE_MAX_MS * 1000) {
+                hyprland.disconnect(addedId)
+                bouncing.delete(setHop)
+                setHop("")
+            } else {
+                next()
+            }
+            return GLib.SOURCE_REMOVE
+        })
+    }
+    next()
+}
 
 export const HOME = GLib.getenv("HOME")
 const APPLIST_FILE = `${HOME}/.config/kiwi-shell/dock-apps.json`

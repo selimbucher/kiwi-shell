@@ -6,7 +6,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, list, unpinnedList, setDockOverlap, DOCK_HIDE_TIMEOUT, JUMP_ANIMATION_CLASS_TIMEOUT, DOCK_SLIDE_DURATION } from "./dock-state"
+import { hyprland, list, unpinnedList, setDockOverlap, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, HOP_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
@@ -15,6 +15,7 @@ import { playSound } from "../sound"
 import Cairo from "gi://cairo"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
+import Gtk4LayerShell from "gi://Gtk4LayerShell"
 
 const clients = createBinding(hyprland, "clients")
 const activeWorkspace = createBinding(hyprland, "focusedWorkspace")
@@ -127,6 +128,7 @@ const DOCK = {
     shadowY: 0.045,
     shadowBlur: 0.1,
     lift: 0.115,      // how far an icon rises under the pointer
+    hop: 0.5,         // how high it hops while its app starts (launchBounce)
     liftBlur: 0.1,
     bottom: 0.1,      // the pill's own gap to the screen edge
     dot: 0.077,       // running-window dots: diameter, gap, and how far below
@@ -144,13 +146,22 @@ const TASKBAR = { padTop: 0.06, padBottom: 0.19 }
 const px = (icon: number, fraction: number, min = 0) =>
     Math.max(min, Math.round(icon * fraction))
 
+// Room above the pill for an icon hopping while the pointer lifts it: a
+// surface can't draw past its own edge, and without this the hop was cut
+// off at the top. It is transparent and outside the input region, so the
+// strip of screen it covers stays clickable, and the exclusive zone leaves
+// it out, so windows don't make room for it either.
+const headroomFor = (icon: number) => px(icon, DOCK.hop) + px(icon, DOCK.lift, 3)
+
 function dockCss(icon: number, margin: number, primary: string) {
     const shadow = (y: number, blur: number) =>
         `drop-shadow(0 ${y}px ${blur}px rgba(0, 0, 0, 0.3))`
     return `
     --primary: ${primary};
     --dock-margin: ${margin}px;
-    --jumptime: ${JUMP_ANIMATION_CLASS_TIMEOUT}ms;
+    --hop-height: ${px(icon, DOCK.hop)}px;
+    --hop-duration: ${HOP_MS}ms;
+    --dock-headroom: ${headroomFor(icon)}px;
     --icon-size: ${icon}px;
     --dock-slide-duration: ${DOCK_SLIDE_DURATION}ms;
     --dock-slide-distance: ${icon + 68}px;
@@ -221,6 +232,13 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     let selfRef: Astal.Window | null = null
     let dockBoxRef: Gtk.Widget | null = null
 
+    const headroom = () => headroomFor(conf().dock_icon_size)
+    // The band the pill sits in, in screen pixels: the surface without the
+    // headroom above it. Measured on the surface, because the window's own
+    // height leaves out its padding, and the headroom is that padding.
+    const bandHeight = () =>
+        Math.max(0, (selfRef?.get_surface()?.get_height() ?? 0) - headroom())
+
     // Every window's box, asked of the compositor rather than read off
     // Astal's Client objects. Astal caches a client's geometry and does not
     // refresh it when a floating window is moved or resized — the same
@@ -265,7 +283,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         const yFromBottom = geo.y + geo.height - y
         if (yFromBottom <= 0) return false
         if (yFromBottom <= EDGE_BAND_PX) return true
-        const stripH = Math.max(selfRef?.get_height() ?? 0, 60)
+        const stripH = Math.max(bandHeight(), 60)
         if (yFromBottom > stripH) return false
         // within dock height: only the pill's span counts (x is unaffected
         // by the slide transform, so these bounds are safe mid-animation)
@@ -345,7 +363,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             .find(m => m.name === gdkmonitor.get_connector())
             ?.activeWorkspace?.id
         const geo = gdkmonitor.get_geometry()
-        const stripTop = geo.y + geo.height - (selfRef?.get_height() ?? 80)
+        const stripTop = geo.y + geo.height - (bandHeight() || 80)
         setCovered(liveWindows().some(win =>
             win.ws === activeId
             && win.y + win.h > stripTop
@@ -358,9 +376,10 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // pill's bounds (so clicks beside it fall through) ONLY once the slide
     // has settled and the bounds are sane — while sliding, or whenever the
     // bounds look off (a transform mid-animation would place the region
-    // off-screen: the old "visible but unclickable" bug), the whole window
-    // takes input instead. A dead dock is impossible; the cost of every
-    // fallback is merely a briefly-wider click area.
+    // off-screen: the old "visible but unclickable" bug), the whole band the
+    // pill can be in takes input instead, never the headroom above it. A dead
+    // dock is impossible; the cost of every fallback is merely a
+    // briefly-wider click area.
     let shownAt = 0
     let lastShown = false
     const syncInputRegion = () => {
@@ -384,9 +403,12 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 && bounds.get_y() + bounds.get_height()
                     <= selfRef.get_height() + 2
             if (sane) {
+                // the bounds are in the window's coordinates, which begin
+                // inside its padding; the region is in the surface's
+                const [dx, dy] = selfRef.get_surface_transform()
                 const rect = new Cairo.RectangleInt()
-                rect.x = Math.floor(bounds.get_x())
-                rect.y = Math.floor(bounds.get_y())
+                rect.x = Math.floor(bounds.get_x() + dx)
+                rect.y = Math.floor(bounds.get_y() + dy)
                 rect.width = Math.ceil(bounds.get_width())
                 rect.height = Math.ceil(bounds.get_height())
                 const region = new Cairo.Region()
@@ -395,7 +417,14 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 return
             }
         }
-        surface.set_input_region(null)
+        const band = new Cairo.RectangleInt()
+        band.x = 0
+        band.y = headroom()
+        band.width = surface.get_width()
+        band.height = bandHeight()
+        const region = new Cairo.Region()
+        region.unionRectangle(band)
+        surface.set_input_region(region)
     }
 
     // The pill's bounds are final only once the slide or the icons' animation
@@ -424,17 +453,18 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             })}
             gdkmonitor={gdkmonitor}
             visible={true}
-            exclusivity={conf.as(conf =>
-                conf.dock === "default"
-                    ? Astal.Exclusivity.EXCLUSIVE
-                    : Astal.Exclusivity.NORMAL
-            )}
             anchor={Astal.WindowAnchor.LEFT | Astal.WindowAnchor.BOTTOM | Astal.WindowAnchor.RIGHT}
             application={app}
             layer={Astal.Layer.TOP}
             $={(self) => {
                 selfRef = self
                 onCleanup(() => destroyWindow(self))
+                // This runs once the window is already on screen, so what
+                // follows its map has to run now as well as on any later map.
+                const whenMapped = (fn: () => void) => {
+                    self.connect("map", fn)
+                    if (self.get_mapped()) fn()
+                }
                 remeasureOn(self, () => {
                     const c = conf()
                     return `${c.dock_icon_size}:${c.dock_margin}:${c.dock_full_width}`
@@ -457,12 +487,20 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 // is told how much room the dock is taking
                 const syncOverlap = () => setDockOverlap(
                     showDock() && conf().dock !== "default"
-                        ? self.get_height()
+                        ? bandHeight()
                         : 0)
                 showDock.subscribe(syncOverlap)
                 conf.subscribe(syncOverlap)
-                self.connect("map", syncOverlap)
+                whenMapped(syncOverlap)
                 onCleanup(() => setDockOverlap(0))
+
+                // "default" keeps windows off the band the dock sits in; the
+                // headroom above it is only there for a hopping icon, so the
+                // zone is set by hand rather than left to cover the surface
+                const syncExclusiveZone = () => Gtk4LayerShell.set_exclusive_zone(self,
+                    conf().dock === "default" ? bandHeight() : 0)
+                conf.subscribe(syncExclusiveZone)
+                whenMapped(syncExclusiveZone)
 
                 // the strip, measured whenever Hyprland says a window moved
                 const unsubscribeCover = [
@@ -473,7 +511,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 const eventId = hyprland.connect("event", (_h, event: string) => {
                     if (COVER_EVENTS.has(event)) measureCover()
                 })
-                self.connect("map", measureCover)
+                whenMapped(measureCover)
                 onCleanup(() => {
                     unsubscribeCover.forEach(unsubscribe => unsubscribe())
                     hyprland.disconnect(eventId)
@@ -496,10 +534,25 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     syncInputRegion()
                     syncWhenSettled(ICON_ANIM_MS + 100)
                 })
-                self.connect("map", () => {
+                whenMapped(() => {
                     syncInputRegion()
                     syncWhenSettled(settleSlide)
                 })
+                // A new surface size means a new band height and new bounds
+                // for the pill. GDK lays the surface out on every frame it
+                // draws, so only a size that differs from the last one counts.
+                let surfaceSize = ""
+                const watchSurface = () => self.get_surface()?.connect("layout",
+                    (_surface: Gdk.Surface, width: number, height: number) => {
+                        if (`${width}x${height}` === surfaceSize) return
+                        surfaceSize = `${width}x${height}`
+                        syncExclusiveZone()
+                        syncOverlap()
+                        syncInputRegion()
+                        syncWhenSettled(settleSlide)
+                    })
+                self.connect("realize", watchSurface)
+                if (self.get_realized()) watchSurface()
                 onCleanup(() => {
                     if (settleId !== null) {
                         GLib.source_remove(settleId)

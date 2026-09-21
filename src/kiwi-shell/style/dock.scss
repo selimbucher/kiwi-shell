@@ -1,11 +1,14 @@
+@use 'sass:math';
 @use 'theme' as *;
 
+// The headroom above the pill (Dock.tsx, headroomFor) is room for an icon to
+// hop into; the 2px under it is the pill's own, as before.
 .Dock {
-    padding-top: 2px;
+    padding-top: calc(2px + var(--dock-headroom));
 }
 
 .Dock.dock-full {
-    padding-top: 0;
+    padding-top: var(--dock-headroom);
 }
 
 .dock-bar-container {
@@ -196,11 +199,21 @@
     }
 }
 
-@keyframes dock-jump {
-    0%   { transform: translateY(0); }
-    50%  { transform: translateY(-12px); }
-    100% { transform: translateY(0); }
+// One hop of the launch bounce (dock-state.tsx, launchBounce): the height of
+// something thrown straight up, 4t(1-t) of the hop, so the icon leaves the
+// dock at full speed, slows to the top and lands at full speed. GTK eases a
+// whole animation rather than each step between keyframes, so the curve is
+// written out in 5% steps and the hop runs linear.
+@mixin hop-frames {
+    @for $i from 0 through 20 {
+        $t: math.div($i, 20);
+        #{$i * 5%} { transform: translateY(calc(var(--hop-height) * #{-4 * $t * (1 - $t)})); }
+    }
 }
+
+@keyframes dock-hop { @include hop-frames; }
+// the same hop again: a new name is what starts it over (dock-state.tsx, Hop)
+@keyframes dock-hop-again { @include hop-frames; }
 
 $slide-margin: calc(var(--icon-size) / 2 * -1);
 
@@ -242,14 +255,16 @@ $slide-margin: calc(var(--icon-size) / 2 * -1);
     100% { opacity: 1; transform: scaleX(1);}
 }
 
-$jumptime: var(--jumptime);
-
 .app-icon-container {
     transform: translateY(80px)
 }
 
-.jumping {
-    animation: dock-jump $jumptime forwards;
+.app-launch-button.hop {
+    animation: dock-hop var(--hop-duration) linear;
+}
+
+.app-launch-button.hop-again {
+    animation: dock-hop-again var(--hop-duration) linear;
 }
 
 .fade-in {

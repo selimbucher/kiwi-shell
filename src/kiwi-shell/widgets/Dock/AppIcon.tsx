@@ -1,7 +1,7 @@
 import { Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createBinding, createEffect, For } from "ags"
 import Pango from "gi://Pango"
-import { hyprland, list, setList, saveList, isNixManaged, isValidClient, JUMP_ANIMATION_CLASS_TIMEOUT, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient } from "./dock-state"
+import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
 import { mapVersion } from "../desktopEntries"
@@ -22,7 +22,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
     const name = application?.get_name() ?? entry.replace(/\.desktop$/, "")
 
     const [pinned, setPinned] = createState(list().includes(entry))
-    const [jumping, setJumping] = createState(false)
+    const [hop, setHop] = createState<Hop>("")
 
     // same resolution the switcher and workspace overview use — one source
     // of truth for "which app does this window belong to"
@@ -140,8 +140,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     cancelClose()
                     const clients = clientsBinding()
                     if (clients.length === 0) {
-                        setJumping(true)
-                        setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT + 100)
+                        launchBounce(setHop)
                         application.launch([], null)
                         return
                     }
@@ -204,7 +203,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     })
                     self.add_controller(hover)
                 }}
-                class={jumping.as(isJumping => isJumping ? "app-launch-button jumping" : "app-launch-button")}
+                class={hop.as(h => h ? `app-launch-button ${h}` : "app-launch-button")}
             >
                 <box orientation={Gtk.Orientation.VERTICAL}>
                     {menu}

@@ -5,7 +5,7 @@ import GObject from "gi://GObject"
 import GLib from "gi://GLib"
 import { conf } from "../config"
 import { playSound } from "../sound"
-import { HOME, JUMP_ANIMATION_CLASS_TIMEOUT } from "./dock-state"
+import { HOME, launchBounce, type Hop } from "./dock-state"
 import { openUri, openPath, emptyTrash } from "./dock-utils"
 import { ContextMenu } from "../ContextMenu"
 
@@ -20,7 +20,7 @@ export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) =>
         { name: "Public",    path: `${HOME}/Public`,    icon: "folder-publicshare" },
     ].filter(d => GLib.file_test(d.path, GLib.FileTest.IS_DIR))
 
-    const [jumping, setJumping] = createState(false)
+    const [hop, setHop] = createState<Hop>("")
 
     const menu = ContextMenu({
         class: "app-context-menu",
@@ -45,10 +45,9 @@ export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) =>
             visible={conf.as(conf => conf.dock_home == true)}
         >
             <button
-                class={jumping.as(j => j ? "app-launch-button jumping" : "app-launch-button")}
+                class={hop.as(h => h ? `app-launch-button ${h}` : "app-launch-button")}
                 onclicked={() => {
-                    setJumping(true)
-                    setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT + 100)
+                    launchBounce(setHop)
                     openPath(HOME)
                 }}
                 $={(self) => {
@@ -86,7 +85,7 @@ export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void
     }
 
     const [trashEmpty, setTrashEmpty] = createState(isTrashEmpty())
-    const [jumping, setJumping] = createState(false)
+    const [hop, setHop] = createState<Hop>("")
 
     const trashDir = Gio.File.new_for_path(TRASH_FILES)
     _trashMonitor = trashDir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
@@ -123,10 +122,9 @@ export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void
             visible={conf.as(conf => conf.dock_trash == true)}
         >
             <button
-                class={jumping.as(j => j ? "app-launch-button jumping" : "app-launch-button")}
+                class={hop.as(h => h ? `app-launch-button ${h}` : "app-launch-button")}
                 onclicked={() => {
-                    setJumping(true)
-                    setTimeout(() => setJumping(false), JUMP_ANIMATION_CLASS_TIMEOUT + 100)
+                    launchBounce(setHop)
                     openUri("trash:///")
                 }}
                 $={(self) => {
