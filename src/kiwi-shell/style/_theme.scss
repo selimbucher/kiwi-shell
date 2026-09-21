@@ -1,6 +1,6 @@
 // The shell's colours as tokens, set on every themed window by its
-// theme-<style> and appearance-<light|dark> classes (services/theme.ts).
-// Components only use these, so a style is nothing but a set of values.
+// theme-<style> class (services/theme.ts). Components only use these, so a
+// style is nothing but a set of values. Every style is dark.
 //
 //   panel          bar pills, dock, notification cards, launcher, switchers
 //   menu           popover menus (system menu, tray, context menus)
@@ -12,9 +12,7 @@
 //   fg .. fg-4     text: primary, secondary, tertiary, faint
 //   fill ..        controls on a panel: rest, hover, active, subtle hover
 //   divider        separators
-//   tab            an unselected tab in the system menu. On dark it is the
-//                  menu's own text colour; on light it goes darker than that,
-//                  so the selected tab is the only lit thing in the row.
+//   tab            an unselected tab in the system menu
 //   quiet, -strong, -hover  a neutral mark whose engaged state is the accent
 //                  colour: workspace dots, menu tabs. Kept light on purpose —
 //                  the accent is a light lilac, so a dark grey beside it reads
@@ -22,9 +20,14 @@
 //                  over a translucent panel an alpha fill takes the
 //                  wallpaper's colour and the mark goes muddy.
 //   shadow         the drop shadow of a panel that floats over the wallpaper.
-//                  Its alpha is capped under the blur threshold in the glass
-//                  styles — see the ignore_alpha note in services/theme.ts.
-//   dock-panel, -border, -shadow  the dock's, normally the panel's own
+//                  Only Granite has one: a blurred surface casts none (the
+//                  ignore_alpha note in services/theme.ts), so in the glass
+//                  styles it is a shadow of nothing, which keeps it valid in
+//                  a box-shadow list.
+//   float-*        the pane of Spotlight and the dock: panel (the dock's), menu
+//                  (Spotlight's), sheen, border, highlight, shadow,
+//                  text-shadow. Normally the style's own, capped at Tinted
+//                  Glass (see below)
 //   trough         slider and switch tracks
 //   well           placeholder behind images and previews
 //   preview-bar    title bars of window previews
@@ -36,7 +39,7 @@
 // No drop shadows: most panels sit in windows sized to the panel, which cut a
 // shadow off in a hard line.
 
-@mixin dark-text {
+@mixin text {
     --k-fg: #ffffff;
     --k-fg-2: rgba(255, 255, 255, 0.87);
     --k-fg-3: rgba(255, 255, 255, 0.66);
@@ -57,30 +60,10 @@
     --k-icon-filter: brightness(10);
 }
 
-@mixin light-text {
-    --k-fg: rgba(0, 0, 0, 0.88);
-    --k-fg-2: rgba(0, 0, 0, 0.76);
-    --k-fg-3: rgba(0, 0, 0, 0.56);
-    --k-fg-4: rgba(0, 0, 0, 0.4);
-    --k-fill: rgba(0, 0, 0, 0.06);
-    --k-fill-hover: rgba(0, 0, 0, 0.1);
-    --k-fill-active: rgba(0, 0, 0, 0.15);
-    --k-fill-subtle: rgba(0, 0, 0, 0.04);
-    --k-divider: rgba(0, 0, 0, 0.08);
-    --k-tab: rgba(0, 0, 0, 0.92);
-    --k-quiet: #cdcdd4;
-    --k-quiet-strong: #a7a7b0;
-    --k-quiet-hover: #85858e;
-    --k-trough: rgba(0, 0, 0, 0.12);
-    --k-well: rgba(0, 0, 0, 0.04);
-    --k-text-shadow: none;
-    --k-icon-filter: brightness(0.15);
-}
-
 // ─── Granite: solid ───────────────────────────────────────────────────────────
 
-@mixin granite-dark {
-    @include dark-text;
+@mixin granite {
+    @include text;
     --k-shadow: 0 10px 26px rgba(0, 0, 0, 0.34);
     --k-panel: rgba(0, 0, 0, 0.9);
     --k-menu: rgba(0, 0, 0, 0.93);
@@ -94,26 +77,11 @@
     --k-close: rgba(44, 44, 48, 0.98);
 }
 
-@mixin granite-light {
-    @include light-text;
-    --k-shadow: 0 10px 26px rgba(0, 0, 0, 0.16);
-    --k-panel: rgba(250, 250, 251, 0.94);
-    --k-menu: rgba(250, 250, 251, 0.97);
-    --k-panel-hover: rgba(255, 255, 255, 0.97);
-    --k-sheen: none;
-    --k-border: rgba(0, 0, 0, 0.1);
-    --k-highlight: inset 0 0 0 0 transparent;
-    --k-preview-bar: #ececef;
-    --k-stack-1: rgba(236, 236, 239, 0.96);
-    --k-stack-2: rgba(226, 226, 230, 0.94);
-    --k-close: rgba(255, 255, 255, 0.98);
-}
-
 // ─── Acrylic: dense glass ─────────────────────────────────────────────────────
 
-@mixin acrylic-dark {
-    @include dark-text;
-    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
+@mixin acrylic {
+    @include text;
+    --k-shadow: 0 0 0 0 transparent;
     --k-panel: rgba(13, 13, 18, 0.80);
     --k-menu: rgba(13, 13, 18, 0.89);
     --k-panel-hover: rgba(24, 24, 31, 0.84);
@@ -126,63 +94,37 @@
     --k-close: rgba(58, 58, 62, 0.97);
 }
 
-@mixin acrylic-light {
-    @include light-text;
-    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
-    --k-panel: rgba(255, 255, 255, 0.8);
-    --k-menu: rgba(255, 255, 255, 0.86);
-    --k-panel-hover: rgba(255, 255, 255, 0.88);
-    --k-sheen: none;
-    --k-border: rgba(255, 255, 255, 0.5);
-    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.03);
-    --k-preview-bar: rgba(255, 255, 255, 0.85);
-    --k-stack-1: rgba(250, 250, 252, 0.8);
-    --k-stack-2: rgba(244, 244, 248, 0.7);
-    --k-close: rgba(255, 255, 255, 0.97);
+// ─── Tinted Glass: smoke ──────────────────────────────────────────────────────
+
+// The pane on its own, so Spotlight and the dock can borrow it under a prefix
+// (the float tokens, below). $p is empty for the style itself.
+@mixin tinted-pane($p: "") {
+    --k-#{$p}shadow: 0 0 0 0 transparent;
+    --k-#{$p}panel: rgba(24, 24, 31, 0.52);
+    --k-#{$p}menu: rgba(24, 24, 31, 0.68);
+    --k-#{$p}sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 50%);
+    --k-#{$p}border: rgba(255, 255, 255, 0.08);
+    --k-#{$p}highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --k-#{$p}text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
-// ─── Tinted Glass: smoke and frost ────────────────────────────────────────────
-
-@mixin tinted-dark {
-    @include dark-text;
-    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
-    --k-panel: rgba(24, 24, 31, 0.52);
-    --k-menu: rgba(24, 24, 31, 0.68);
+@mixin tinted {
+    @include text;
+    @include tinted-pane;
     --k-panel-hover: rgba(38, 38, 47, 0.58);
-    --k-sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 50%);
-    --k-border: rgba(255, 255, 255, 0.08);
-    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
     --k-preview-bar: rgba(0, 0, 0, 0.5);
     --k-stack-1: rgba(40, 40, 50, 0.5);
     --k-stack-2: rgba(40, 40, 50, 0.3);
     --k-close: rgba(62, 62, 66, 0.96);
-    --k-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     --k-quiet: #90909a;
     --k-quiet-strong: #d2d2d8;
 }
 
-@mixin tinted-light {
-    @include light-text;
-    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
-    --k-panel: rgba(246, 246, 248, 0.62);
-    --k-menu: rgba(246, 246, 248, 0.78);
-    --k-panel-hover: rgba(250, 250, 252, 0.74);
-    --k-sheen: linear-gradient(to bottom, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0) 60%);
-    --k-border: rgba(255, 255, 255, 0.2);
-    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.025);
-    --k-preview-bar: rgba(255, 255, 255, 0.7);
-    --k-stack-1: rgba(236, 236, 240, 0.55);
-    --k-stack-2: rgba(236, 236, 240, 0.32);
-    --k-close: rgba(250, 250, 252, 0.96);
-    --k-quiet: #c6c6ce;
-    --k-quiet-strong: #9d9da7;
-}
-
-// ─── Clear Glass: the same in light and dark ──────────────────────────────────
+// ─── Clear Glass ──────────────────────────────────────────────────────────────
 
 @mixin clear {
-    @include dark-text;
-    --k-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
+    @include text;
+    --k-shadow: 0 0 0 0 transparent;
     --k-panel: rgba(0, 0, 0, 0.12);
     --k-menu: rgba(0, 0, 0, 0.24);
     --k-panel-hover: rgba(0, 0, 0, 0.18);
@@ -203,30 +145,29 @@
 }
 
 window {
-    // the dock uses the panel's own pane; the override below is the exception
-    --k-dock-panel: var(--k-panel);
-    --k-dock-border: var(--k-border);
-    --k-dock-shadow: var(--k-shadow);
+    // normally the style's own pane; the cap below is the exception
+    --k-float-panel: var(--k-panel);
+    --k-float-menu: var(--k-menu);
+    --k-float-sheen: var(--k-sheen);
+    --k-float-border: var(--k-border);
+    --k-float-highlight: var(--k-highlight);
+    --k-float-shadow: var(--k-shadow);
+    --k-float-text-shadow: var(--k-text-shadow);
 
-    @include granite-dark;
+    @include granite;
 
-    &.theme-granite.appearance-light { @include granite-light; }
-    &.theme-acrylic.appearance-dark { @include acrylic-dark; }
-    &.theme-acrylic.appearance-light { @include acrylic-light; }
-    &.theme-tinted.appearance-dark { @include tinted-dark; }
-    &.theme-tinted.appearance-light { @include tinted-light; }
+    &.theme-acrylic { @include acrylic; }
+    &.theme-tinted { @include tinted; }
     &.theme-clear { @include clear; }
 }
 
-// Granite is a solid black slab. Everywhere else it sits against a window, but
-// the dock has wallpaper on three sides, where black reads as a hole cut in
-// the screen — so the dock alone takes Acrylic's pane. It is the only surface
-// Granite blurs (services/theme.ts).
-window.theme-granite.appearance-dark {
-    --k-dock-panel: rgba(16, 16, 22, 0.74);
-    --k-dock-border: rgba(255, 255, 255, 0.08);
-    // blurred, so its shadow has to stay under the blur threshold
-    --k-dock-shadow: 0 8px 18px rgba(0, 0, 0, 0.1);
+// Spotlight and the dock float over the desktop rather than sitting against a
+// window, and a dense pane there reads as a slab cut out of the screen. So no
+// style makes them more solid than Tinted Glass: Granite and Acrylic hand them
+// Tinted's pane, Tinted and Clear Glass keep their own. Both are blurred in
+// every style for it (services/theme.ts).
+window.theme-granite, window.theme-acrylic {
+    @include tinted-pane("float-");
 }
 
 // a panel: tokens only, per component radius and padding stay with it
@@ -244,6 +185,14 @@ window.theme-granite.appearance-dark {
     border: 1px solid var(--k-border);
     box-shadow: var(--k-highlight);
     color: var(--k-fg-2);
+}
+
+// Spotlight's and the dock's pane, $pane being panel or menu. The shadow stays
+// with the component: each one's has to fit its own layer's blur threshold.
+@mixin float($pane) {
+    background-color: var(--k-float-#{$pane});
+    background-image: var(--k-float-sheen);
+    border: 1px solid var(--k-float-border);
 }
 
 // Every right-click menu in the shell (widgets/ContextMenu.tsx). The dock's

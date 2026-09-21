@@ -48,11 +48,13 @@ function deepMerge(defaults: Record<string, any>, overrides: Record<string, any>
 const THEME_STYLES = ["granite", "acrylic", "tinted", "clear"]
 
 // The shell used to have two panel styles, "dark" and "glass". Glass became
-// Clear Glass; dark became Granite, kept dark where no appearance was chosen.
+// Clear Glass, dark became Granite. The panels also had a light appearance
+// once; they are dark only now, so the setting is dropped.
 function migrate(user: Record<string, any>): Record<string, any> {
-    if (THEME_STYLES.includes(user.theme)) return user
-    if (user.theme === "glass") return { ...user, theme: "clear" }
-    return { ...user, theme: "granite", appearance: user.appearance ?? "dark" }
+    const { appearance: _dropped, ...rest } = user
+    if (THEME_STYLES.includes(rest.theme)) return rest
+    if (rest.theme === "glass") return { ...rest, theme: "clear" }
+    return { ...rest, theme: "granite" }
 }
 
 function loadConfig() {

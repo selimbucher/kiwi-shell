@@ -30,13 +30,12 @@
 }
 
 .dock-box {
-    @include panel;
-    background-color: var(--k-dock-panel);
-    border-color: var(--k-dock-border);
+    @include float(panel);
+    color: var(--k-fg);
     padding: var(--dock-pad-top) var(--dock-pad-x) var(--dock-pad-bottom);
     border-radius: var(--dock-radius);
     margin-bottom: var(--dock-bottom);
-    box-shadow: var(--k-highlight), var(--k-dock-shadow);
+    box-shadow: var(--k-float-highlight), var(--k-float-shadow);
 }
 
 // windows-taskbar mode: the dock box runs flush across the whole screen
@@ -68,7 +67,9 @@
 }
 
 .app-launch-button {
-    padding: 0;
+    // the gap between icons, on the button so it has no dead strip where the
+    // pointer falls off one icon before it reaches the next
+    padding: 0 var(--icon-pad-x);
     background: none;
     border: none;
     box-shadow: none;

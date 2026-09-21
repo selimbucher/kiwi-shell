@@ -1,5 +1,4 @@
-import { Accessor, createComputed, createState } from "ags"
-import Gio from "gi://Gio"
+import { Accessor } from "ags"
 import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
 
@@ -10,31 +9,27 @@ import { logger } from "../../log"
 const log = logger("theme")
 const hyprland = Hyprland.get_default()
 
-// The shell's look is two settings: a style (theme) and an appearance.
-//   granite  solid, black or white
+// The shell's look is one setting, a style (theme), and it is always dark —
+// apps can be light, the shell is not:
+//   granite  solid black
 //   acrylic  dense glass, the pane colour dominates
-//   tinted   smoky or frosted glass
-//   clear    barely tinted glass, the same in light and dark
-// appearance: light, dark, or system (the color-scheme apps follow). Every
-// themed window carries theme-<style> appearance-<light|dark>; the colours
-// are tokens in style/_theme.scss.
+//   tinted   smoky glass
+//   clear    barely tinted glass
+// Every themed window carries theme-<style>; the colours are tokens in
+// style/_theme.scss.
 
 export type ThemeStyle = "granite" | "acrylic" | "tinted" | "clear"
-export type Appearance = "light" | "dark" | "system"
 
 export const THEME_STYLES: ThemeStyle[] = ["granite", "acrylic", "tinted", "clear"]
-
-// the one style that looks the same in light and dark
-export const ignoresAppearance = (style: ThemeStyle) => style === "clear"
 
 // The compositor blurs a whole layer surface at once, so a window's namespace
 // is really a statement about what is drawn inside it.
 //
 //   panel   panes with nothing but a hairline around them
-//   dock    the dock, which casts a drop shadow — and is the one surface
-//           Granite blurs (style/_theme.scss)
-//   cards   notification cards, which cast one too
-//   scrim   the launcher's full-screen backdrop
+//   dock    the dock, which Granite blurs as well
+//   cards   notification cards, which Granite does not
+//   scrim   the launcher's full-screen window, Spotlight's panel in it —
+//           blurred in Granite too
 //   plain   never blurred: the desktop, whose icons would otherwise blur the
 //           wallpaper behind their own shadows, and the invisible surfaces
 //           that exist only to catch clicks
@@ -46,81 +41,57 @@ export const LAYER = {
     plain: "kiwi-plain",
 } as const
 
-
-const [colorScheme, setColorScheme] = createState("default")
-
-const interfaceSettings = (() => {
-    try {
-        const source = Gio.SettingsSchemaSource.get_default()
-        return source?.lookup("org.gnome.desktop.interface", true)
-            ? new Gio.Settings({ schema_id: "org.gnome.desktop.interface" })
-            : null
-    } catch {
-        return null
-    }
-})()
-if (interfaceSettings) {
-    setColorScheme(interfaceSettings.get_string("color-scheme"))
-    interfaceSettings.connect("changed::color-scheme", () =>
-        setColorScheme(interfaceSettings.get_string("color-scheme")))
-}
-
 export const themeStyle: Accessor<ThemeStyle> = conf(c =>
     THEME_STYLES.includes(c.theme) ? c.theme : "acrylic")
 
-// light or dark, after the setting (and the system for "system")
-export const resolvedAppearance: Accessor<"light" | "dark"> = createComputed(get => {
-    const style = get(themeStyle)
-    if (ignoresAppearance(style)) return "dark"
-    const appearance = get(conf).appearance
-    if (appearance === "light" || appearance === "dark") return appearance
-    // "default" is no preference, which apps show as light
-    return get(colorScheme) === "prefer-dark" ? "dark" : "light"
-})
-
-export const themeClasses: Accessor<string> = createComputed(get =>
-    `theme-${get(themeStyle)} appearance-${get(resolvedAppearance)}`)
+export const themeClasses: Accessor<string> = themeStyle(style => `theme-${style}`)
 
 // ─── Compositor layer rules ───────────────────────────────────────────────────
 // Glass needs the compositor to blur behind the shell's panels. The shell adds
 // that for its own namespaces, so nobody has to write a layer rule by hand,
 // and it never turns on blur for anything else.
 //
-// ignore_alpha is the whole game here. A drop shadow lives in the same surface
-// as the panel it belongs to, so with a threshold below the shadow's alpha the
-// compositor blurs the wallpaper under the shadow as well and the panel ends
-// up wearing a blurred halo. The shadowed namespaces therefore sit just above
-// --k-shadow's alpha (0.10) and just below the thinnest pane we have, Clear
-// Glass at 0.12. Everything else can use a low threshold, which is what lets
-// Clear Glass's barely-there tint blur at all.
+// ignore_alpha is the whole game here. A layer surface is not blurred by its
+// shape but through a mask: every pixel whose alpha clears the threshold gets
+// blurred wallpaper behind it, every other pixel gets none, with nothing in
+// between. So the mask should be the pane and only the pane:
+//
+//   - A drop shadow in the same surface either falls inside the mask, and the
+//     panel wears a blurred halo, or forces a threshold above the shadow's
+//     alpha. That threshold then cuts across the anti-aliased ring of a
+//     rounded corner and leaves a stepped edge around it, and while a card
+//     fades in, its text clears the threshold frames before its pane does and
+//     glyph-shaped patches of blur flash through the card. So a blurred
+//     surface casts no shadow (--k-shadow in style/_theme.scss).
+//   - With no shadow, a low threshold puts the mask's edge on the outermost
+//     ring of the pane's own anti-aliasing, and it still lets Clear Glass's
+//     barely-there tint (0.12) blur at all.
 
-const PANEL_ALPHA = 0.05
-const SHADOW_ALPHA = 0.11
+const IGNORE_ALPHA = 0.05
 
-type Rule = { name: string, namespace: string, ignoreAlpha: number }
+type Rule = { name: string, namespace: string }
 
 const RULES: Rule[] = [
-    { name: "kiwi-panels", namespace: LAYER.panel, ignoreAlpha: PANEL_ALPHA },
-    { name: "kiwi-dock", namespace: LAYER.dock, ignoreAlpha: SHADOW_ALPHA },
-    { name: "kiwi-cards", namespace: LAYER.cards, ignoreAlpha: SHADOW_ALPHA },
-    { name: "kiwi-scrim", namespace: LAYER.scrim, ignoreAlpha: SHADOW_ALPHA },
+    { name: "kiwi-panels", namespace: LAYER.panel },
+    { name: "kiwi-dock", namespace: LAYER.dock },
+    { name: "kiwi-cards", namespace: LAYER.cards },
+    { name: "kiwi-scrim", namespace: LAYER.scrim },
 ]
 
-// Granite is solid and blurring it would only cost frames — except for the
-// dock, which borrows Acrylic's pane so it doesn't read as a hole in the
-// screen, and needs the blur that goes with it.
+// Granite is solid and blurring it would only cost frames — except for
+// Spotlight and the dock, which are never more solid than Tinted Glass
+// (style/_theme.scss) and need the blur that goes with it.
 function rulesFor(style: ThemeStyle): Set<string> {
     if (style !== "granite") return new Set(RULES.map(r => r.namespace))
-    return new Set([LAYER.dock])
+    return new Set([LAYER.dock, LAYER.scrim])
 }
 
 // ─── Blur the shell even when the compositor's blur is off ───────────────────
 // Layer surfaces stop blurring together with decoration:blur:enabled — there
-// is no layers-only switch. The glass styles are not themselves without it, so
-// the shell turns the pass back on and hands every window a no_blur rule,
-// which leaves the blur running for its own surfaces and nothing else. Granite
-// is exempt: it has nothing to blur but the dock, and that is not worth
-// overriding somebody's setting for.
+// is no layers-only switch. Glass is not itself without it, and every style
+// has some (Granite's Spotlight and dock), so the shell turns the pass back
+// on and hands every window a no_blur rule, which leaves the blur running for
+// its own surfaces and nothing else.
 
 const NO_WINDOW_BLUR = "kiwi-no-window-blur"
 let forcedBlur = false
@@ -138,57 +109,37 @@ function blurEnabled(): Promise<boolean> {
     })
 }
 
-async function windowBlurRule(enabled: boolean) {
+async function forceBlur() {
+    if (forcedBlur || await blurEnabled()) return
     if (await dialect() === "lua") {
         await evalLua(
-            `hl.window_rule({ name = "${NO_WINDOW_BLUR}", enabled = ${enabled}, `
+            `hl.window_rule({ name = "${NO_WINDOW_BLUR}", enabled = true, `
             + `match = { class = ".*" }, no_blur = true })`,
             "no window blur")
+        await evalLua("hl.config({ decoration = { blur = { enabled = true } } })", "blur enabled")
     } else {
-        await keyword(`windowrule match:class .*, no_blur ${enabled ? "on" : "off"}`,
-            "no window blur")
+        await keyword("windowrule match:class .*, no_blur on", "no window blur")
+        await keyword("decoration:blur:enabled true", "blur enabled")
     }
-}
-
-async function setEnabled(on: boolean) {
-    if (await dialect() === "lua") {
-        await evalLua(`hl.config({ decoration = { blur = { enabled = ${on} } } })`, "blur enabled")
-    } else {
-        await keyword(`decoration:blur:enabled ${on ? "true" : "false"}`, "blur enabled")
-    }
-}
-
-async function syncForcedBlur(style: ThemeStyle) {
-    const wanted = style !== "granite"
-    if (wanted && !forcedBlur && !await blurEnabled()) {
-        await windowBlurRule(true)
-        await setEnabled(true)
-        forcedBlur = true
-        log.info("compositor blur was off — on for the shell's layers only")
-    } else if (!wanted && forcedBlur) {
-        await setEnabled(false)
-        await windowBlurRule(false)
-        forcedBlur = false
-        log.info("compositor blur handed back to its own setting")
-    }
+    forcedBlur = true
+    log.info("compositor blur was off — on for the shell's layers only")
 }
 
 function ruleLua(rule: Rule, enabled: boolean): string {
     return `hl.layer_rule({ name = "${rule.name}", enabled = ${enabled}, `
         + `match = { namespace = "^(${rule.namespace})$" }, blur = ${enabled}, `
-        + `blur_popups = ${enabled}, ignore_alpha = ${rule.ignoreAlpha} })`
+        + `blur_popups = ${enabled}, ignore_alpha = ${IGNORE_ALPHA} })`
 }
 
 function ruleHyprlang(rule: Rule, enabled: boolean): string {
     const on = enabled ? "on" : "off"
     return `layerrule match:namespace ^(${rule.namespace})$, `
-        + `blur ${on}, blur_popups ${on}, ignore_alpha ${rule.ignoreAlpha}`
+        + `blur ${on}, blur_popups ${on}, ignore_alpha ${IGNORE_ALPHA}`
 }
 
 async function applyLayerRules() {
-    const style = themeStyle()
-    await syncForcedBlur(style)
-    const wanted = rulesFor(style)
+    await forceBlur()
+    const wanted = rulesFor(themeStyle())
     const lua = await dialect() === "lua"
     for (const rule of RULES) {
         const enabled = wanted.has(rule.namespace)

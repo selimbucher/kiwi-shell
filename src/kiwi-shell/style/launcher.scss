@@ -9,30 +9,17 @@
     background: none;
 }
 
-// A menu, not a panel: it is a transient overlay that lands on top of whatever
-// window is open, which is what the menu pane is mixed for. The panel pane is
-// for the bar and the dock, which sit over the wallpaper.
+// The menu pane, not the panel one: it is a transient overlay that lands on
+// top of whatever window is open, which is what the menu pane is mixed for.
+// The panel pane is for the bar and the dock, which sit over the wallpaper.
 .launcher-panel {
-    @include menu;
+    @include float(menu);
+    color: var(--k-fg-2);
+    // the labels inside read it off the nearest element that sets it
+    --k-text-shadow: var(--k-float-text-shadow);
     border-radius: 28px;
     padding: 10px;
-    // Under the blur threshold on the launcher's layer (SHADOW_ALPHA in
-    // services/theme.ts), or the compositor blurs the wallpaper inside the
-    // shadow and the panel wears a halo.
-    box-shadow: var(--k-highlight), 0 24px 60px rgba(0, 0, 0, 0.1);
-}
-
-// Granite is the solid style, and this is the one surface in it with a lit
-// window behind it rather than the wallpaper — at 0.93 that window ghosts
-// through the panel. Its layer is not blurred either, so unlike the glass
-// styles its shadow can be a real one.
-.theme-granite .launcher-panel {
-    background-color: #050507;
-    box-shadow: var(--k-highlight), 0 24px 60px rgba(0, 0, 0, 0.4);
-}
-
-.theme-granite.appearance-light .launcher-panel {
-    background-color: #fafafb;
+    box-shadow: var(--k-float-highlight), var(--k-float-shadow);
 }
 
 .launcher-search-row {
