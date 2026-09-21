@@ -948,6 +948,7 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             namespace={LAYER.plain}
             name="ags-desktop"
             class={themeClasses(t => `Desktop ${t}`)}
+            css={conf(c => `--primary: ${c.primary_color};`)}
             gdkmonitor={gdkmonitor}
             // IGNORE: cover the full monitor (under bar and dock) so the
             // rubber band isn't clipped at the exclusive zones; the icon
