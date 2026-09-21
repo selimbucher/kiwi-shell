@@ -177,6 +177,9 @@ const rows: Accessor<Row[]> = createComputed(get =>
             : null,
     })))
 
+// Each row's position in the list, for the pointer to find the row it is over.
+const rowIndex = new WeakMap<Gtk.Widget, Accessor<number>>()
+
 function ResultRow({ row, index }: { row: Row, index: Accessor<number> }) {
     const selected = createComputed(get => get(selectedIdx) === get(index))
     const { result } = row
@@ -190,14 +193,10 @@ function ResultRow({ row, index }: { row: Row, index: Accessor<number> }) {
                 class={selected.as(on => on ? "launcher-row selected" : "launcher-row")}
                 spacing={12}
                 $={(self) => {
+                    rowIndex.set(self, index)
                     const click = new Gtk.GestureClick()
                     click.connect("released", () => activate(result))
                     self.add_controller(click)
-                    const motion = new Gtk.EventControllerMotion()
-                    // the pointer takes the selection, so clicking and Enter
-                    // never disagree about which row is the live one
-                    motion.connect("enter", () => setSelectedIdx(index()))
-                    self.add_controller(motion)
                 }}
             >
                 <Gtk.Image
@@ -277,6 +276,33 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     return Gdk.EVENT_PROPAGATE
                 })
                 self.add_controller(keys)
+
+                // A pointer that moves takes the selection, so clicking and
+                // Enter never disagree about which row is the live one. One
+                // that rests does not: every keystroke rebuilds the rows, and
+                // GTK hands the row that lands under a still pointer an enter
+                // and a motion at the same spot, which pulled the selection
+                // off the top result on each stroke. The window covers the
+                // screen, so only a hand on the mouse changes the position.
+                let pointer: [number, number] | null = null
+                const motion = new Gtk.EventControllerMotion()
+                motion.connect("enter", (_controller, x, y) => { pointer = [x, y] })
+                motion.connect("leave", () => { pointer = null })
+                motion.connect("motion", (_controller, x, y) => {
+                    if (!pointer || (pointer[0] === x && pointer[1] === y)) {
+                        pointer = [x, y]
+                        return
+                    }
+                    pointer = [x, y]
+                    for (let w = self.pick(x, y, Gtk.PickFlags.DEFAULT); w; w = w.get_parent()) {
+                        const index = rowIndex.get(w)
+                        if (index) {
+                            setSelectedIdx(index())
+                            return
+                        }
+                    }
+                })
+                self.add_controller(motion)
             }}
         >
             <box
