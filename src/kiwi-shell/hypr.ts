@@ -270,3 +270,39 @@ hyprland.connect("config-reloaded", () => {
         return GLib.SOURCE_REMOVE
     })
 })
+
+// ─── geometry-events plugin ───────────────────────────────────────────────────
+
+// kiwi's own Hyprland plugin (src/hyprland-geometry-events) announces window
+// moves and resizes, which Hyprland doesn't; the dock's auto-hide follows
+// them. The shell loads it itself, so nobody has to add it to their
+// compositor config.
+//
+// Loading is all it ever does. A copy that is already in the compositor, from
+// an older kiwi or from the user's own config, stays: it posts the same
+// event, and taking a plugin out of a running compositor can take the whole
+// session with it. The copy this build ships loads at the next login.
+//
+// Hyprland asks the user first when its plugin permissions are enforced, and
+// a plugin built for another Hyprland refuses to load. Either way the dock
+// still follows every other window event, and the reason is in the log.
+export async function loadGeometryPlugin() {
+    const path = typeof GEOMETRY_PLUGIN === "string" ? GEOMETRY_PLUGIN : ""
+    if (!path) {
+        log.info("this build ships no geometry-events plugin; the dock won't see windows moved by hand")
+        return
+    }
+    let loaded: { name: string }[]
+    try {
+        loaded = JSON.parse(await request("j/plugin list"))
+    } catch (e) {
+        log.error("geometry-events plugin: could not list the loaded plugins:", e as Error)
+        return
+    }
+    if (loaded.some(plugin => plugin.name === "geometry-events")) {
+        log.debug("geometry-events plugin already loaded")
+        return
+    }
+    if (await send(`plugin load ${path}`, "load the geometry-events plugin"))
+        log.info("geometry-events plugin loaded")
+}

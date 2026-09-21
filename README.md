@@ -72,17 +72,6 @@ yay -S kiwi-shell
 }
 ```
 
-**3.** Load the Hyprland plugin that tells the auto-hiding dock when a window is moved or resized:
-
-```nix
-{ inputs, pkgs, ... }:
-{
-  wayland.windowManager.hyprland.plugins = [
-    inputs.kiwi-shell.packages.${pkgs.system}.hyprland-geometry-events
-  ];
-}
-```
-
 ---
 
 ## Usage

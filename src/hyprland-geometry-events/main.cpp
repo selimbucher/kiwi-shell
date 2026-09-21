@@ -149,16 +149,15 @@ APICALL EXPORT std::string pluginAPIVersion() {
 }
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
-    if (std::string(__hyprland_api_get_hash()) != __hyprland_api_get_client_hash()) {
-        HyprlandAPI::addNotification(handle, "[geometry-events] Built for a different Hyprland version, not loaded", CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
-        throw std::runtime_error("[geometry-events] version mismatch");
-    }
+    // kiwi loads this at every start and logs why it failed, so a refusal is
+    // quiet here: no notification on screen for something the shell handles
+    if (std::string(__hyprland_api_get_hash()) != __hyprland_api_get_client_hash())
+        throw std::runtime_error("[geometry-events] built for a different Hyprland");
 
     g_geometryEvents = makeUnique<CGeometryEvents>();
     if (!g_geometryEvents->init(handle)) {
         g_geometryEvents.reset();
-        HyprlandAPI::addNotification(handle, "[geometry-events] CWindow::setBox not found, not loaded", CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
-        throw std::runtime_error("[geometry-events] no setBox to hook");
+        throw std::runtime_error("[geometry-events] no CWindow::setBox to hook");
     }
 
     return {.name = "geometry-events", .description = "Announces window moves and resizes on the event socket", .author = "selim", .version = "0.1.0"};
