@@ -85,6 +85,36 @@
         ];
       };
 
+      # ─── geometry-events Hyprland plugin ─────────────────────────────────────
+      # Posts windowgeometry>> on Hyprland's event socket when a window is
+      # moved or resized, which Hyprland itself never announces; the dock's
+      # auto-hide listens for it. See the header of main.cpp. Built against
+      # pkgs.hyprland, so it loads only into a Hyprland from the same nixpkgs:
+      # have this flake follow the system's nixpkgs.
+      hyprland-geometry-events = pkgs.hyprlandPlugins.mkHyprlandPlugin {
+        pluginName = "geometry-events";
+        version = "0.1.0";
+
+        src = ./src/hyprland-geometry-events;
+
+        buildPhase = ''
+          runHook preBuild
+          $CXX -shared -fPIC -std=c++23 -O2 $(pkg-config --cflags hyprland) main.cpp -o libgeometry-events.so
+          runHook postBuild
+        '';
+
+        installPhase = ''
+          runHook preInstall
+          install -Dm755 libgeometry-events.so $out/lib/libgeometry-events.so
+          runHook postInstall
+        '';
+
+        meta = {
+          description = "Hyprland plugin: announces window moves and resizes on the event socket";
+          platforms = pkgs.lib.platforms.linux;
+        };
+      };
+
       astalPackages = with ags.packages.${system}; [
         io
         astal4
@@ -203,6 +233,7 @@
         shell = kiwi-package;
         app-capture = app-capture;
         hyprland-shortcuts = hyprland-shortcuts;
+        hyprland-geometry-events = hyprland-geometry-events;
         settings = kiwi-settings.packages.${system}.default;
 
         default = pkgs.symlinkJoin {

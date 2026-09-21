@@ -195,14 +195,12 @@ const HOLD_TICK_MS = 100
 // A window in the strip hides the dock the moment it gets there and brings
 // it back the moment it leaves: the hold's grace period is for the pointer,
 // not for windows. The strip is measured whenever Hyprland says a window
-// moved in one step (opening, closing, floating, fullscreen, another
-// workspace). It never announces a drag or a resize, and the strip is not
-// polled for them. What follows a drag is announced, though: focus moves on
-// to another window, or the pointer comes to the dock and leaves it again,
-// and the strip is measured then too, so a hand-moved window is accounted
-// for by the time the dock's answer matters.
+// moved: in one step (opening, closing, floating, fullscreen, another
+// workspace), or by hand or by a keybind. Hyprland announces the last kind
+// only with kiwi's geometry-events plugin loaded (src/hyprland-geometry-
+// events): windowgeometry, once per move, a drag when it is let go.
 const COVER_EVENTS = new Set([
-    "changefloatingmode", "fullscreen", "movewindowv2", "activewindowv2",
+    "changefloatingmode", "fullscreen", "movewindowv2", "windowgeometry",
 ])
 // thin full-width band at the very bottom edge: traveling along the screen
 // edge (e.g. after summoning the dock from a corner) keeps the hold alive
@@ -304,9 +302,6 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     const poke = () => {
         if (conf().dock !== "auto-hide") return
         lastEvidence = GLib.get_monotonic_time()
-        // a hold begins: the windows may have been moved by hand since the
-        // strip was last measured
-        if (watchdogId === null) measureCover()
         setHeld(true)
         if (watchdogId !== null) return
         watchdogId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, HOLD_TICK_MS, () => {
@@ -322,9 +317,6 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             if (GLib.get_monotonic_time() - lastEvidence
                 > DOCK_HIDE_TIMEOUT * 1000) {
                 watchdogId = null
-                // whether the dock hides now is the strip's answer, so ask
-                // it fresh rather than trust the last event's
-                measureCover()
                 setHeld(false)
                 return GLib.SOURCE_REMOVE
             }
