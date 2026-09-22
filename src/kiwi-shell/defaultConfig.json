@@ -13,6 +13,7 @@
   "desktop_icons": true,
   "desktop_free_placement": true,
   "popup_monitor": "active",
+  "search_engine": "duckduckgo",
   "dock_arpeggio": false,
   "indicator_bar_position": "bottom",
   "auto_nightshift": false,

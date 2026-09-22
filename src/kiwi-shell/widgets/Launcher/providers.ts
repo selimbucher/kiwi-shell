@@ -9,6 +9,7 @@ import { logger } from "../../log"
 import { mapVersion } from "../desktopEntries"
 import { entryForClient, giconForEntry } from "../appIcon"
 import { clientSelector, focusWindow, exitSession } from "../../hypr"
+import { conf } from "../config"
 
 const log = logger("launcher")
 
@@ -45,7 +46,8 @@ export type Result = {
 // ─── Applications ─────────────────────────────────────────────────────────────
 
 const apps = new Apps.Apps()
-// the default (0) lets a two-letter query match half a Steam library
+// only for the typo fallback below; the default (0) lets a two-letter query
+// match half a Steam library
 apps.minScore = 0.4
 
 // desktopEntries already watches the application dirs — piggyback on it to
@@ -64,8 +66,46 @@ function appResult(application: Apps.Application): Result {
     }
 }
 
+// How well an app answers the query, best first. AstalApps' fuzzy score put
+// Icon Library, "bra" in the middle of a word, ahead of Brave Web Browser; a
+// name the query starts is what someone typing it is after. Keywords, the
+// command and the app id ("nau" for Files) come after the name's own words,
+// and the description after anything in the name.
+const words = (text: string) =>
+    text.split(/[\s\-_.]+|(?<=[a-z])(?=[A-Z])/).filter(Boolean).map(w => w.toLowerCase())
+
+function tier(application: Apps.Application, needle: string): number {
+    const name = application.name.toLowerCase()
+    if (name === needle) return 6
+    if (name.startsWith(needle)) return 5
+    if (words(application.name).some(w => w.startsWith(needle))) return 4
+    const command = (application.executable ?? "").split(" ")[0].split("/").pop()!.toLowerCase()
+    // the last part of a reverse-DNS id; the rest names the developer
+    const id = (application.entry ?? "").replace(/\.desktop$/, "").split(".").pop()!.toLowerCase()
+    const terms = [...(application.keywords ?? []).map(k => k.toLowerCase()), command, id]
+    if (terms.some(t => t.startsWith(needle))) return 3
+    if (name.includes(needle)) return 2
+    if (words(application.description ?? "").some(w => w.startsWith(needle))) return 1
+    return 0
+}
+
+// Within a tier the apps opened from here most come first (AstalApps counts
+// every launch() in its cache). A typo matches no tier; only then does the
+// fuzzy score get a say.
 function appResults(text: string, limit: number): Result[] {
-    return apps.fuzzy_query(text).slice(0, limit).map(appResult)
+    const needle = text.trim().toLowerCase()
+    let scored = apps.get_list()
+        .map(application => ({ application, tier: tier(application, needle) }))
+        .filter(s => s.tier > 0)
+    if (scored.length === 0)
+        scored = apps.fuzzy_query(text).map(application => ({ application, tier: 0 }))
+    return scored
+        .sort((a, b) => b.tier - a.tier
+            || b.application.frequency - a.application.frequency
+            || a.application.name.length - b.application.name.length
+            || a.application.name.localeCompare(b.application.name))
+        .slice(0, limit)
+        .map(s => appResult(s.application))
 }
 
 // ─── Open windows ─────────────────────────────────────────────────────────────
@@ -199,19 +239,29 @@ function actionResults(text: string, limit: number): Result[] {
 
 // ─── Web search ───────────────────────────────────────────────────────────────
 // The last row, always: a search box that comes up empty is a dead end, and
-// the next thing the user would do is open a browser and type it again.
+// the next thing the user would do is open a browser and type it again. The
+// engine is the search_engine setting.
 
-const SEARCH_URL = "https://duckduckgo.com/?q="
+export const SEARCH_ENGINES: Record<string, { name: string, url: string }> = {
+    duckduckgo: { name: "DuckDuckGo", url: "https://duckduckgo.com/?q=" },
+    google: { name: "Google", url: "https://www.google.com/search?q=" },
+    bing: { name: "Bing", url: "https://www.bing.com/search?q=" },
+    brave: { name: "Brave Search", url: "https://search.brave.com/search?q=" },
+    ecosia: { name: "Ecosia", url: "https://www.ecosia.org/search?q=" },
+    startpage: { name: "Startpage", url: "https://www.startpage.com/do/search?query=" },
+    kagi: { name: "Kagi", url: "https://kagi.com/search?q=" },
+}
 
 function webResult(text: string): Result {
+    const engine = SEARCH_ENGINES[conf().search_engine] ?? SEARCH_ENGINES.duckduckgo
     return {
         key: "web",
         group: "web",
         name: text,
-        detail: "Search with DuckDuckGo",
+        detail: `Search with ${engine.name}`,
         iconName: "system-search-symbolic",
         verb: "Search",
-        activate: () => run(`xdg-open ${GLib.shell_quote(SEARCH_URL + encodeURIComponent(text))}`),
+        activate: () => run(`xdg-open ${GLib.shell_quote(engine.url + encodeURIComponent(text))}`),
     }
 }
 
