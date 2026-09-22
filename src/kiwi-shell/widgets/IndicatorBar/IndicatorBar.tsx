@@ -5,11 +5,13 @@ import AstalWp from "gi://AstalWp"
 import { timeout } from "ags/time"
 import { exec } from "ags/process"
 import { readFile } from "ags/file"
+import GLib from "gi://GLib"
+import Gtk4LayerShell from "gi://Gtk4LayerShell"
 
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../iconNames"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
-import { dockOverlap } from "../Dock/dock-state"
+import { dockOverlap, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION } from "../Dock/dock-state"
 import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessAvailable } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 import { watchIndicatorKeys } from "../inputWatcher"
@@ -87,16 +89,81 @@ function resetIndicatorTimeout() {
 }
 
 
+// ─── Where it sits ────────────────────────────────────────────────────────────
+// Above the bottom edge, or above the dock while it overlays that edge
+// (auto-hide). The surface moves by its layer margin rather than a CSS margin:
+// a CSS margin is part of the surface, so the surface resized with the dock,
+// and while its fade-in still ran Hyprland animated that resize and stretched
+// the pane. It follows the dock's slide, same length and curve, so it rides
+// on the dock rather than jumping ahead of it.
+
+const EDGE_GAP = 20
+const DOCK_GAP = 8
+
+function bottomMargin(): number {
+  if (conf().indicator_bar_position === "left") return 0
+  const overlap = dockOverlap()
+  return overlap > 0 ? overlap + DOCK_GAP : EDGE_GAP
+}
+
+// CSS `ease`, cubic-bezier(0.25, 0.1, 0.25, 1): the curve of the dock's slide
+function ease(x: number): number {
+  const bezier = (t: number, a: number, b: number) =>
+    3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3
+  let lo = 0, hi = 1, t = x
+  for (let i = 0; i < 20; i++) {
+    t = (lo + hi) / 2
+    if (bezier(t, 0.25, 0.25) < x) lo = t
+    else hi = t
+  }
+  return bezier(t, 0.1, 1)
+}
+
+function followDock(self: Astal.Window) {
+  let margin = bottomMargin()
+  let tick = 0
+  const place = (px: number) => {
+    margin = px
+    Gtk4LayerShell.set_margin(self, Gtk4LayerShell.Edge.BOTTOM, Math.round(px))
+  }
+  const stop = () => {
+    if (tick) self.remove_tick_callback(tick)
+    tick = 0
+  }
+  const glide = () => {
+    const to = bottomMargin()
+    stop()
+    if (!self.get_mapped() || to === margin) return place(to)
+    const from = margin
+    const duration = (to > from ? DOCK_SLIDE_DURATION : DOCK_SLIDE_OUT_DURATION) * 1000
+    let start = -1
+    tick = self.add_tick_callback((_widget, clock) => {
+      const now = clock.get_frame_time()
+      if (start < 0) start = now
+      const progress = Math.min(1, (now - start) / duration)
+      place(from + (to - from) * ease(progress))
+      if (progress < 1) return GLib.SOURCE_CONTINUE
+      tick = 0
+      return GLib.SOURCE_REMOVE
+    })
+  }
+  place(margin)
+  const unsubscribe = [dockOverlap.subscribe(glide), conf.subscribe(glide)]
+  onCleanup(() => {
+    stop()
+    unsubscribe.forEach(u => u())
+  })
+}
+
 export default function IndicatorBar({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
   return (
     <window
       namespace={LAYER.panel}
-      css={createComputed(get =>
-        `--primary: ${get(conf).primary_color}; --indicator-bottom: ${20 + get(dockOverlap)}px;`
-      )}
+      css={conf(c => `--primary: ${c.primary_color};`)}
       $={ self => {
         onCleanup(() => destroyWindow(self))
+        followDock(self)
         timeout(1000, () => {
           waiting = false
         })

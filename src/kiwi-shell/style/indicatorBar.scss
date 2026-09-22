@@ -1,11 +1,5 @@
 @use 'theme' as *;
 
-.IndicatorBar {
-    // the whole value comes from JS: 20px, plus the dock's height while the
-    // dock is overlaying the bottom edge rather than reserving it (auto-hide)
-    margin-bottom: var(--indicator-bottom, 20px);
-}
-
 .indicator-bar {
     transition: opacity 1s ease-out;
     .indicator-icon {
@@ -29,7 +23,6 @@
 }
 
 .IndicatorBar.left {
-    margin-bottom: 0;
     margin-left: 8px;
 
     .indicator-icon {
