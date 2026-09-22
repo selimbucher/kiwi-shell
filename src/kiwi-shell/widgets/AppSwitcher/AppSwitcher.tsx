@@ -5,6 +5,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, createBinding, onCleanup } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
+import Graphene from "gi://Graphene"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { playSound } from "../sound"
@@ -12,6 +13,7 @@ import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePrevi
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
+import { livePreviews, showPreviews, clearPreviews, PreviewHoles, type PreviewTile } from "../services/previews"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, closeWindow, clientSelector, type BindOp } from "../../hypr"
 import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
@@ -140,6 +142,11 @@ function hideAppSwitcher() {
     setVisibility(false)
 }
 
+// the compositor draws into the holes for as long as it is told to
+isVisible.subscribe(() => {
+    if (!isVisible()) clearPreviews()
+})
+
 function selectNextClient() {
     if (!isVisible()) return
     const clients = displayedClients()
@@ -196,11 +203,64 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
             anchor={Astal.WindowAnchor.CENTER | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}
             application={app}
             layer={Astal.Layer.TOP}
-            $={(self) => onCleanup(() => destroyWindow(self))}
+            $={(self) => {
+                windowRef = self
+                onCleanup(() => {
+                    clearPreviews()
+                    windowRef = null
+                    destroyWindow(self)
+                })
+            }}
         >
             <Windows gdkmonitor={gdkmonitor} />
         </window>
     )
+}
+
+// ─── Where the tiles are ──────────────────────────────────────────────────────
+// With kiwi-previews in the compositor the tiles are holes in this surface
+// that it draws the windows into (services/previews.ts). The holes and the
+// rectangles it is told about are measured after every layout, from the
+// widget that holds the picture.
+
+// the picture's bottom corners; its top ones meet the title bar
+const TILE_RADIUS = 6
+
+let windowRef: Astal.Window | null = null
+let holesRef: InstanceType<typeof PreviewHoles> | null = null
+const tileRefs = new Map<string, Gtk.Widget>()
+
+function measureTiles() {
+    if (!livePreviews() || !windowRef || !holesRef) return
+
+    // widget coordinates start inside the window's padding; the compositor
+    // counts from the surface
+    const [dx, dy] = windowRef.get_surface_transform()
+    const holes: Graphene.Rect[] = []
+    const tiles: PreviewTile[] = []
+
+    for (const [address, widget] of tileRefs) {
+        if (!widget.get_mapped()) continue
+        const [inHoles, local] = widget.compute_bounds(holesRef)
+        const [inWindow, onSurface] = widget.compute_bounds(windowRef)
+        if (!inHoles || !inWindow || local.get_width() < 1 || local.get_height() < 1) continue
+
+        holes.push(local)
+        tiles.push({
+            address,
+            x: onSurface.get_x() + dx,
+            y: onSurface.get_y() + dy,
+            width: onSurface.get_width(),
+            height: onSurface.get_height(),
+        })
+    }
+
+    holesRef.holes = holes
+    holesRef.radius = TILE_RADIUS
+    holesRef.queue_draw()
+    // the compositor draws square corners; the pane's own glass covers the
+    // rounded ones, which is what gives the picture its corners
+    showPreviews(LAYER.switcher, 0, tiles)
 }
 
 // Uniform height, width hugs the window's aspect ratio — the tile IS the
@@ -273,27 +333,38 @@ function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         return chunks
     })
 
-    return (
-        <centerbox class="app-switch-menu">
-            <box
-                $type="center"
-                class="app-switch-container"
-                orientation={Gtk.Orientation.VERTICAL}
-                spacing={4}
-                // hug the rows — FILL (the default) would stretch the
-                // panel to the full window width, erasing the edge gap
-                halign={Gtk.Align.CENTER}
-            >
-                <For each={rows}>
-                    {(row) => (
-                        <box spacing={4} halign={Gtk.Align.CENTER}>
-                            {row.map(client => <WindowPreview client={client} />)}
-                        </box>
-                    )}
-                </For>
-            </box>
-        </centerbox>
-    )
+    const pane = (
+        <box
+            class="app-switch-container"
+            orientation={Gtk.Orientation.VERTICAL}
+            spacing={4}
+            // hug the rows — FILL (the default) would stretch the
+            // panel to the full window width, erasing the edge gap
+            halign={Gtk.Align.CENTER}
+        >
+            <For each={rows}>
+                {(row) => (
+                    <box spacing={4} halign={Gtk.Align.CENTER}>
+                        {row.map(client => <WindowPreview client={client} />)}
+                    </box>
+                )}
+            </For>
+        </box>
+    ) as Gtk.Box
+
+    // the pane hangs in the widget that cuts the holes: a mask covers
+    // everything it draws, the tiles' own backgrounds included
+    const holes = new PreviewHoles({ halign: Gtk.Align.CENTER })
+    holes.append(pane)
+    holes.onLayout = measureTiles
+    holesRef = holes
+    onCleanup(() => {
+        if (holesRef === holes) holesRef = null
+    })
+
+    const menu = new Gtk.CenterBox({ cssClasses: ["app-switch-menu"] })
+    menu.set_center_widget(holes)
+    return menu
 }
 
 export function WindowPreview({ client }: { client: any }) {
@@ -302,8 +373,10 @@ export function WindowPreview({ client }: { client: any }) {
     const address = client.get_address()
     const [texture, setTexture] = createState<Gdk.Texture | null>(null)
 
+    // with kiwi-previews the compositor draws the window itself, live, and
+    // nothing is captured
     createEffect(() => {
-        if (!isVisible()) return
+        if (!isVisible() || livePreviews()) return
         captureWindowToTexture(address).then(t => {
             if (t) setTexture(t)
         })
@@ -325,9 +398,12 @@ export function WindowPreview({ client }: { client: any }) {
         <button class="window-preview" onclicked={activate}>
             <box orientation={Gtk.Orientation.VERTICAL} spacing={0}>
             <box class="preview-title-bar">
-                {/* no app icon here — the badge on the thumbnail carries
-                    it; maxWidthChars=1 lets the ellipsized label shrink
-                    below its natural width instead of clipping early */}
+                {/* thumbnails of same-app windows look alike, so the icon
+                    says which app at a glance; it sits here rather than on
+                    the picture, which the compositor may be drawing.
+                    maxWidthChars=1 lets the ellipsized label shrink below
+                    its natural width instead of clipping early */}
+                <AppIconImage entry={entryForClient(client)} pixelSize={16} cssClass="preview-title-icon" />
                 <label
                     class="preview-title"
                     label={titleBinding}
@@ -344,6 +420,10 @@ export function WindowPreview({ client }: { client: any }) {
                     requested */}
                 <Gtk.ScrolledWindow
                     class="window-preview-container"
+                    $={(self: Gtk.Widget) => {
+                        tileRefs.set(address, self)
+                        onCleanup(() => tileRefs.delete(address))
+                    }}
                     overflow={Gtk.Overflow.HIDDEN}
                     hscrollbarPolicy={Gtk.PolicyType.NEVER}
                     vscrollbarPolicy={Gtk.PolicyType.NEVER}
@@ -374,25 +454,15 @@ export function WindowPreview({ client }: { client: any }) {
                         paintable={texture}
                     />
                 </Gtk.ScrolledWindow>
-                {/* until the window has a capture */}
+                {/* until the window has a capture; with live previews the
+                    compositor has drawn it before this is ever seen */}
                 <box
                     $type="overlay"
                     halign={Gtk.Align.CENTER}
                     valign={Gtk.Align.CENTER}
-                    visible={texture(t => !t)}
+                    visible={texture(t => !t && !livePreviews())}
                 >
                     <AppIconImage entry={entryForClient(client)} pixelSize={64} cssClass="switcher-badge-icon" />
-                </box>
-                {/* the recognition anchor — thumbnails of same-app windows
-                    look alike, the badge says which app at a glance */}
-                <box
-                    $type="overlay"
-                    class="switcher-badge"
-                    halign={Gtk.Align.END}
-                    valign={Gtk.Align.END}
-                    visible={texture(t => !!t)}
-                >
-                    <AppIconImage entry={entryForClient(client)} pixelSize={40} cssClass="switcher-badge-icon" />
                 </box>
             </overlay>
             </box>

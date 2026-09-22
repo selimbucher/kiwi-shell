@@ -2,6 +2,7 @@ declare const SRC: string
 // where the build put kiwi's Hyprland plugin (src/hyprland-geometry-events);
 // left undefined by a build that doesn't ship it
 declare const GEOMETRY_PLUGIN: string | undefined
+declare const PREVIEWS_PLUGIN: string | undefined
 
 declare module "inline:*" {
   const content: string

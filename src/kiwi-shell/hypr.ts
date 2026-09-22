@@ -271,38 +271,64 @@ hyprland.connect("config-reloaded", () => {
     })
 })
 
-// ─── geometry-events plugin ───────────────────────────────────────────────────
-
-// kiwi's own Hyprland plugin (src/hyprland-geometry-events) announces window
-// moves and resizes, which Hyprland doesn't; the dock's auto-hide follows
-// them. The shell loads it itself, so nobody has to add it to their
-// compositor config.
+// The shell's own Hyprland plugins (src/hyprland-*), loaded by the shell so
+// nobody has to add them to their compositor config:
 //
-// Loading is all it ever does. A copy that is already in the compositor, from
-// an older kiwi or from the user's own config, stays: it posts the same
-// event, and taking a plugin out of a running compositor can take the whole
+//   geometry-events  announces window moves and resizes, which Hyprland
+//                    doesn't; the dock's auto-hide follows them
+//   kiwi-previews    draws the switcher's window previews from the windows
+//                    themselves, so the shell never captures them
+//
+// Loading is all this ever does. A copy that is already in the compositor,
+// from an older kiwi or from the user's own config, stays: it does the same
+// thing, and taking a plugin out of a running compositor can take the whole
 // session with it. The copy this build ships loads at the next login.
 //
 // Hyprland asks the user first when its plugin permissions are enforced, and
-// a plugin built for another Hyprland refuses to load. Either way the dock
-// still follows every other window event, and the reason is in the log.
-export async function loadGeometryPlugin() {
-    const path = typeof GEOMETRY_PLUGIN === "string" ? GEOMETRY_PLUGIN : ""
-    if (!path) {
-        log.info("this build ships no geometry-events plugin; the dock won't see windows moved by hand")
-        return
-    }
+// a plugin built for another Hyprland refuses to load. Either way the shell
+// carries on without it, and the reason is in the log.
+
+const PLUGINS: { name: string, path: string | undefined, without: string }[] = [
+    {
+        name: "geometry-events",
+        path: typeof GEOMETRY_PLUGIN === "string" ? GEOMETRY_PLUGIN : undefined,
+        without: "the dock won't see windows moved by hand",
+    },
+    {
+        name: "kiwi-previews",
+        path: typeof PREVIEWS_PLUGIN === "string" ? PREVIEWS_PLUGIN : undefined,
+        without: "the switcher captures its previews instead of showing them live",
+    },
+]
+
+const loadedPlugins = new Set<string>()
+
+/** Whether a kiwi plugin is in the compositor. Answers only after loadPlugins(). */
+export const hasPlugin = (name: string) => loadedPlugins.has(name)
+
+export async function loadPlugins() {
     let loaded: { name: string }[]
     try {
         loaded = JSON.parse(await request("j/plugin list"))
     } catch (e) {
-        log.error("geometry-events plugin: could not list the loaded plugins:", e as Error)
+        log.error("could not list the compositor's plugins:", e as Error)
         return
     }
-    if (loaded.some(plugin => plugin.name === "geometry-events")) {
-        log.debug("geometry-events plugin already loaded")
-        return
+
+    for (const plugin of PLUGINS) {
+        if (loaded.some(p => p.name === plugin.name)) {
+            loadedPlugins.add(plugin.name)
+            log.debug(`${plugin.name} plugin already loaded`)
+            continue
+        }
+        if (!plugin.path) {
+            log.info(`this build ships no ${plugin.name} plugin; ${plugin.without}`)
+            continue
+        }
+        if (await send(`plugin load ${plugin.path}`, `load the ${plugin.name} plugin`)) {
+            loadedPlugins.add(plugin.name)
+            log.info(`${plugin.name} plugin loaded`)
+        } else
+            log.info(`without the ${plugin.name} plugin, ${plugin.without}`)
     }
-    if (await send(`plugin load ${path}`, "load the geometry-events plugin"))
-        log.info("geometry-events plugin loaded")
 }

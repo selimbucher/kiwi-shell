@@ -17,7 +17,7 @@ import { logger } from "./log"
 
 import steamDesktopPatcher from "./widgets/services/steamDesktopPatcher";
 import nightShiftService from "./widgets/services/nightShiftSchedule"
-import { loadGeometryPlugin } from "./hypr"
+import { loadPlugins } from "./hypr"
 
 logger("kiwi").info("kiwi-shell starting")
 
@@ -29,7 +29,7 @@ app.start({
   main() {
     steamDesktopPatcher()
     nightShiftService()
-    loadGeometryPlugin()
+    loadPlugins()
 
     const monitors = createBinding(app, "monitors")
 

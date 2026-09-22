@@ -41,7 +41,11 @@
 
 // the title ends before the ✕, 3px short of it: the bar is glass in most
 // styles, so no fill laid over the text could match it
-.preview-tile:hover .preview-title {
+.preview-tile:hover .preview-title-icon {
+    margin-right: 6px;
+}
+
+.preview-title {
     margin-right: 11px;
 }
 
@@ -74,6 +78,10 @@
     background-color: var(--k-fill-subtle);
     border-radius: 8px;
     border-color: var(--primary);
+}
+
+.preview-title-icon {
+    margin-right: 6px;
 }
 
 .preview-title {

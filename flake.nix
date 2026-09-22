@@ -143,6 +143,27 @@
             };
           };
 
+          # ─── kiwi-previews Hyprland plugin ────────────────────────────────
+          # Draws the switcher's window previews from the windows themselves,
+          # so the shell never has to capture them. See the header of main.cpp.
+          kiwi-previews = pkgs.hyprlandPlugins.mkHyprlandPlugin {
+            hyprland = hyprlandPackage;
+            pluginName = "kiwi-previews";
+            version = "0.1.0";
+
+            src = ./src/hyprland-previews;
+
+            nativeBuildInputs = with pkgs; [
+              meson
+              ninja
+            ];
+
+            meta = {
+              description = "Hyprland plugin: draws kiwi-shell's window previews inside the compositor";
+              platforms = pkgs.lib.platforms.linux;
+            };
+          };
+
           astalPackages = with ags.packages.${system}; [
             io
             astal4
@@ -191,7 +212,8 @@
 
               # Compilation
               ags bundle ${entry} $out/bin/.${pname}-core -d "SRC='$out/share/kiwi-shell'" \
-                -d "GEOMETRY_PLUGIN='${hyprland-geometry-events}/lib/kiwi-shell/libgeometry-events.so'"
+                -d "GEOMETRY_PLUGIN='${hyprland-geometry-events}/lib/kiwi-shell/libgeometry-events.so'" \
+                -d "PREVIEWS_PLUGIN='${kiwi-previews}/lib/kiwi-shell/libkiwi-previews.so'"
 
               # Runtime Dependencies Wrapper
               wrapProgram $out/bin/.${pname}-core \
@@ -267,6 +289,7 @@
             hyprland-shortcuts
             kiwi-surface
             hyprland-geometry-events
+            kiwi-previews
             extraPackages
             ;
           settings = kiwi-settings.packages.${system}.default;
