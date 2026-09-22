@@ -24,11 +24,7 @@
     min-height: 16px;
     padding: 0;
     margin-right: 3px;
-    // solid ground so the ✕ stays legible over the title text it covers;
-    // the ring extends it in the bar color, keeping a small text-free gap
-    // around the circle
     background-color: var(--k-close);
-    box-shadow: 0 0 0 3px var(--k-close);
     color: var(--k-fg-3);
     opacity: 0;
     transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease;
@@ -41,6 +37,12 @@
 
 .preview-tile:hover .switcher-preview-close {
     opacity: 1;
+}
+
+// the title ends before the ✕, 3px short of it: the bar is glass in most
+// styles, so no fill laid over the text could match it
+.preview-tile:hover .preview-title {
+    margin-right: 11px;
 }
 
 // a button so the whole tile is clickable — flattened, the tile look

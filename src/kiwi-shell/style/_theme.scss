@@ -65,15 +65,15 @@
 @mixin granite {
     @include text;
     --k-shadow: 0 10px 26px rgba(0, 0, 0, 0.34);
-    --k-panel: rgba(0, 0, 0, 0.9);
-    --k-menu: rgba(0, 0, 0, 0.93);
-    --k-panel-hover: rgba(22, 22, 24, 0.92);
+    --k-panel: rgba(0, 0, 0, 0.95);
+    --k-menu: rgba(0, 0, 0, 0.97);
+    --k-panel-hover: rgba(22, 22, 24, 0.96);
     --k-sheen: none;
-    --k-border: rgba(56, 56, 56, 0.9);
+    --k-border: rgba(56, 56, 56, 0.95);
     --k-highlight: inset 0 0 0 0 transparent;
     --k-preview-bar: #000000;
-    --k-stack-1: rgba(30, 30, 33, 0.95);
-    --k-stack-2: rgba(20, 20, 22, 0.9);
+    --k-stack-1: rgba(30, 30, 33, 0.97);
+    --k-stack-2: rgba(20, 20, 22, 0.94);
     --k-close: rgba(44, 44, 48, 0.98);
 }
 
