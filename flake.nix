@@ -39,8 +39,10 @@
       # runs. The plugin is compiled against Hyprland's internal headers and
       # refuses to load into any other build (main.cpp), so it has to come
       # from that exact package; the rest only speaks Wayland and IPC.
+      # hyprlandPackage, not hyprland: the astal libraries below are taken
+      # with `with`, and one of them is called hyprland
       kiwiFor =
-        pkgs: hyprland:
+        pkgs: hyprlandPackage:
         let
           # ─── hyprland-shortcuts C library ────────────────────────────────────────
           hyprland-shortcuts = pkgs.stdenv.mkDerivation {
@@ -124,7 +126,7 @@
           # auto-hide listens for it, and the shell loads it at start (hypr.ts).
           # See the header of main.cpp.
           hyprland-geometry-events = pkgs.hyprlandPlugins.mkHyprlandPlugin {
-            inherit hyprland;
+            hyprland = hyprlandPackage;
             pluginName = "geometry-events";
             version = "0.1.0";
 
