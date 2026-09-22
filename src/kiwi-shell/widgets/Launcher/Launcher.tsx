@@ -8,8 +8,9 @@ import Pango from "gi://Pango"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, type BindOp } from "../../hypr"
+import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, dialect, type BindOp } from "../../hypr"
 import { shortcut, combo, type Shortcut } from "../../shortcuts"
+import { globalShortcut } from "../services/globalShortcuts"
 import { search, GROUP_LABEL, type Result } from "./providers"
 import { evaluate, formatNumber } from "./calc"
 
@@ -49,8 +50,17 @@ const results: Accessor<Result[]> = createComputed(get => {
 // Reloads wipe dynamic binds; registerBindSetup re-runs this after each.
 // The combo is only unbound when the shortcut changes (rebindAll), since
 // that also takes a switcher confirm on the same key with it.
+//
+// Under a hyprlang config the tap stays an exec: its global dispatcher sends
+// a release even for a bind that was shadowed, so Super+T would open
+// Spotlight too.
 
 let registered: Shortcut | null = null
+
+const PRESS = globalShortcut("launcher", "Spotlight: open or close",
+    "press", () => toggleLauncher("toggle"))
+const TAP = globalShortcut("launcher-tap", "Spotlight: open or close on a tap",
+    "release", () => toggleLauncher("toggle"))
 
 async function registerLauncherBind() {
     const s = shortcut("launcher")
@@ -68,7 +78,7 @@ async function registerLauncherBind() {
             return
         }
         haveToggle = binds.some((b: any) =>
-            b.description === "kiwi: launcher toggle" && b.key === s.key && b.modmask === s.modmask)
+            b.description === "kiwi: launcher" && b.key === s.key && b.modmask === s.modmask)
     } catch (e) {
         log.error("failed to query binds, skipping setup:", e)
         return
@@ -79,9 +89,12 @@ async function registerLauncherBind() {
         return
     }
 
+    const action = !s.tap ? PRESS
+        : await dialect() === "lua" ? TAP
+        : { exec: "kiwictl launcher toggle" }
     if (await applyBinds([{
-        bind: combo(s), action: { exec: "kiwictl launcher toggle" },
-        description: "kiwi: launcher toggle", flags: { release: s.tap },
+        bind: combo(s), action,
+        description: "kiwi: launcher", flags: { release: s.tap },
     }], "launcher bind")) {
         registered = s
         log.info(`registered launcher bind on ${combo(s)}${s.tap ? " (tap)" : ""}`)

@@ -22,7 +22,7 @@ struct _KiwiShortcutsManager {
 
 G_DEFINE_TYPE(KiwiShortcutsManager, kiwi_shortcuts_manager, G_TYPE_OBJECT)
 
-enum { SIGNAL_ACTIVATED, N_SIGNALS };
+enum { SIGNAL_ACTIVATED, SIGNAL_RELEASED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 /* ── Wayland registry callbacks ───────────────────────────────────────── */
@@ -60,7 +60,11 @@ shortcut_pressed (void *data, struct hyprland_global_shortcut_v1 *shortcut,
 
 static void
 shortcut_released (void *data, struct hyprland_global_shortcut_v1 *shortcut,
-                   uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec) {}
+                   uint32_t tv_sec_hi, uint32_t tv_sec_lo, uint32_t tv_nsec)
+{
+    ShortcutEntry *entry = data;
+    g_signal_emit(entry->manager, signals[SIGNAL_RELEASED], 0, entry->id);
+}
 
 static const struct hyprland_global_shortcut_v1_listener shortcut_listener = {
     .pressed  = shortcut_pressed,
@@ -164,6 +168,25 @@ kiwi_shortcuts_manager_class_init (KiwiShortcutsManagerClass *klass)
      */
     signals[SIGNAL_ACTIVATED] = g_signal_new(
         "activated",
+        G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_FIRST,
+        0, NULL, NULL,
+        g_cclosure_marshal_VOID__STRING,
+        G_TYPE_NONE, 1,
+        G_TYPE_STRING
+    );
+
+    /**
+     * KiwiShortcutsManager::released:
+     * @id: the shortcut id passed to kiwi_shortcuts_manager_register()
+     *
+     * Emitted when a registered shortcut key is released. A release bind
+     * (bindr) sends only this; a press bind sends activated, and with the
+     * plain `global` dispatcher of a classic config both, so a shortcut
+     * should listen to one of the two.
+     */
+    signals[SIGNAL_RELEASED] = g_signal_new(
+        "released",
         G_TYPE_FROM_CLASS(klass),
         G_SIGNAL_RUN_FIRST,
         0, NULL, NULL,

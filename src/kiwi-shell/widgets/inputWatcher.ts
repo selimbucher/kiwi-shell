@@ -1,8 +1,18 @@
 import { logger } from "../log"
 const log = logger("mediakeys")
-import KiwiShortcuts from "gi://KiwiShortcuts"
 import { brightnessAvailable, kbdAvailable } from "./brightness"
 import { applyBinds, currentBinds, registerBindSetup } from "../hypr"
+import { globalShortcut } from "./services/globalShortcuts"
+
+const DESCRIPTIONS: Record<string, string> = {
+  'volume-up':           'Volume Up',
+  'volume-down':         'Volume Down',
+  'volume-mute':         'Mute / Unmute',
+  'brightness-up':       'Brightness Up',
+  'brightness-down':     'Brightness Down',
+  'kbd-brightness-up':   'Keyboard Brightness Up',
+  'kbd-brightness-down': 'Keyboard Brightness Down',
+}
 
 const SHORTCUT_MAP: Record<string, string> = {
   'volume-up':           'volume',
@@ -55,31 +65,15 @@ async function registerHyprlandBinds() {
     log.info(`registered global binds: ${keys.join(', ')}`)
 }
 
-let manager: KiwiShortcuts.Manager | null = null
-
 export function watchIndicatorKeys(onKey: (type: string) => void) {
+  const ids = ['volume-up', 'volume-down', 'volume-mute']
+  if (brightnessAvailable) ids.push('brightness-up', 'brightness-down')
+  if (kbdAvailable) ids.push('kbd-brightness-up', 'kbd-brightness-down')
+  for (const id of ids)
+    globalShortcut(id, DESCRIPTIONS[id], 'press', () => {
+      log.debug(`shortcut activated: ${id}`)
+      onKey(SHORTCUT_MAP[id])
+    })
+
   registerBindSetup('mediakeys', registerHyprlandBinds)
-
-  manager = new KiwiShortcuts.Manager()
-
-  manager.register('volume-up',   'Volume Up')
-  manager.register('volume-down', 'Volume Down')
-  manager.register('volume-mute', 'Mute / Unmute')
-
-  if (brightnessAvailable) {
-    manager.register('brightness-up',   'Brightness Up')
-    manager.register('brightness-down', 'Brightness Down')
-  }
-
-  if (kbdAvailable) {
-    manager.register('kbd-brightness-up',   'Keyboard Brightness Up')
-    manager.register('kbd-brightness-down', 'Keyboard Brightness Down')
-  }
-
-  manager.connect('activated', (_: unknown, id: string) => {
-    const type = SHORTCUT_MAP[id]
-    log.debug(`shortcut activated: ${id}`)
-    if (type) onKey(type)
-    else log.warn(`activated shortcut has no mapping: ${id}`)
-  })
 }

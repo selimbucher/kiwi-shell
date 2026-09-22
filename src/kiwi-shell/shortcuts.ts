@@ -94,12 +94,17 @@ export function shortcut(name: ShortcutName): Shortcut {
 // the setups: shortcuts.ts is imported ahead of the modules registering them.
 
 const DESCRIPTIONS: Record<ShortcutName, string[]> = {
-    launcher: ["kiwi: launcher toggle"],
+    launcher: ["kiwi: launcher"],
     app_switcher: ["kiwi: apps open", "kiwi: apps submap enter", "kiwi: apps confirm", "kiwi: apps submap reset"],
     workspace_switcher: [
-        "kiwi: workspaces next", "kiwi: workspaces prev", "kiwi: workspaces confirm", "kiwi: workspaces escape",
+        "kiwi: workspaces next", "kiwi: workspaces prev", "kiwi: workspaces switch", "kiwi: workspaces close",
     ],
 }
+
+// binds a kiwi from before the global shortcuts left (they ran kiwictl); the
+// setups keep a bind with the current description in place, so these would
+// otherwise stay until the next config reload
+const RETIRED = ["kiwi: launcher toggle", "kiwi: workspaces confirm", "kiwi: workspaces escape"]
 
 function wantedCombos(name: ShortcutName): string[] {
     const s = shortcut(name)
@@ -112,13 +117,14 @@ function wantedCombos(name: ShortcutName): string[] {
 enqueueBindJob("leftover shortcut binds", async () => {
     const binds = await currentBinds()
     const names = Object.keys(DESCRIPTIONS) as ShortcutName[]
-    const ours = (b: any) => names.some(n => DESCRIPTIONS[n].includes(b.description))
-    const leftover = binds.some((b: any) => b.submap === "" && names.some(n =>
-        DESCRIPTIONS[n].includes(b.description) &&
-        !wantedCombos(n).map(normalizeCombo).includes(normalizeCombo(bindCombo(b)))))
+    const ours = (b: any) => RETIRED.includes(b.description) ||
+        names.some(n => DESCRIPTIONS[n].includes(b.description))
+    const leftover = binds.some((b: any) => b.submap === "" && (RETIRED.includes(b.description) ||
+        names.some(n => DESCRIPTIONS[n].includes(b.description) &&
+            !wantedCombos(n).map(normalizeCombo).includes(normalizeCombo(bindCombo(b))))))
     if (!leftover) return
 
-    log.info("found binds from other shortcuts, clearing kiwi's shortcut binds")
+    log.info("found binds from other shortcuts or an older kiwi, clearing kiwi's shortcut binds")
     const root = new Set(binds.filter((b: any) => b.submap === "" && ours(b)).map(bindCombo))
     const switcher = new Set(binds.filter((b: any) => b.submap === "app_switcher" && isKiwi(b)).map(bindCombo))
     const ops: BindOp[] = [...root].map(c => ({ unbind: c }))

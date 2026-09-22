@@ -28,6 +28,9 @@ export const THEME_STYLES: ThemeStyle[] = ["granite", "acrylic", "tinted", "clea
 //   panel   panes with nothing but a hairline around them
 //   dock    the dock, which Granite blurs as well
 //   cards   notification cards, which Granite does not
+//   switcher  the app and workspace switchers: panes like panel, which appear
+//           and go without the compositor's fade — they are on screen for
+//           as long as a modifier is held, and a fade only delays them
 //   scrim   the launcher's full-screen window, Spotlight's panel in it —
 //           blurred in Granite too
 //   plain   never blurred: the desktop, whose icons would otherwise blur the
@@ -37,6 +40,7 @@ export const LAYER = {
     panel: "kiwi",
     dock: "kiwi-dock",
     cards: "kiwi-cards",
+    switcher: "kiwi-switcher",
     scrim: "kiwi-scrim",
     plain: "kiwi-plain",
 } as const
@@ -69,10 +73,11 @@ export const themeClasses: Accessor<string> = themeStyle(style => `theme-${style
 
 const IGNORE_ALPHA = 0.05
 
-type Rule = { name: string, namespace: string }
+type Rule = { name: string, namespace: string, noAnim?: boolean }
 
 const RULES: Rule[] = [
     { name: "kiwi-panels", namespace: LAYER.panel },
+    { name: "kiwi-switchers", namespace: LAYER.switcher, noAnim: true },
     { name: "kiwi-dock", namespace: LAYER.dock },
     { name: "kiwi-cards", namespace: LAYER.cards },
     { name: "kiwi-scrim", namespace: LAYER.scrim },
@@ -160,16 +165,18 @@ async function applyBlur() {
     }
 }
 
-function ruleLua(rule: Rule, enabled: boolean): string {
-    return `hl.layer_rule({ name = "${rule.name}", enabled = ${enabled}, `
-        + `match = { namespace = "^(${rule.namespace})$" }, blur = ${enabled}, `
-        + `blur_popups = ${enabled}, ignore_alpha = ${IGNORE_ALPHA} })`
+function ruleLua(rule: Rule, blur: boolean): string {
+    const noAnim = rule.noAnim ? ", no_anim = true" : ""
+    return `hl.layer_rule({ name = "${rule.name}", enabled = ${blur || !!rule.noAnim}, `
+        + `match = { namespace = "^(${rule.namespace})$" }, blur = ${blur}, `
+        + `blur_popups = ${blur}, ignore_alpha = ${IGNORE_ALPHA}${noAnim} })`
 }
 
-function ruleHyprlang(rule: Rule, enabled: boolean): string {
-    const on = enabled ? "on" : "off"
+function ruleHyprlang(rule: Rule, blur: boolean): string {
+    const on = blur ? "on" : "off"
+    const noAnim = rule.noAnim ? ", no_anim on" : ""
     return `layerrule match:namespace ^(${rule.namespace})$, `
-        + `blur ${on}, blur_popups ${on}, ignore_alpha ${IGNORE_ALPHA}`
+        + `blur ${on}, blur_popups ${on}, ignore_alpha ${IGNORE_ALPHA}${noAnim}`
 }
 
 async function applyLayerRules() {
@@ -178,11 +185,11 @@ async function applyLayerRules() {
     const wanted = rulesFor(themeStyle())
     const lua = await dialect() === "lua"
     for (const rule of RULES) {
-        const enabled = wanted.has(rule.namespace)
+        const blur = wanted.has(rule.namespace)
         // a named rule is redefined rather than stacked, so this is safe to
         // run again on every style change and every config reload
-        if (lua) await evalLua(ruleLua(rule, enabled), `layer rule ${rule.name}`)
-        else await keyword(ruleHyprlang(rule, enabled), `layer rule ${rule.name}`)
+        if (lua) await evalLua(ruleLua(rule, blur), `layer rule ${rule.name}`)
+        else await keyword(ruleHyprlang(rule, blur), `layer rule ${rule.name}`)
     }
     log.debug(`layer rules: ${[...wanted].join(", ") || "none"}`)
 }

@@ -14,6 +14,7 @@ import { entryForClient, AppIconImage } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, closeWindow, clientSelector, type BindOp } from "../../hypr"
 import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
+import { globalShortcut } from "../services/globalShortcuts"
 
 export const [isVisible, setVisibility] = createState(false)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)
@@ -42,6 +43,13 @@ hyprland.connect("notify::focused-client", () => {
 // is entered (isVisible no-ops the stray fires).
 
 let registered: Shortcut | null = null
+
+const NEXT = globalShortcut("apps-next", "App switcher: open, or the next window",
+    "press", () => toggleAppSwitcher("open-next"))
+const CONFIRM = globalShortcut("apps-confirm", "App switcher: switch to the selected window",
+    "release", () => toggleAppSwitcher("confirm"))
+const CLOSE = globalShortcut("apps-close", "App switcher: close",
+    "release", () => toggleAppSwitcher("close"))
 
 // what a registration on `s` binds, root and submap, for unbinding
 function appSwitcherUnbinds(s: Shortcut): BindOp[] {
@@ -83,21 +91,21 @@ async function registerAltTabBinds() {
         // clear any previous incarnation of the scheme first
         ...appSwitcherUnbinds(s),
         // root: entry, and the modifier-release confirm (see comment above)
-        { bind: entry, action: { exec: "kiwictl apps open-next" }, description: "kiwi: apps open" },
+        { bind: entry, action: NEXT, description: "kiwi: apps open" },
         { bind: entry, action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
-        { bind: release, action: { exec: "kiwictl apps confirm" }, description: "kiwi: apps confirm",
+        { bind: release, action: CONFIRM, description: "kiwi: apps confirm",
             flags: { release: true, transparent: true } },
         { bind: release, action: { submap: "reset" }, description: "kiwi: apps submap reset",
             flags: { release: true, transparent: true } },
         // submap: cycling while held, escape failsafes
         { submap: "app_switcher", ops: [
-            { bind: entry, action: { exec: "kiwictl apps open-next" }, description: "kiwi: apps cycle",
+            { bind: entry, action: NEXT, description: "kiwi: apps cycle",
                 flags: { repeating: true } },
-            { bind: "escape", action: { exec: "kiwictl apps close" }, description: "kiwi: apps close",
+            { bind: "escape", action: CLOSE, description: "kiwi: apps close",
                 flags: { release: true } },
             { bind: "escape", action: { submap: "reset" }, description: "kiwi: apps submap reset",
                 flags: { release: true } },
-            { bind: `${s.mods[0]} + escape`, action: { exec: "kiwictl apps close" }, description: "kiwi: apps close",
+            { bind: `${s.mods[0]} + escape`, action: CLOSE, description: "kiwi: apps close",
                 flags: { release: true } },
             { bind: `${s.mods[0]} + escape`, action: { submap: "reset" }, description: "kiwi: apps submap reset",
                 flags: { release: true } },
@@ -213,7 +221,7 @@ function closeClientFromSwitcher(client: any) {
 export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
-            namespace={LAYER.panel}
+            namespace={LAYER.switcher}
             css={conf(conf => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-app-switcher"

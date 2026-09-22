@@ -13,6 +13,7 @@ import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "..
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, focusWorkspace, type BindOp } from "../../hypr"
 import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
+import { globalShortcut } from "../services/globalShortcuts"
 
 const hyprland = Hyprland.get_default()
 
@@ -57,6 +58,15 @@ const [wsWindows, setWsWindows] = createState<Map<number, MiniWindow[]>>(new Map
 
 let registered: Shortcut | null = null
 
+const NEXT = globalShortcut("workspaces-next", "Workspace switcher: open, or the next workspace",
+    "press", () => toggleWorkspaceSwitcher("open-next"))
+const PREVIOUS = globalShortcut("workspaces-previous", "Workspace switcher: the previous workspace",
+    "press", () => toggleWorkspaceSwitcher("previous"))
+const CONFIRM = globalShortcut("workspaces-confirm", "Workspace switcher: go to the selected workspace",
+    "release", () => toggleWorkspaceSwitcher("confirm"))
+const CLOSE = globalShortcut("workspaces-close", "Workspace switcher: close",
+    "release", () => toggleWorkspaceSwitcher("close"))
+
 async function registerSuperTabBinds() {
     const s = shortcut("workspace_switcher")
     const mod = s.mods[0]
@@ -85,8 +95,8 @@ async function registerSuperTabBinds() {
         const onCombo = (b: any, description: string, c: string) =>
             b.description === description && `${b.modmask}` === `${s.modmask}` &&
             b.key === c.split(" + ").pop()
-        haveConfirm = binds.some((b: any) => onCombo(b, "kiwi: workspaces confirm", confirm))
-        haveEscape = binds.some((b: any) => onCombo(b, "kiwi: workspaces escape", escape))
+        haveConfirm = binds.some((b: any) => onCombo(b, "kiwi: workspaces switch", confirm))
+        haveEscape = binds.some((b: any) => onCombo(b, "kiwi: workspaces close", escape))
     } catch (e) {
         log.error("failed to query binds, skipping setup:", e)
         return
@@ -95,19 +105,19 @@ async function registerSuperTabBinds() {
     const ops: BindOp[] = [
         { unbind: next },
         { unbind: previous },
-        { bind: next, action: { exec: "kiwictl workspaces open-next" },
+        { bind: next, action: NEXT,
             description: "kiwi: workspaces next", flags: { repeating: true } },
-        { bind: previous, action: { exec: "kiwictl workspaces previous" },
+        { bind: previous, action: PREVIOUS,
             description: "kiwi: workspaces prev", flags: { repeating: true } },
     ]
     // never unbind the modifier key here (would take tap-to-launch binds with
     // it), so only add ours when it isn't registered yet
     if (!haveConfirm)
-        ops.push({ bind: confirm, action: { exec: "kiwictl workspaces confirm" },
-            description: "kiwi: workspaces confirm", flags: { release: true, transparent: true } })
+        ops.push({ bind: confirm, action: CONFIRM,
+            description: "kiwi: workspaces switch", flags: { release: true, transparent: true } })
     if (!haveEscape)
-        ops.push({ bind: escape, action: { exec: "kiwictl workspaces close" },
-            description: "kiwi: workspaces escape", flags: { release: true } })
+        ops.push({ bind: escape, action: CLOSE,
+            description: "kiwi: workspaces close", flags: { release: true } })
 
     if (await applyBinds(ops, "workspace switcher binds")) {
         registered = s
@@ -221,7 +231,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
 
     return (
         <window
-            namespace={LAYER.panel}
+            namespace={LAYER.switcher}
             css={conf(conf => `--primary: ${conf.primary_color};`)}
             visible={isVisible}
             name="ags-workspace-switcher"
