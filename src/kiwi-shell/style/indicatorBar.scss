@@ -1,20 +1,20 @@
 @use 'theme' as *;
 
+// A capsule like the bar's pills, around the system menu's slider: the global
+// 10px track, no knob.
 .indicator-bar {
     transition: opacity 1s ease-out;
     .indicator-icon {
-        margin-right: 6px;
+        margin-right: 10px;
     }
     .indicator-box {
         @include panel;
-        padding: 12px 15px;
-        border-radius: 10px;
+        padding: 10px 16px 10px 14px;
+        border-radius: 9999px;
     }
     scale {
-        min-width: 120px;
-        trough {
-            min-height: 6px; 
-        }
+        min-width: 160px;
+        padding: 0;
     }
 
     .keyboard-brightness-symbolic {
@@ -31,14 +31,14 @@
         margin-top: -2px;
     }
     .indicator-box {
-        padding: 15px 12px;
+        padding: 16px 10px 14px;
     }
 
     scale {
-        min-height: 120px;
+        min-height: 160px;
         min-width: unset;
         trough {
-            min-width: 6px; 
+            min-width: 10px;
             min-height: unset;
         }
     }
