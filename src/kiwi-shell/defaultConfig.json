@@ -7,7 +7,7 @@
   "dock": "auto-hide",
   "dock_home": true,
   "dock_trash": true,
-  "auto_color": false,
+  "auto_color": true,
   "dock_icon_size": 46,
   "dock_full_width": false,
   "desktop_icons": true,
