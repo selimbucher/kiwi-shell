@@ -59,6 +59,31 @@
         ];
       };
 
+      # ─── kiwi-surface C library ──────────────────────────────────────────────
+      # Tells Hyprland which part of a layer surface is visible
+      # (hyprland-surface-v1), so it blurs only that part.
+      kiwi-surface = pkgs.stdenv.mkDerivation {
+        pname = "kiwi-surface";
+        version = "1.0";
+
+        src = ./src/hyprland-surface;
+
+        nativeBuildInputs = with pkgs; [
+          meson
+          ninja
+          pkg-config
+          wayland-scanner
+          gobject-introspection
+          wrapGAppsHook4
+        ];
+
+        buildInputs = with pkgs; [
+          wayland
+          gtk4
+          glib
+        ];
+      };
+
       # ─── app-capture C library ───────────────────────────────────────────────
       app-capture = pkgs.stdenv.mkDerivation {
         pname = "app-capture";
@@ -132,6 +157,7 @@
         astal-latest.packages.${system}.quarrel
         app-capture
         hyprland-shortcuts
+        kiwi-surface
       ];
 
       # ─── Kiwi Shell package ───────────────────────────────────────────────
@@ -176,8 +202,10 @@
             }" \
             --prefix GI_TYPELIB_PATH : "${app-capture}/lib/girepository-1.0" \
             --prefix GI_TYPELIB_PATH : "${hyprland-shortcuts}/lib/girepository-1.0" \
+            --prefix GI_TYPELIB_PATH : "${kiwi-surface}/lib/girepository-1.0" \
             --prefix LD_LIBRARY_PATH : "${app-capture}/lib" \
-            --prefix LD_LIBRARY_PATH : "${hyprland-shortcuts}/lib"
+            --prefix LD_LIBRARY_PATH : "${hyprland-shortcuts}/lib" \
+            --prefix LD_LIBRARY_PATH : "${kiwi-surface}/lib"
 
           # Start Wrapper: argv/instance guards, log rotation, capped tee to the log
           cat << 'EOF' > $out/bin/${pname}
@@ -230,6 +258,7 @@
         shell = kiwi-package;
         app-capture = app-capture;
         hyprland-shortcuts = hyprland-shortcuts;
+        kiwi-surface = kiwi-surface;
         hyprland-geometry-events = hyprland-geometry-events;
         settings = kiwi-settings.packages.${system}.default;
 

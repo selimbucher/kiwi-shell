@@ -27,7 +27,7 @@
         // the dock height without a sliver, at any icon size; the longer
         // hide duration keeps the exit at the same px/ms speed as the entry
         transform: translateY(var(--dock-slide-distance));
-        transition-duration: 600ms;
+        transition-duration: var(--dock-slide-out-duration);
     }
 
 }

@@ -6,7 +6,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, list, unpinnedList, setDockOverlap, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
+import { hyprland, list, unpinnedList, setDockOverlap, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
@@ -16,6 +16,7 @@ import Cairo from "gi://cairo"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import Gtk4LayerShell from "gi://Gtk4LayerShell"
+import KiwiSurface from "gi://KiwiSurface"
 
 const clients = createBinding(hyprland, "clients")
 const activeWorkspace = createBinding(hyprland, "focusedWorkspace")
@@ -166,6 +167,7 @@ function dockCss(icon: number, margin: number, primary: string) {
     --dock-headroom: ${headroomFor(icon)}px;
     --icon-size: ${icon}px;
     --dock-slide-duration: ${DOCK_SLIDE_DURATION}ms;
+    --dock-slide-out-duration: ${DOCK_SLIDE_OUT_DURATION}ms;
     --dock-slide-distance: ${icon + 68}px;
     --dock-pad-x: ${px(icon, DOCK.padX, 4)}px;
     --icon-pad-x: ${px(icon, DOCK.gap / 2, 1)}px;
@@ -403,6 +405,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     let shownAt = 0
     let lastShown = false
     const syncInputRegion = () => {
+        syncVisibleRegion()
         const surface = selfRef?.get_surface()
         if (!surface) return
         const shown = showDock()
@@ -445,6 +448,57 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         const region = new Cairo.Region()
         region.unionRectangle(band)
         surface.set_input_region(region)
+    }
+
+    // What of the surface Hyprland has to draw, and, the dock being a
+    // blurred layer, to blur (KiwiSurface). The surface is a full-width band
+    // with headroom above the pill, nearly all of it transparent, and
+    // Hyprland blurs a layer across its whole rectangle wherever the screen
+    // behind it changes: a window dragged along the bottom of the screen had
+    // the full width blurred behind it, frame after frame. So it gets the
+    // pill's span over the full height (a hopping icon rises into the
+    // headroom), with room on each side for the pill's own padding and an
+    // icon sliding in, and nothing at all once the dock has slid away.
+    let hiddenAt = 0
+    let lastVisible = true
+    let hiddenSettleId: number | null = null
+    const syncVisibleRegion = () => {
+        const surface = selfRef?.get_surface()
+        if (!surface || !selfRef) return
+        const shown = showDock()
+        if (!shown && lastVisible) hiddenAt = GLib.get_monotonic_time()
+        lastVisible = shown
+
+        if (!shown) {
+            const left = DOCK_SLIDE_OUT_DURATION + 150 - (GLib.get_monotonic_time() - hiddenAt) / 1000
+            if (left <= 0) {
+                KiwiSurface.set_visible_region(surface, new Cairo.Region())
+                return
+            }
+            // still sliding away: look again once it's gone
+            if (hiddenSettleId === null)
+                hiddenSettleId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, Math.ceil(left), () => {
+                    hiddenSettleId = null
+                    syncVisibleRegion()
+                    return GLib.SOURCE_REMOVE
+                })
+        }
+
+        if (conf().dock_full_width || !dockBoxRef) {
+            KiwiSurface.set_visible_region(surface, null)
+            return
+        }
+        // the pill is centred, and its width doesn't change as it slides
+        const width = surface.get_width()
+        const half = dockBoxRef.get_width() / 2 + conf().dock_icon_size * 2
+        const span = new Cairo.RectangleInt()
+        span.x = Math.max(0, Math.floor(width / 2 - half))
+        span.y = 0
+        span.width = Math.min(width, Math.ceil(width / 2 + half)) - span.x
+        span.height = surface.get_height()
+        const region = new Cairo.Region()
+        region.unionRectangle(span)
+        KiwiSurface.set_visible_region(surface, region)
     }
 
     // The pill's bounds are final only once the slide or the icons' animation
@@ -582,6 +636,10 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     if (watchdogId !== null) {
                         GLib.source_remove(watchdogId)
                         watchdogId = null
+                    }
+                    if (hiddenSettleId !== null) {
+                        GLib.source_remove(hiddenSettleId)
+                        hiddenSettleId = null
                     }
                 })
             }}

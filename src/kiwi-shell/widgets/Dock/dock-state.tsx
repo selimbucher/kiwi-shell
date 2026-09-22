@@ -18,6 +18,9 @@ export const [dockOverlap, setDockOverlap] = createState(0)
 
 export const DOCK_HIDE_TIMEOUT = 200
 export const DOCK_SLIDE_DURATION = 400
+// hiding takes longer: the dock slides further than it did coming in, at the
+// same speed
+export const DOCK_SLIDE_OUT_DURATION = 600
 
 export const hyprland = Hyprland.get_default()
 
