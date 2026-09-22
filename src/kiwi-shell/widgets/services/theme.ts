@@ -125,6 +125,41 @@ async function forceBlur() {
     log.info("compositor blur was off — on for the shell's layers only")
 }
 
+// ─── The blur itself ──────────────────────────────────────────────────────────
+// The glass styles are mixed for one blur: how far it reaches (size, each pass
+// doubling it), how much colour it keeps (vibrancy, contrast) and its grain
+// (noise). Size 3 with 2 passes was imperceptible behind the panes; at size 10
+// it smears in colour from well outside a panel. Hyprland has a single blur
+// for windows and layers alike, so the shell sets it rather than leaving its
+// panels to whatever the compositor's config says. kiwi_blur: false keeps the
+// compositor's own.
+//
+// xray: windows blur the wallpaper, which Hyprland blurs once and reuses,
+// rather than re-blurring whatever is behind them on every frame something
+// moves. On an Iris Xe at 2880x1800 that halved the GPU's work while a window
+// moved or anything animated. Layers ignore it, so the shell's own glass still
+// shows the windows beneath it.
+const BLUR = {
+    size: 6,
+    passes: 4,
+    vibrancy: 0.1696,
+    contrast: 1.4,
+    noise: 0.01,
+    new_optimizations: true,
+    xray: true,
+}
+
+async function applyBlur() {
+    if (!conf().kiwi_blur) return
+    if (await dialect() === "lua") {
+        const fields = Object.entries(BLUR).map(([key, value]) => `${key} = ${value}`).join(", ")
+        await evalLua(`hl.config({ decoration = { blur = { ${fields} } } })`, "blur")
+    } else {
+        for (const [key, value] of Object.entries(BLUR))
+            await keyword(`decoration:blur:${key} ${value}`, `blur ${key}`)
+    }
+}
+
 function ruleLua(rule: Rule, enabled: boolean): string {
     return `hl.layer_rule({ name = "${rule.name}", enabled = ${enabled}, `
         + `match = { namespace = "^(${rule.namespace})$" }, blur = ${enabled}, `
@@ -139,6 +174,7 @@ function ruleHyprlang(rule: Rule, enabled: boolean): string {
 
 async function applyLayerRules() {
     await forceBlur()
+    await applyBlur()
     const wanted = rulesFor(themeStyle())
     const lua = await dialect() === "lua"
     for (const rule of RULES) {
@@ -166,6 +202,22 @@ themeStyle.subscribe(() => {
         styleSource = 0
         enqueueBindJob("layer rules", applyLayerRules)
         return GLib.SOURCE_REMOVE
+    })
+})
+
+// kiwi_blur switched on: the shell's blur now; switched off: the compositor's
+// own values are only in its config, so it reads that again
+let kiwiBlur = conf().kiwi_blur
+conf.subscribe(() => {
+    if (conf().kiwi_blur === kiwiBlur) return
+    kiwiBlur = conf().kiwi_blur
+    if (kiwiBlur) enqueueBindJob("layer rules", applyLayerRules)
+    else hyprland.message_async("reload", (_src: any, res: any) => {
+        try {
+            hyprland.message_finish(res)
+        } catch (e) {
+            log.error("reload for the compositor's own blur:", e as Error)
+        }
     })
 })
 
