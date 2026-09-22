@@ -10,12 +10,14 @@
 //
 // in layout coordinates, the same numbers `hyprctl clients` reports as `at`
 // and `size`: where the window is going, not where its animation has got to.
-// It is posted once per change, when the new frame is decided:
+// It is posted when the frame changes:
 //
 //  - A keybind move or resize, a layout change or a floating/fullscreen
 //    toggle announces the frame the window is animating to, right away.
-//  - A drag announces the frame it ends at, once, on release. Nothing is
-//    posted while the pointer is still carrying the window.
+//  - While the pointer drags or resizes a window, its frame is posted at
+//    most once per frame Hyprland draws, and once more where it ends. A
+//    mouse reports far more often than a screen redraws, and every event
+//    wakes every socket listener.
 //  - A frame set again unchanged (layouts re-apply theirs often) is not
 //    announced again.
 //
@@ -24,7 +26,9 @@
 // CGeometricMovableAnimated, reached through a virtual thunk that only
 // forwards to it). Hyprland has no signal there, so the plugin hooks it and
 // notes which window changed, then compares and posts from an idle callback,
-// once per trip around the event loop. The window's own move()/resize() are
+// once per trip around the event loop; a dragged window from Hyprland's
+// render.pre instead, which comes once per drawn frame and is only listened
+// to while the drag lasts. The window's own move()/resize() are
 // not hooked: outside the layout only trackpad window gestures and the
 // scrolling layout call them (and the open animation, which re-applies the
 // frame the layout already set).
@@ -72,6 +76,7 @@ namespace {
         void exit() {
             // Hyprland removes the hook itself, after this has returned
             m_closeListener.reset();
+            m_frameListener.reset();
             m_pending.reset();
         }
 
@@ -99,36 +104,63 @@ namespace {
         std::vector<PHLWINDOWREF>                m_changed;
         UP<SEventLoopDoLaterLock>                m_pending;
         CHyprSignalListener                      m_closeListener;
+        // only while a window is dragged
+        CHyprSignalListener                      m_frameListener;
+
+        static PHLWINDOW dragged() {
+            const auto drag = g_layoutManager->dragController()->target();
+            return drag ? drag->window() : nullptr;
+        }
 
         void announce() {
             m_pending.reset();
             const auto changed = std::move(m_changed);
             m_changed.clear();
 
-            // the frame of a window under the pointer is not decided yet;
-            // dragEnd sets it once more after letting go, which lands here
-            const auto drag    = g_layoutManager->dragController()->target();
-            const auto dragged = drag ? drag->window() : nullptr;
-
+            const auto draggedWindow = dragged();
             for (const auto& ref : changed) {
                 const auto w = ref.lock();
-                if (!w || !w->m_isMapped || w == dragged)
+                if (!w || !w->m_isMapped)
                     continue;
-
-                auto box = w->geometricBox(IGeometric::GEOMETRIC_GOAL);
-                box.round();
-
-                auto& last = m_announced[w.get()];
-                if (last.window.lock() == w && last.box == box)
-                    continue;
-                last = {.window = w, .box = box};
-
-                g_pEventManager->postEvent(SHyprIPCEvent{
-                    .event = "windowgeometry",
-                    .data  = std::format("{:x},{},{},{},{}", reinterpret_cast<uintptr_t>(w.get()), static_cast<int>(box.x), static_cast<int>(box.y),
-                                         static_cast<int>(box.w), static_cast<int>(box.h)),
-                });
+                if (w == draggedWindow)
+                    followDrag();
+                else
+                    post(w);
             }
+
+            // the drag is over; dragEnd set the last frame, posted above
+            if (!draggedWindow)
+                m_frameListener.reset();
+        }
+
+        void followDrag() {
+            if (m_frameListener)
+                return;
+            m_frameListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR) {
+                const auto w = dragged();
+                if (w && w->m_isMapped)
+                    post(w);
+                // a drag that ended without setting a last frame: the
+                // listener goes from outside its own emission
+                else if (!w && !m_pending)
+                    m_pending = g_pEventLoopManager->doLaterLock([this] { announce(); });
+            });
+        }
+
+        void post(const PHLWINDOW& w) {
+            auto box = w->geometricBox(IGeometric::GEOMETRIC_GOAL);
+            box.round();
+
+            auto& last = m_announced[w.get()];
+            if (last.window.lock() == w && last.box == box)
+                return;
+            last = {.window = w, .box = box};
+
+            g_pEventManager->postEvent(SHyprIPCEvent{
+                .event = "windowgeometry",
+                .data  = std::format("{:x},{},{},{},{}", reinterpret_cast<uintptr_t>(w.get()), static_cast<int>(box.x), static_cast<int>(box.y),
+                                     static_cast<int>(box.w), static_cast<int>(box.h)),
+            });
         }
 
         static void hkSetBox(CGeometricMovableAnimated* self, const CBox& box);

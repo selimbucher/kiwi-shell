@@ -211,10 +211,9 @@ const HOLD_TICK_MS = 100
 // moved: in one step (opening, closing, floating, fullscreen, another
 // workspace), or by hand or by a keybind. Hyprland announces the last kind
 // only through kiwi's geometry-events plugin, which the shell loads at start
-// (hypr.ts): windowgeometry, once per move, a drag when it is let go.
-const COVER_EVENTS = new Set([
-    "changefloatingmode", "fullscreen", "movewindowv2", "windowgeometry",
-])
+// (hypr.ts): windowgeometry, with the window's new frame, once per move and
+// once per drawn frame while a window is dragged or resized.
+const COVER_EVENTS = new Set(["changefloatingmode", "fullscreen", "movewindowv2"])
 // thin full-width band at the very bottom edge: traveling along the screen
 // edge (e.g. after summoning the dock from a corner) keeps the hold alive
 const EDGE_BAND_PX = 8
@@ -249,20 +248,25 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // reported the position it was opened at, and the dock stayed up on top
     // of it. The whole auto-hide decision is these numbers; they cannot be
     // allowed to be a guess.
-    const liveWindows = (): { x: number, y: number, w: number, h: number, ws: number }[] => {
+    // keyed by address without the 0x, as windowgeometry names them
+    const liveWindows = (): Map<string, { x: number, y: number, w: number, h: number, ws: number }> => {
         try {
-            return JSON.parse(hyprland.message("j/clients"))
+            return new Map(JSON.parse(hyprland.message("j/clients"))
                 .filter((c: any) => c.mapped && !c.hidden)
-                .map((c: any) => ({
+                .map((c: any) => [String(c.address).replace(/^0x/, ""), {
                     x: c.at[0], y: c.at[1], w: c.size[0], h: c.size[1],
                     ws: c.workspace?.id ?? -1,
-                }))
+                }]))
         } catch {
             // IPC down or a reply we cannot read: nothing is known to cover
             // the strip, so the dock shows. A visible dock is the safe end.
-            return []
+            return new Map()
         }
     }
+    // the last full look, which a windowgeometry event updates in place: a
+    // drag reports every frame, and asking for every window each time would
+    // cost a round trip to the compositor per frame
+    let windows = liveWindows()
 
     // is the cursor inside the area that keeps the dock alive? That is the
     // strip the pill occupies (its horizontal span only — leaving sideways
@@ -359,18 +363,32 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // Only a window that actually reaches the dock's strip counts. The old
     // test was workspace membership alone, which is why a floating calculator
     // parked in a corner hid the dock as thoroughly as a maximised window did.
-    const measureCover = () => {
-        if (conf().dock !== "auto-hide") return
+    const coverOf = () => {
         const activeId = hyprland.get_monitors()
             .find(m => m.name === gdkmonitor.get_connector())
             ?.activeWorkspace?.id
         const geo = gdkmonitor.get_geometry()
         const stripTop = geo.y + geo.height - (bandHeight() || 80)
-        setCovered(liveWindows().some(win =>
+        setCovered([...windows.values()].some(win =>
             win.ws === activeId
             && win.y + win.h > stripTop
             && win.x < geo.x + geo.width
             && win.x + win.w > geo.x))
+    }
+    const measureCover = () => {
+        if (conf().dock !== "auto-hide") return
+        windows = liveWindows()
+        coverOf()
+    }
+    // windowgeometry: ADDRESS,X,Y,WIDTH,HEIGHT
+    const windowMoved = (args: string) => {
+        if (conf().dock !== "auto-hide") return
+        const [address, x, y, w, h] = args.split(",")
+        const win = windows.get(address)
+        // a window the last look didn't have, or one it left out (hidden)
+        if (!win) return measureCover()
+        Object.assign(win, { x: Number(x), y: Number(y), w: Number(w), h: Number(h) })
+        coverOf()
     }
 
     // The one and only place the input region is written. Idempotent.
@@ -510,8 +528,9 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     clients.subscribe(measureCover),
                     activeWorkspace.subscribe(measureCover),
                 ]
-                const eventId = hyprland.connect("event", (_h, event: string) => {
-                    if (COVER_EVENTS.has(event)) measureCover()
+                const eventId = hyprland.connect("event", (_h, event: string, args: string) => {
+                    if (event === "windowgeometry") windowMoved(args)
+                    else if (COVER_EVENTS.has(event)) measureCover()
                 })
                 whenMapped(measureCover)
                 onCleanup(() => {
