@@ -95,14 +95,10 @@ end)
 A running shell is controlled through `kiwictl`:
 
 ```bash
-kiwictl --help        # full command reference
-kiwictl launcher      # toggle the app launcher
-kiwictl apps open-next
+kiwictl --help   # full command reference
+kiwictl debug    # verbose logging to ~/.cache/kiwi-shell.log, until the shell restarts
+kiwictl quit
 ```
-
-Available commands: `apps`, `workspaces`, `launcher`, `quit`, `debug`. Every
-subcommand takes `--help`. `kiwictl debug` turns on verbose logging in
-`~/.cache/kiwi-shell.log` for the running instance.
 
 ### Theme Color
 
@@ -121,14 +117,19 @@ source = ~/.config/kiwi-shell/hypr.conf
 ### App Switcher (Alt+Tab)
 
 Alt+Tab works out of the box — kiwi-shell registers the keybinds automatically
-(and steps aside if your config binds `ALT+TAB` to something else). The
-switcher is controlled via `kiwictl`, so you can bind custom keys yourself:
+(and steps aside if your config binds `ALT+TAB` to something else). Custom
+keys send its global shortcuts:
 
-| Command | Description |
-|---|---|
-| `kiwictl apps open-next` | Open the menu if closed and cycle to the next app |
-| `kiwictl apps confirm` | Switch to the selected app |
-| `kiwictl apps close` | Dismiss the switcher |
+| Global shortcut | Bind | Description |
+|---|---|---|
+| `kiwi-shell:apps-next` | press | Open the menu if closed and cycle to the next app |
+| `kiwi-shell:apps-confirm` | release | Switch to the selected app |
+| `kiwi-shell:apps-close` | release | Dismiss the switcher |
+
+```lua
+hl.bind("ALT + TAB", hl.dsp.global("kiwi-shell:apps-next"))
+hl.bind("ALT + ALT_L", hl.dsp.global("kiwi-shell:apps-confirm"), { release = true, transparent = true })
+```
 
 See the [App Switcher Guide](./docs/AppSwitcherKeybinds.md) for the manual setup.
 
@@ -138,8 +139,9 @@ Super+Tab cycles through a workspace overview — workspace 1 through the first
 empty workspace after the last occupied one, each shown with its windows on
 the wallpaper. Hold Super and press Tab (Shift+Tab for backwards), release
 Super to switch, Escape to abort. Registered automatically unless `SUPER+TAB`
-is already bound; custom keys can call `kiwictl workspaces
-open-next|previous|confirm|close` the same way as the app switcher.
+is already bound; custom keys send `kiwi-shell:workspaces-next` and
+`kiwi-shell:workspaces-previous` on press, `kiwi-shell:workspaces-confirm` and
+`kiwi-shell:workspaces-close` on release, the same way as the app switcher.
 
 ### App Launcher (Super)
 
@@ -147,7 +149,9 @@ Tapping Super opens a Spotlight-style launcher. Up/Down or Tab to select,
 Enter to run the action named on the selected row, Escape (or a click outside
 the panel) to dismiss. It searches, in this order:
 
-- **Applications** — fuzzy, by name, keywords and executable.
+- **Applications** — the start of the name first, then the start of a word in
+  it, keywords, command and app id, anywhere in the name, the description;
+  among equals, the apps opened from here most. Typos still match.
 - **Open Windows** — by window title or app; Enter focuses the window.
 - **Actions** — Lock Screen, Sleep, Log Out, Restart, Shut Down, Light
   Appearance, Dark Appearance. Matched from the start of a word only, from
@@ -155,13 +159,15 @@ the panel) to dismiss. It searches, in this order:
 - **Result** — `1920/2 + 40*3` and the like, with `+ - * / % ^`, parentheses,
   `sqrt ln log log2 sin cos tan abs round floor ceil exp` and `pi`/`e`. Enter
   copies the value.
-- **Search** — the last row always offers the query to DuckDuckGo.
+- **Search** — the last row always offers the query to the web search engine
+  set under Desktop in kiwi-settings (`search_engine`: `duckduckgo`, `google`,
+  `bing`, `brave`, `ecosia`, `startpage`, `kagi`).
 
 With an empty box it is just a search bar. The tap bind only
 fires when nothing else used the Super hold — Super+Tab, Super+drag and
 friends stay untouched. It is registered automatically unless your config
-already binds plain `SUPER_L`; custom keys can call `kiwictl launcher
-open|close|toggle`.
+already binds plain `SUPER_L`; custom keys send `kiwi-shell:launcher` on
+press.
 
 ### Shortcuts
 

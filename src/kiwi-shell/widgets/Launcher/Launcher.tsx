@@ -51,16 +51,16 @@ const results: Accessor<Result[]> = createComputed(get => {
 // The combo is only unbound when the shortcut changes (rebindAll), since
 // that also takes a switcher confirm on the same key with it.
 //
-// Under a hyprlang config the tap stays an exec: its global dispatcher sends
-// a release even for a bind that was shadowed, so Super+T would open
-// Spotlight too.
+// A hyprlang config's global dispatcher sends a release even for a bind that
+// was shadowed, so Super+T would open Spotlight too. There the tap runs
+// hyprctl instead, a dispatcher that is shadowed like any other, and has it
+// send the press shortcut.
 
 let registered: Shortcut | null = null
 
-const PRESS = globalShortcut("launcher", "Spotlight: open or close",
-    "press", () => toggleLauncher("toggle"))
-const TAP = globalShortcut("launcher-tap", "Spotlight: open or close on a tap",
-    "release", () => toggleLauncher("toggle"))
+const toggle = () => isVisible() ? hideLauncher() : showLauncher()
+const PRESS = globalShortcut("launcher", "Spotlight: open or close", "press", toggle)
+const TAP = globalShortcut("launcher-tap", "Spotlight: open or close on a tap", "release", toggle)
 
 async function registerLauncherBind() {
     const s = shortcut("launcher")
@@ -91,7 +91,7 @@ async function registerLauncherBind() {
 
     const action = !s.tap ? PRESS
         : await dialect() === "lua" ? TAP
-        : { exec: "kiwictl launcher toggle" }
+        : { exec: "hyprctl dispatch global kiwi-shell:launcher" }
     if (await applyBinds([{
         bind: combo(s), action,
         description: "kiwi: launcher", flags: { release: s.tap },
@@ -104,22 +104,6 @@ async function registerLauncherBind() {
 const launcherUnbinds = (): BindOp[] => registered ? [{ unbind: combo(registered) }] : []
 
 registerBindSetup("launcher", registerLauncherBind, launcherUnbinds)
-
-// ─── Public API ───────────────────────────────────────────────────────────────
-export function toggleLauncher(cmd: string) {
-    switch (cmd) {
-        case "open":
-            showLauncher()
-            break
-        case "close":
-            hideLauncher()
-            break
-        case "toggle":
-        default:
-            if (isVisible()) hideLauncher()
-            else showLauncher()
-    }
-}
 
 let entryRef: Gtk.Entry | null = null
 // the compositor's own layer fade, from animations.nix — the query is only

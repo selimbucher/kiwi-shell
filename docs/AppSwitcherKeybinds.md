@@ -19,12 +19,13 @@ refreshed to the current scheme on startup.
 
 ## Manual setup (custom keys)
 
-If you want different keys, bind the `kiwictl apps` commands yourself. This is
-the equivalent of what kiwi-shell sets up automatically:
+For different keys, bind kiwi-shell's global shortcuts yourself: `apps-next` on
+a press, `apps-confirm` and `apps-close` on a release. This is the equivalent
+of what kiwi-shell sets up automatically:
 
 ```lua
 -- Open the switcher and enter the submap
-hl.bind("ALT + TAB", hl.dsp.exec_cmd("kiwictl apps open-next"))
+hl.bind("ALT + TAB", hl.dsp.global("kiwi-shell:apps-next"))
 hl.bind("ALT + TAB", hl.dsp.submap("app_switcher"))
 
 -- Capture the release of the Left Alt key.
@@ -33,18 +34,18 @@ hl.bind("ALT + TAB", hl.dsp.submap("app_switcher"))
 -- down before the submap is entered, so release binds inside the submap never
 -- fire for it. Firing on every ordinary Alt release is fine: kiwi-shell
 -- ignores the confirm while the switcher is closed, and the reset is a no-op.
-hl.bind("ALT + ALT_L", hl.dsp.exec_cmd("kiwictl apps confirm"), { release = true, transparent = true })
+hl.bind("ALT + ALT_L", hl.dsp.global("kiwi-shell:apps-confirm"), { release = true, transparent = true })
 hl.bind("ALT + ALT_L", hl.dsp.submap("reset"), { release = true, transparent = true })
 
 hl.define_submap("app_switcher", function()
     -- Allow repeating TAB while holding ALT to cycle the menu
-    hl.bind("ALT + TAB", hl.dsp.exec_cmd("kiwictl apps open-next"), { repeating = true })
+    hl.bind("ALT + TAB", hl.dsp.global("kiwi-shell:apps-next"), { repeating = true })
 
     -- Provide a failsafe to abort if you change your mind
-    hl.bind("escape", hl.dsp.exec_cmd("kiwictl apps close"), { release = true })
+    hl.bind("escape", hl.dsp.global("kiwi-shell:apps-close"), { release = true })
     hl.bind("escape", hl.dsp.submap("reset"), { release = true })
 
-    hl.bind("ALT + escape", hl.dsp.exec_cmd("kiwictl apps close"), { release = true })
+    hl.bind("ALT + escape", hl.dsp.global("kiwi-shell:apps-close"), { release = true })
     hl.bind("ALT + escape", hl.dsp.submap("reset"), { release = true })
 end)
 ```

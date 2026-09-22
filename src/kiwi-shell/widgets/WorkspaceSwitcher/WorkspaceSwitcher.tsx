@@ -58,14 +58,18 @@ const [wsWindows, setWsWindows] = createState<Map<number, MiniWindow[]>>(new Map
 
 let registered: Shortcut | null = null
 
+const openAndCycle = (step: 1 | -1) => {
+    if (!isVisible()) showSwitcher()
+    cycle(step)
+}
 const NEXT = globalShortcut("workspaces-next", "Workspace switcher: open, or the next workspace",
-    "press", () => toggleWorkspaceSwitcher("open-next"))
-const PREVIOUS = globalShortcut("workspaces-previous", "Workspace switcher: the previous workspace",
-    "press", () => toggleWorkspaceSwitcher("previous"))
+    "press", () => openAndCycle(1))
+const PREVIOUS = globalShortcut("workspaces-previous", "Workspace switcher: open, or the previous workspace",
+    "press", () => openAndCycle(-1))
 const CONFIRM = globalShortcut("workspaces-confirm", "Workspace switcher: go to the selected workspace",
-    "release", () => toggleWorkspaceSwitcher("confirm"))
+    "release", () => confirmAndClose())
 const CLOSE = globalShortcut("workspaces-close", "Workspace switcher: close",
-    "release", () => toggleWorkspaceSwitcher("close"))
+    "release", () => setVisibility(false))
 
 async function registerSuperTabBinds() {
     const s = shortcut("workspace_switcher")
@@ -135,36 +139,6 @@ registerBindSetup("workspaces", registerSuperTabBinds, () => {
         { unbind: `${mod} + escape` },
     ]
 })
-
-// ─── Public API ───────────────────────────────────────────────────────────────
-export function toggleWorkspaceSwitcher(cmd: string) {
-    switch (cmd) {
-        case "open":
-            showSwitcher()
-            break
-        case "open-next":
-            if (!isVisible()) showSwitcher()
-            cycle(1)
-            break
-        case "close":
-            setVisibility(false)
-            break
-        case "toggle":
-            if (isVisible()) setVisibility(false)
-            else showSwitcher()
-            break
-        case "next":
-            cycle(1)
-            break
-        case "previous":
-            if (!isVisible()) showSwitcher()
-            cycle(-1)
-            break
-        case "confirm":
-            confirmAndClose()
-            break
-    }
-}
 
 // Geometry and stacking straight from the compositor: Astal's client
 // geometry goes stale after moves and resizes, and it has no stacking order.

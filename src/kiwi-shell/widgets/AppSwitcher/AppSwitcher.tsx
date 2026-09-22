@@ -44,12 +44,13 @@ hyprland.connect("notify::focused-client", () => {
 
 let registered: Shortcut | null = null
 
-const NEXT = globalShortcut("apps-next", "App switcher: open, or the next window",
-    "press", () => toggleAppSwitcher("open-next"))
+const NEXT = globalShortcut("apps-next", "App switcher: open, or the next window", "press", () => {
+    if (!isVisible()) showAppSwitcher()
+    selectNextClient()
+})
 const CONFIRM = globalShortcut("apps-confirm", "App switcher: switch to the selected window",
-    "release", () => toggleAppSwitcher("confirm"))
-const CLOSE = globalShortcut("apps-close", "App switcher: close",
-    "release", () => toggleAppSwitcher("close"))
+    "release", executeSelectedAndClose)
+const CLOSE = globalShortcut("apps-close", "App switcher: close", "release", hideAppSwitcher)
 
 // what a registration on `s` binds, root and submap, for unbinding
 function appSwitcherUnbinds(s: Shortcut): BindOp[] {
@@ -120,35 +121,7 @@ async function registerAltTabBinds() {
 registerBindSetup("appswitcher", registerAltTabBinds,
     () => registered ? appSwitcherUnbinds(registered) : [])
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-export function toggleAppSwitcher(cmd: string) {
-    switch (cmd) {
-        case "open":
-            showAppSwitcher()
-            break
-        case "open-next":
-            if (!isVisible()) showAppSwitcher()
-            selectNextClient()
-            break
-        case "close":
-            hideAppSwitcher()
-            break
-        case "toggle":
-            if (isVisible()) hideAppSwitcher()
-            else showAppSwitcher()
-            break
-        case "next":
-            selectNextClient()
-            break
-        case "previous":
-            selectPreviousClient()
-            break
-        case "confirm":
-            executeSelectedAndClose()
-            break
-    }
-}
-
+// ─── Opening and cycling ──────────────────────────────────────────────────────
 function showAppSwitcher() {
     const clients = hyprland.get_clients().filter(isValidClient)
 
@@ -173,14 +146,6 @@ function selectNextClient() {
     if (clients.length === 0) return
     const idx = clients.findIndex(c => c.get_address() === selectedAddress())
     setSelectedAddress(clients[(idx + 1) % clients.length].get_address())
-}
-
-function selectPreviousClient() {
-    if (!isVisible()) return
-    const clients = displayedClients()
-    if (clients.length === 0) return
-    const idx = clients.findIndex(c => c.get_address() === selectedAddress())
-    setSelectedAddress(clients[(idx - 1 + clients.length) % clients.length].get_address())
 }
 
 function executeSelectedAndClose() {
