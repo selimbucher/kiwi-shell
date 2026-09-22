@@ -55,22 +55,27 @@ yay -S kiwi-shell
 ```nix
 {
   inputs = {
-    kiwi-shell.url = "github:selimbucher/hyprland-widgets";
+    kiwi-shell.url = "github:selimbucher/kiwi-shell";
     kiwi-shell.inputs.nixpkgs.follows = "nixpkgs";
   };
 }
 ```
 
-**2.** Add the package in your Home Manager config (usually `home.nix`):
+**2.** Enable it in your Home Manager config (usually `home.nix`):
 
 ```nix
-{ inputs, pkgs, ... }:
+{ inputs, ... }:
 {
-  home.packages = [
-    inputs.kiwi-shell.packages.${pkgs.system}.default
-  ];
+  imports = [ inputs.kiwi-shell.homeManagerModules.default ];
+
+  # its Hyprland plugin is built against programs.hyprland.package (NixOS),
+  # else wayland.windowManager.hyprland.package, else pkgs.hyprland
+  services.kiwi-shell.enable = true;
 }
 ```
+
+Without Home Manager, apply `inputs.kiwi-shell.overlays.default` and install
+`pkgs.kiwi-shell`.
 
 ---
 
