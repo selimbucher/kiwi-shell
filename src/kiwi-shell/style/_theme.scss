@@ -170,6 +170,23 @@ window.theme-granite, window.theme-acrylic {
     @include tinted-pane("float-");
 }
 
+// Without blur (kiwi_blur off) glass is a tint over whatever is behind it, and
+// the thin ones stop being readable: every style but Granite then wears
+// Acrylic's pane, Spotlight and the dock included.
+window.no-blur:not(.theme-granite) {
+    @include acrylic;
+}
+
+window.no-blur {
+    --k-float-panel: var(--k-panel);
+    --k-float-menu: var(--k-menu);
+    --k-float-sheen: var(--k-sheen);
+    --k-float-border: var(--k-border);
+    --k-float-highlight: var(--k-highlight);
+    --k-float-shadow: var(--k-shadow);
+    --k-float-text-shadow: var(--k-text-shadow);
+}
+
 // a panel: tokens only, per component radius and padding stay with it
 @mixin panel {
     background-color: var(--k-panel);

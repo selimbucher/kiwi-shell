@@ -1,4 +1,4 @@
-import { Accessor } from "ags"
+import { Accessor, createComputed } from "ags"
 import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
 
@@ -48,7 +48,9 @@ export const LAYER = {
 export const themeStyle: Accessor<ThemeStyle> = conf(c =>
     THEME_STYLES.includes(c.theme) ? c.theme : "acrylic")
 
-export const themeClasses: Accessor<string> = themeStyle(style => `theme-${style}`)
+// no-blur: kiwi_blur is off, and the panes stand on their own (style/_theme.scss)
+export const themeClasses: Accessor<string> = createComputed(get =>
+    `theme-${get(themeStyle)}${get(conf).kiwi_blur === false ? " no-blur" : ""}`)
 
 // ─── Compositor layer rules ───────────────────────────────────────────────────
 // Glass needs the compositor to blur behind the shell's panels. The shell adds
@@ -136,8 +138,11 @@ async function forceBlur() {
 // (noise). Size 3 with 2 passes was imperceptible behind the panes; at size 10
 // it smears in colour from well outside a panel. Hyprland has a single blur
 // for windows and layers alike, so the shell sets it rather than leaving its
-// panels to whatever the compositor's config says. kiwi_blur: false keeps the
-// compositor's own.
+// panels to whatever the compositor's config says.
+//
+// kiwi_blur: false is for graphics that can't afford any of it: the shell
+// then blurs nothing, doesn't turn the compositor's blur on for itself, and
+// leaves the compositor's own values alone.
 //
 // xray: windows blur the wallpaper, which Hyprland blurs once and reuses,
 // rather than re-blurring whatever is behind them on every frame something
@@ -155,7 +160,6 @@ const BLUR = {
 }
 
 async function applyBlur() {
-    if (!conf().kiwi_blur) return
     if (await dialect() === "lua") {
         const fields = Object.entries(BLUR).map(([key, value]) => `${key} = ${value}`).join(", ")
         await evalLua(`hl.config({ decoration = { blur = { ${fields} } } })`, "blur")
@@ -180,9 +184,12 @@ function ruleHyprlang(rule: Rule, blur: boolean): string {
 }
 
 async function applyLayerRules() {
-    await forceBlur()
-    await applyBlur()
-    const wanted = rulesFor(themeStyle())
+    const blur = conf().kiwi_blur !== false
+    if (blur) {
+        await forceBlur()
+        await applyBlur()
+    }
+    const wanted = blur ? rulesFor(themeStyle()) : new Set<string>()
     const lua = await dialect() === "lua"
     for (const rule of RULES) {
         const blur = wanted.has(rule.namespace)
@@ -212,8 +219,9 @@ themeStyle.subscribe(() => {
     })
 })
 
-// kiwi_blur switched on: the shell's blur now; switched off: the compositor's
-// own values are only in its config, so it reads that again
+// kiwi_blur switched on: the shell's blur now; switched off: the compositor
+// reads its config again, which undoes the forced blur and the shell's values
+// (it has no other record of its own), and the rules go back without blur
 let kiwiBlur = conf().kiwi_blur
 conf.subscribe(() => {
     if (conf().kiwi_blur === kiwiBlur) return
