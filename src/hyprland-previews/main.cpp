@@ -24,9 +24,12 @@
 // own titles, icons and selection stay on top — it leaves the tile itself
 // transparent, a hole for this to fill.
 //
-// While tiles are on screen their boxes are damaged every frame and the
-// windows in them get frame callbacks, so a window that is on another
-// workspace (or none) keeps drawing for as long as it is being shown.
+// A tile is redrawn when the window in it commits a frame, not on a timer.
+// A window nobody can see is the exception: Hyprland tells such a window it
+// is suspended and stops drawing it, and a client that is told that stops
+// painting, so while it is in a tile the plugin takes that back and sends it
+// the frame callbacks it would otherwise never get. It is suspended again as
+// soon as its tile is gone.
 
 #include <plugins/PluginAPI.hpp>
 #include <desktop/state/WindowState.hpp>
@@ -57,8 +60,9 @@ namespace {
 
     // one tile: a window, and where the shell put it in its surface
     struct STile {
-        PHLWINDOWREF window;
-        CBox         rect; // logical, from the layer surface's top-left
+        PHLWINDOWREF        window;
+        CBox                rect; // logical, from the layer surface's top-left
+        CHyprSignalListener commit;
     };
 
     // The tiles of one monitor, in its own scaled pixels, as handed to the
@@ -188,6 +192,7 @@ namespace {
         }
 
         void exit() {
+            suspendWoken();
             m_stageListener.reset();
             m_preListener.reset();
             m_command.reset();
@@ -199,6 +204,8 @@ namespace {
         int                                m_rounding = 0;
         std::vector<STile>                 m_tiles;
         SP<SHyprCtlCommand>                m_command;
+        std::vector<PHLWINDOWREF>          m_woken; // suspended again once their tiles are gone
+        size_t                             m_commits = 0, m_damages = 0, m_keepAlives = 0;
         CHyprSignalListener                m_stageListener;
         CHyprSignalListener                m_preListener;
 
@@ -249,6 +256,8 @@ namespace {
         std::string take(std::string_view request) {
             request.remove_prefix(std::string_view{"kiwi-previews"}.size());
             const auto WORDS = split(request, ' ');
+            if (!WORDS.empty() && WORDS[0] == "status")
+                return std::format("tiles {}, drawn now {}, commits {}, damages {}, keepalives {}\n", m_tiles.size(), drawnNow(), m_commits, m_damages, m_keepAlives);
             if (WORDS.empty() || WORDS[0] == "clear") {
                 clear();
                 return "ok";
@@ -279,10 +288,16 @@ namespace {
                     continue;
 
                 tiles.emplace_back(STile{.window = WINDOW, .rect = {numbers[0], numbers[1], numbers[2], numbers[3]}});
+                // the window's own frames are what the tile follows
+                tiles.back().commit = WINDOW->wlSurface()->resource()->m_events.commit.listen([this, ref = PHLWINDOWREF{WINDOW}] {
+                    ++m_commits;
+                    damageTilesOf(ref);
+                });
             }
 
             const auto HAD = !m_tiles.empty();
-            m_namespace    = std::string{WORDS[0]};
+            suspendWoken();
+            m_namespace = std::string{WORDS[0]};
             m_rounding     = rounding;
             m_tiles        = std::move(tiles);
             if (!HAD && !m_tiles.empty())
@@ -300,6 +315,7 @@ namespace {
         }
 
         void clear() {
+            suspendWoken();
             if (m_tiles.empty())
                 return;
             damageAll();
@@ -348,30 +364,61 @@ namespace {
             g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(m_rounding * g_pHyprRenderer->m_renderData.pMonitor->m_scale)));
         }
 
-        // A window that isn't on screen gets no frame callbacks and stops
-        // drawing, so it would freeze in its tile; the tiles are damaged for
-        // the same reason, to have the next frame drawn at all.
+        // A window nobody can see is suspended and never drawn, so it would
+        // freeze in its tile: it is woken here and sent the frame callbacks
+        // it would otherwise never get, and what it draws damages its tile
+        // from the commit above — damage asked for during a render lands in
+        // the frame being drawn instead of asking for the next one. A window
+        // that is on screen somewhere needs none of this: it draws for its
+        // own sake.
         void keepAlive(const PHLMONITOR& monitor) {
             if (m_tiles.empty())
                 return;
 
-            const auto TILES = tilesOn(monitor);
-            if (TILES.empty())
-                return;
-
             const auto NOW = Time::steadyNow();
-            for (const auto& tile : TILES) {
+            for (const auto& tile : tilesOn(monitor)) {
                 const auto WINDOW = tile.window.lock();
-                if (!WINDOW || !WINDOW->m_isMapped)
+                // visibleOnMonitor is only an overlap: a window on another
+                // workspace still sits where it was. This asks whether the
+                // frame being drawn will contain it.
+                if (!WINDOW || !WINDOW->m_isMapped || g_pHyprRenderer->shouldRenderWindow(WINDOW, monitor))
                     continue;
 
-                CBox damage = tile.box.copy().scale(1.0 / monitor->m_scale).translate(monitor->m_position);
-                g_pHyprRenderer->damageBox(damage);
-
-                if (WINDOW->visibleOnMonitor(monitor))
-                    continue; // already drawing for its own sake
-
+                ++m_keepAlives;
+                wake(WINDOW);
                 WINDOW->wlSurface()->resource()->breadthfirst([&NOW](SP<CWLSurfaceResource> surface, const Vector2D&, void*) { surface->frame(NOW); }, nullptr);
+            }
+        }
+
+        // Hyprland suspends a window whose workspace is not on screen, and
+        // picks the state again on every workspace and monitor change, so
+        // this holds only until the next one — after which the window is on
+        // screen or its tile is gone.
+        void wake(const PHLWINDOW& window) {
+            if (std::ranges::find(m_woken, window) == m_woken.end())
+                m_woken.emplace_back(window);
+            window->setSuspended(false);
+        }
+
+        void suspendWoken() {
+            for (const auto& ref : m_woken) {
+                const auto WINDOW = ref.lock();
+                if (!WINDOW || !WINDOW->m_isMapped)
+                    continue;
+                WINDOW->setSuspended(WINDOW->isHidden() || !WINDOW->m_workspace || !WINDOW->m_workspace->isVisible());
+            }
+            m_woken.clear();
+        }
+
+        // where this window is being shown, if anywhere
+        void damageTilesOf(const PHLWINDOWREF& window) {
+            for (const auto& monitor : State::monitorState()->monitors()) {
+                for (const auto& tile : tilesOn(monitor)) {
+                    if (tile.window != window)
+                        continue;
+                    ++m_damages;
+                    g_pHyprRenderer->damageBox(tile.box.copy().scale(1.0 / monitor->m_scale).translate(monitor->m_position));
+                }
             }
         }
 
