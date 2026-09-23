@@ -11,7 +11,7 @@ import Gtk4LayerShell from "gi://Gtk4LayerShell"
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../iconNames"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
-import { dockOverlap, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION } from "../Dock/dock-state"
+import { dockOverlap, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance } from "../Dock/dock-state"
 import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessAvailable } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 import { watchIndicatorKeys } from "../inputWatcher"
@@ -94,16 +94,27 @@ function resetIndicatorTimeout() {
 // (auto-hide). The surface moves by its layer margin rather than a CSS margin:
 // a CSS margin is part of the surface, so the surface resized with the dock,
 // and while its fade-in still ran Hyprland animated that resize and stretched
-// the pane. It follows the dock's slide, same length and curve, so it rides
-// on the dock rather than jumping ahead of it.
+// the pane.
+//
+// It rides the dock rather than running its own animation between the two
+// resting places: same distance, same curve, same length, so the two move as
+// one and it simply stops at its gap once the dock has passed it.
 
 const EDGE_GAP = 20
 const DOCK_GAP = 8
 
-function bottomMargin(): number {
-  if (conf().indicator_bar_position === "left") return 0
+// the margin while the dock is out, and the one while it is away
+function margins(): { withDock: number, alone: number } {
+  if (conf().indicator_bar_position === "left") return { withDock: 0, alone: 0 }
   const overlap = dockOverlap()
-  return overlap > 0 ? overlap + DOCK_GAP : EDGE_GAP
+  return { withDock: (overlap > 0 ? overlap : bandGuess()) + DOCK_GAP, alone: EDGE_GAP }
+}
+
+// dockOverlap is 0 while the dock is away, so the height it had is kept to
+// animate towards
+let lastBand = 0
+function bandGuess(): number {
+  return lastBand
 }
 
 // CSS `ease`, cubic-bezier(0.25, 0.1, 0.25, 1): the curve of the dock's slide
@@ -120,7 +131,7 @@ function ease(x: number): number {
 }
 
 function followDock(self: Astal.Window) {
-  let margin = bottomMargin()
+  let margin = EDGE_GAP
   let tick = 0
   const place = (px: number) => {
     margin = px
@@ -130,24 +141,34 @@ function followDock(self: Astal.Window) {
     if (tick) self.remove_tick_callback(tick)
     tick = 0
   }
+
   const glide = () => {
-    const to = bottomMargin()
+    const overlap = dockOverlap()
+    if (overlap > 0) lastBand = overlap
+    const { withDock, alone } = margins()
+    const shown = overlap > 0
+    const to = shown ? withDock : alone
     stop()
     if (!self.get_mapped() || to === margin) return place(to)
-    const from = margin
-    const duration = (to > from ? DOCK_SLIDE_DURATION : DOCK_SLIDE_OUT_DURATION) * 1000
+
+    // the pill's own travel: the indicator sits a gap above its top edge
+    // until the edge has gone past, then stays where it rests
+    const distance = dockSlideDistance(conf().dock_icon_size)
+    const duration = (shown ? DOCK_SLIDE_DURATION : DOCK_SLIDE_OUT_DURATION) * 1000
     let start = -1
     tick = self.add_tick_callback((_widget, clock) => {
       const now = clock.get_frame_time()
       if (start < 0) start = now
       const progress = Math.min(1, (now - start) / duration)
-      place(from + (to - from) * ease(progress))
+      const travelled = distance * ease(progress)
+      place(Math.max(alone, withDock - (shown ? distance - travelled : travelled)))
       if (progress < 1) return GLib.SOURCE_CONTINUE
       tick = 0
       return GLib.SOURCE_REMOVE
     })
   }
-  place(margin)
+
+  place(margins().alone)
   const unsubscribe = [dockOverlap.subscribe(glide), conf.subscribe(glide)]
   onCleanup(() => {
     stop()

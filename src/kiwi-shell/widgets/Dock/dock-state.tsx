@@ -22,6 +22,11 @@ export const DOCK_SLIDE_DURATION = 400
 // same speed
 export const DOCK_SLIDE_OUT_DURATION = 600
 
+// How far the pill travels on its way out: more than its own height at any
+// icon size, so no sliver is left behind. Anything that moves with the dock
+// (the indicator) travels the same distance, or the two drift apart.
+export const dockSlideDistance = (iconSize: number) => iconSize + 68
+
 export const hyprland = Hyprland.get_default()
 
 // ─── Launch bounce ────────────────────────────────────────────────────────────

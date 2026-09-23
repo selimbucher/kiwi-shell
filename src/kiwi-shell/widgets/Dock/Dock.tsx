@@ -6,7 +6,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, list, unpinnedList, setDockOverlap, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
+import { hyprland, list, unpinnedList, setDockOverlap, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
@@ -168,7 +168,7 @@ function dockCss(icon: number, margin: number, primary: string) {
     --icon-size: ${icon}px;
     --dock-slide-duration: ${DOCK_SLIDE_DURATION}ms;
     --dock-slide-out-duration: ${DOCK_SLIDE_OUT_DURATION}ms;
-    --dock-slide-distance: ${icon + 68}px;
+    --dock-slide-distance: ${dockSlideDistance(icon)}px;
     --dock-pad-x: ${px(icon, DOCK.padX, 4)}px;
     --icon-pad-x: ${px(icon, DOCK.gap / 2, 1)}px;
     --dock-pad-top: ${px(icon, DOCK.padTop, 3)}px;
