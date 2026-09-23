@@ -7,7 +7,9 @@ import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
 import { mapVersion } from "../desktopEntries"
 import { entryForClient } from "../appIcon"
-import { clientSelector, focusWindow, moveWindowToWorkspace, raiseWindow, toggleSpecialWorkspace } from "../../hypr"
+import { clientSelector, focusWindow, genie, moveWindowToWorkspace, raiseWindow, toggleSpecialWorkspace } from "../../hypr"
+import { LAYER } from "../services/theme"
+import type Gtk from "gi://Gtk?version=4.0"
 
 // How much of the bottom edge the dock is covering right now. Zero in
 // "default" mode, where it reserves its space and nothing else can be under
@@ -122,7 +124,13 @@ export function isClientVisible(client: Hyprland.Client): boolean {
     return hyprland.get_monitors().some(m => m.activeWorkspace?.id === wsId)
 }
 
-export function minimizeClient(client: Hyprland.Client) {
+// With the plugin the window pours into `icon` on its way out; the compositor
+// takes its picture first, so the move waits for that.
+export async function minimizeClient(client: Hyprland.Client, icon?: Gtk.Widget) {
+    const root = icon?.get_root()
+    const [ok, bounds] = icon && root ? icon.compute_bounds(root) : [false, null]
+    if (ok && bounds)
+        await genie(client, LAYER.dock, { x: bounds.get_x(), y: bounds.get_y(), width: bounds.get_width(), height: bounds.get_height() })
     moveWindowToWorkspace(MINIMIZED_WS, addr(client), { follow: false })
 }
 

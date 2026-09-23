@@ -295,14 +295,35 @@ hyprland.connect("config-reloaded", () => {
 const FEATURES = {
     geometry: ["kiwi", "geometry-events"],
     previews: ["kiwi", "kiwi-previews"],
+    genie: ["kiwi"],
 } as const
 
 const WITHOUT = {
     geometry: "the dock won't see windows moved by hand",
     previews: "the switchers capture their previews instead of showing them live",
+    genie: "minimized windows vanish instead of pouring into the dock",
 }
 
 const loadedPlugins = new Set<string>()
+
+/**
+ * Have the compositor pour this window into the rectangle `icon`, in logical
+ * pixels from the top-left of the layer surface called `namespace`. Resolves
+ * once it has its picture of the window, which is then free to go; false
+ * means there is no animation and the window should just go.
+ */
+export async function genie(client: Hyprland.Client, namespace: string, icon: { x: number; y: number; width: number; height: number }): Promise<boolean> {
+    if (!hasFeature("genie")) return false
+    const rect = [icon.x, icon.y, icon.width, icon.height].map(Math.round).join(",")
+    try {
+        const reply = (await request(`kiwi-genie 0x${client.address} ${namespace} ${rect}`)).trim()
+        if (reply !== "ok") log.debug(`kiwi-genie: ${reply}`)
+        return reply === "ok"
+    } catch (e) {
+        log.error("kiwi-genie:", e as Error)
+        return false
+    }
+}
 
 /** Whether the compositor can do this for the shell. Answers after loadPlugins(). */
 export const hasFeature = (feature: keyof typeof FEATURES) =>

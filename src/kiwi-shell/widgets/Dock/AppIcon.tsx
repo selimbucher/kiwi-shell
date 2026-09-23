@@ -154,7 +154,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     const client = clients[0]
                     if (isClientVisible(client)) {
                         // visible → stash in the minimized scratchpad
-                        minimizeClient(client)
+                        minimizeClient(client, iconWidget ?? undefined)
                     } else if (isMinimized(client)) {
                         // bring it back to the current workspace
                         restoreClient(client)

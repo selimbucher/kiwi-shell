@@ -8,7 +8,7 @@ project('kiwi', 'cpp',
 # Hyprland update.
 hyprland = dependency('hyprland')
 
-shared_module('kiwi', 'main.cpp', 'geometry.cpp', 'previews.cpp',
+shared_module('kiwi', 'main.cpp', 'geometry.cpp', 'previews.cpp', 'genie.cpp',
   dependencies: [hyprland],
   name_prefix: 'lib',
   install: true,
