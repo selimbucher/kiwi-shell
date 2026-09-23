@@ -151,8 +151,11 @@ function followDock(self: Astal.Window) {
     stop()
     if (!self.get_mapped() || to === margin) return place(to)
 
-    // the pill's own travel: the indicator sits a gap above its top edge
-    // until the edge has gone past, then stays where it rests
+    // It moves the pill's own distance at the pill's own pace, from the same
+    // moment, and stops where it belongs — which it reaches first, having
+    // less far to go. Its own distance eased over the same time would be the
+    // same length at a different speed, and the two would read as two
+    // animations; waiting for the pill to reach it would read as a delay.
     const distance = dockSlideDistance(conf().dock_icon_size)
     const duration = (shown ? DOCK_SLIDE_DURATION : DOCK_SLIDE_OUT_DURATION) * 1000
     let start = -1
@@ -161,8 +164,10 @@ function followDock(self: Astal.Window) {
       if (start < 0) start = now
       const progress = Math.min(1, (now - start) / duration)
       const travelled = distance * ease(progress)
-      place(Math.max(alone, withDock - (shown ? distance - travelled : travelled)))
-      if (progress < 1) return GLib.SOURCE_CONTINUE
+      place(shown
+        ? Math.min(withDock, alone + travelled)
+        : Math.max(alone, withDock - travelled))
+      if (progress < 1 && (shown ? margin < withDock : margin > alone)) return GLib.SOURCE_CONTINUE
       tick = 0
       return GLib.SOURCE_REMOVE
     })
