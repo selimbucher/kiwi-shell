@@ -3,12 +3,15 @@ const log = logger("workspaces")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, onCleanup } from "ags"
+import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
+import Graphene from "gi://Graphene"
 import { isValidClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
+import { livePreviews, showPreviews, clearPreviews, PreviewHoles, type PreviewTile } from "../services/previews"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, focusWorkspace, type BindOp } from "../../hypr"
@@ -129,6 +132,20 @@ async function registerSuperTabBinds() {
     }
 }
 
+// The compositor draws into the holes for as long as it is told to. Opening
+// again with the same windows lays nothing out anew, so the tiles are sent
+// from here too, once the surface is up.
+isVisible.subscribe(() => {
+    if (!isVisible()) {
+        clearPreviews()
+        return
+    }
+    GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        measureTiles()
+        return GLib.SOURCE_REMOVE
+    })
+})
+
 registerBindSetup("workspaces", registerSuperTabBinds, () => {
     if (!registered) return []
     const mod = registered.mods[0]
@@ -203,6 +220,39 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
         ? layoutCards(get(displayedIds), get(popupGdkMonitor) ?? gdkmonitor)
         : { height: CARD_HEIGHT, rows: [] })
 
+    // the pane hangs in the widget that cuts the holes: a mask covers
+    // everything it draws, the cards' own wallpaper included
+    const menu = () => {
+        const pane = (
+            <box
+                class="app-switch-container"
+                orientation={Gtk.Orientation.VERTICAL}
+                spacing={CARD_SPACING}
+                halign={Gtk.Align.CENTER}
+            >
+                <For each={layout.as(l => l.rows)}>
+                    {(row) => (
+                        <box spacing={CARD_SPACING} halign={Gtk.Align.CENTER}>
+                            {row.map(id => <WorkspaceCard id={id} height={layout.get().height} />)}
+                        </box>
+                    )}
+                </For>
+            </box>
+        ) as Gtk.Box
+
+        const holes = new PreviewHoles({ halign: Gtk.Align.CENTER })
+        holes.append(pane)
+        holes.onLayout = measureTiles
+        holesRef = holes
+        onCleanup(() => {
+            if (holesRef === holes) holesRef = null
+        })
+
+        const centered = new Gtk.CenterBox({ cssClasses: ["ws-switch-menu"] })
+        centered.set_center_widget(holes)
+        return centered
+    }
+
     return (
         <window
             namespace={LAYER.switcher}
@@ -215,27 +265,59 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
             anchor={Astal.WindowAnchor.CENTER | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}
             application={app}
             layer={Astal.Layer.TOP}
-            $={(self) => onCleanup(() => destroyWindow(self))}
+            $={(self) => {
+                windowRef = self
+                onCleanup(() => {
+                    clearPreviews()
+                    windowRef = null
+                    destroyWindow(self)
+                })
+            }}
         >
-            <centerbox class="ws-switch-menu">
-                <box
-                    $type="center"
-                    class="app-switch-container"
-                    orientation={Gtk.Orientation.VERTICAL}
-                    spacing={CARD_SPACING}
-                    halign={Gtk.Align.CENTER}
-                >
-                    <For each={layout.as(l => l.rows)}>
-                        {(row) => (
-                            <box spacing={CARD_SPACING} halign={Gtk.Align.CENTER}>
-                                {row.map(id => <WorkspaceCard id={id} height={layout.get().height} />)}
-                            </box>
-                        )}
-                    </For>
-                </box>
-            </centerbox>
+            {menu()}
         </window>
     )
+}
+
+// ─── Where the miniatures are ─────────────────────────────────────────────────
+// With kiwi-previews in the compositor the miniatures are holes this surface
+// leaves for it to draw the windows into (services/previews.ts). They are
+// "still": a window nobody can see keeps the last frame it drew rather than
+// being woken for a picture this small.
+
+const MINI_RADIUS = 4
+
+let windowRef: Astal.Window | null = null
+let holesRef: InstanceType<typeof PreviewHoles> | null = null
+const tileRefs = new Map<string, Gtk.Widget>()
+
+function measureTiles() {
+    if (!livePreviews() || !windowRef || !holesRef) return
+
+    const [dx, dy] = windowRef.get_surface_transform()
+    const holes: Graphene.Rect[] = []
+    const tiles: PreviewTile[] = []
+
+    for (const [address, widget] of tileRefs) {
+        if (!widget.get_mapped()) continue
+        const [inHoles, local] = widget.compute_bounds(holesRef)
+        const [inWindow, onSurface] = widget.compute_bounds(windowRef)
+        if (!inHoles || !inWindow || local.get_width() < 1 || local.get_height() < 1) continue
+
+        holes.push(local)
+        tiles.push({
+            address,
+            x: onSurface.get_x() + dx,
+            y: onSurface.get_y() + dy,
+            width: onSurface.get_width(),
+            height: onSurface.get_height(),
+        })
+    }
+
+    holesRef.holes = holes
+    holesRef.radius = MINI_RADIUS
+    holesRef.queue_draw()
+    showPreviews(LAYER.switcher, 0, tiles, "still")
 }
 
 // A workspace's own monitor in Hyprland layout terms: logical size (physical
@@ -363,9 +445,11 @@ function WorkspaceCard({ id, height }: { id: number, height: number }) {
 
 function MiniWindowView({ client, width, height }: { client: Hyprland.Client, width: number, height: number }) {
     const address = client.get_address()
-    const [texture, setTexture] = createState<Gdk.Texture | null>(getCachedTexture(address))
-    // fresh captures come straight from the cache; stale ones are retaken
-    captureWindowToTexture(address).then(t => {
+    const [texture, setTexture] = createState<Gdk.Texture | null>(
+        livePreviews() ? null : getCachedTexture(address))
+    // fresh captures come straight from the cache; stale ones are retaken.
+    // With kiwi-previews the compositor draws the window itself.
+    if (!livePreviews()) captureWindowToTexture(address).then(t => {
         if (t) setTexture(t)
     })
     const icon = Math.max(8, Math.min(20, Math.round(Math.min(width, height) * 0.55)))
@@ -373,6 +457,10 @@ function MiniWindowView({ client, width, height }: { client: Hyprland.Client, wi
     return (
         <Gtk.ScrolledWindow
             class="ws-mini-window"
+            $={(self: Gtk.Widget) => {
+                tileRefs.set(address, self)
+                onCleanup(() => tileRefs.delete(address))
+            }}
             overflow={Gtk.Overflow.HIDDEN}
             hscrollbarPolicy={Gtk.PolicyType.NEVER}
             vscrollbarPolicy={Gtk.PolicyType.NEVER}
@@ -385,7 +473,7 @@ function MiniWindowView({ client, width, height }: { client: Hyprland.Client, wi
                     $type="overlay"
                     halign={Gtk.Align.CENTER}
                     valign={Gtk.Align.CENTER}
-                    visible={texture(t => !t)}
+                    visible={texture(t => !t && !livePreviews())}
                 >
                     <AppIconImage entry={entryForClient(client)} pixelSize={icon} cssClass="ws-mini-icon" />
                 </box>

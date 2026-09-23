@@ -49,12 +49,23 @@ function send(request: string) {
 
 let showing = ""
 
-/** Draw these tiles in the surface of the layer called `namespace`. */
-export function showPreviews(namespace: string, rounding: number, tiles: PreviewTile[]) {
+/**
+ * Draw these tiles in the surface of the layer called `namespace`.
+ *
+ * "live" wakes a window nobody can see so its tile keeps up with it; "still"
+ * leaves it asleep and shows the last frame it drew, which is all a tile the
+ * size of a thumbnail is worth.
+ */
+export function showPreviews(
+    namespace: string,
+    rounding: number,
+    tiles: PreviewTile[],
+    motion: "live" | "still" = "live",
+) {
     if (!livePreviews()) return
     const request = tiles.length === 0
         ? "kiwi-previews clear"
-        : `kiwi-previews ${namespace} ${Math.round(rounding)} `
+        : `kiwi-previews ${namespace} ${Math.round(rounding)} ${motion} `
             + tiles.map(t => `${t.address},${Math.round(t.x)},${Math.round(t.y)},`
                 + `${Math.round(t.width)},${Math.round(t.height)}`).join(" ")
     // the tiles only move when the switcher is laid out again

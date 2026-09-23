@@ -3,6 +3,7 @@ const log = logger("appswitcher")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, createBinding, onCleanup } from "ags"
+import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
 import Graphene from "gi://Graphene"
@@ -142,9 +143,18 @@ function hideAppSwitcher() {
     setVisibility(false)
 }
 
-// the compositor draws into the holes for as long as it is told to
+// The compositor draws into the holes for as long as it is told to. Opening
+// again with the same windows lays nothing out anew, so the tiles are sent
+// from here too, once the surface is up.
 isVisible.subscribe(() => {
-    if (!isVisible()) clearPreviews()
+    if (!isVisible()) {
+        clearPreviews()
+        return
+    }
+    GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        measureTiles()
+        return GLib.SOURCE_REMOVE
+    })
 })
 
 function selectNextClient() {

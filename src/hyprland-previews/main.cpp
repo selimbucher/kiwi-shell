@@ -14,8 +14,12 @@
 // back, and a client that talked to this plugin could only make windows
 // appear on the screen, which it can already see.
 //
-//     hyprctl kiwi-previews <namespace> <rounding> <address>,<x>,<y>,<w>,<h> ...
+//     hyprctl kiwi-previews <namespace> <rounding> [live|still] <address>,<x>,<y>,<w>,<h> ...
 //     hyprctl kiwi-previews clear
+//
+// live wakes a window nobody can see so its tile keeps up; still leaves it
+// asleep, showing the last frame it drew, which is all a tile the size of a
+// thumbnail is worth.
 //
 // x and y are logical pixels from the top-left of the layer surface called
 // <namespace>, which is where the shell knows its tiles to be; the plugin
@@ -202,6 +206,7 @@ namespace {
       private:
         std::string                        m_namespace;
         int                                m_rounding = 0;
+        bool                               m_live     = false;
         std::vector<STile>                 m_tiles;
         SP<SHyprCtlCommand>                m_command;
         std::vector<PHLWINDOWREF>          m_woken; // suspended again once their tiles are gone
@@ -257,7 +262,8 @@ namespace {
             request.remove_prefix(std::string_view{"kiwi-previews"}.size());
             const auto WORDS = split(request, ' ');
             if (!WORDS.empty() && WORDS[0] == "status")
-                return std::format("tiles {}, drawn now {}, commits {}, damages {}, keepalives {}\n", m_tiles.size(), drawnNow(), m_commits, m_damages, m_keepAlives);
+                return std::format("tiles {} ({}), drawn now {}, commits {}, damages {}, keepalives {}\n", m_tiles.size(), m_live ? "live" : "still",
+                                   drawnNow(), m_commits, m_damages, m_keepAlives);
             if (WORDS.empty() || WORDS[0] == "clear") {
                 clear();
                 return "ok";
@@ -269,8 +275,13 @@ namespace {
             if (!parse(WORDS[1], rounding))
                 return "rounding must be a number";
 
+            size_t     first = 2;
+            const bool LIVE  = WORDS.size() > 2 && WORDS[2] == "live";
+            if (LIVE || (WORDS.size() > 2 && WORDS[2] == "still"))
+                first = 3;
+
             std::vector<STile> tiles;
-            for (const auto& word : WORDS | std::views::drop(2)) {
+            for (const auto& word : WORDS | std::views::drop(first)) {
                 const auto FIELDS = split(word, ',');
                 if (FIELDS.size() != 5)
                     return "a tile is <address>,<x>,<y>,<w>,<h>";
@@ -298,8 +309,9 @@ namespace {
             const auto HAD = !m_tiles.empty();
             suspendWoken();
             m_namespace = std::string{WORDS[0]};
-            m_rounding     = rounding;
-            m_tiles        = std::move(tiles);
+            m_rounding  = rounding;
+            m_live      = LIVE;
+            m_tiles     = std::move(tiles);
             if (!HAD && !m_tiles.empty())
                 damageAll();
 
@@ -372,7 +384,7 @@ namespace {
         // that is on screen somewhere needs none of this: it draws for its
         // own sake.
         void keepAlive(const PHLMONITOR& monitor) {
-            if (m_tiles.empty())
+            if (m_tiles.empty() || !m_live)
                 return;
 
             const auto NOW = Time::steadyNow();
