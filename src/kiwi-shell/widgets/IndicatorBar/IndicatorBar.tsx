@@ -211,7 +211,7 @@ function Indicator(){
         <Icon
           class={indicatorIcon.as((icon) => 'indicator-icon '+icon)}
           iconName={indicatorIcon}
-          pixelSize={18}
+          pixelSize={16}
         />
         <slider
           class={indicatorType}
