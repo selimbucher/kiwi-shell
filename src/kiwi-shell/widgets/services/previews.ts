@@ -4,6 +4,7 @@ import Gsk from "gi://Gsk"
 import Gdk from "gi://Gdk?version=4.0"
 import Graphene from "gi://Graphene"
 import GObject from "gi://GObject"
+import GLib from "gi://GLib"
 
 import { logger } from "../../log"
 import { hasFeature } from "../../hypr"
@@ -37,14 +38,16 @@ export type PreviewTile = {
     height: number
 }
 
-function send(request: string, taken?: () => void) {
+function send(request: string, taken?: (ok: boolean) => void) {
     hyprland.message_async(request, (_source: unknown, result: any) => {
+        let ok = false
         try {
             log.debug(`${request.slice(0, 120)} -> ${hyprland.message_finish(result).trim()}`)
-            taken?.()
+            ok = true
         } catch (e) {
             log.error("kiwi-previews:", e as Error)
         }
+        taken?.(ok)
     })
 }
 
@@ -57,19 +60,20 @@ let showing = ""
  * leaves it asleep and shows the last frame it drew, which is all a tile the
  * size of a thumbnail is worth.
  *
- * `taken` is called once the compositor has them, which is when it is safe to
- * cut the holes for them. The compositor draws a tile in the same frame the
- * shell's surface comes up, so a hole cut from here is never empty; one cut
- * before the tiles were sent — a hole left over from the last time the
- * switcher was open — shows the windows behind the switcher for a frame or
- * two, which is what `PreviewHoles.close` is for.
+ * `taken` is called once the compositor has them, with whether it does. It
+ * draws them from the shell's next frame on, so the holes cut from here open
+ * in the same frame the tiles appear in them. A hole cut before the tiles
+ * were sent — one left over from the last time the switcher was open — shows
+ * the windows behind the switcher for a frame or two, which is what
+ * `PreviewHoles.close` is for; a pane shown before, its tiles empty, which is
+ * what `PreviewHoles.wait` is for.
  */
 export function showPreviews(
     namespace: string,
     rounding: number,
     tiles: PreviewTile[],
     motion: "live" | "still" = "live",
-    taken?: () => void,
+    taken?: (ok: boolean) => void,
 ) {
     if (!livePreviews()) return
     const request = tiles.length === 0
@@ -79,11 +83,33 @@ export function showPreviews(
                 + `${Math.round(t.width)},${Math.round(t.height)}`).join(" ")
     // the tiles only move when the switcher is laid out again
     if (request === showing) {
-        taken?.()
+        taken?.(true)
         return
     }
     showing = request
     send(request, taken)
+}
+
+/**
+ * Run `after` once `widget`'s window has drawn a frame. A switcher shows its
+ * first frame empty (PreviewHoles.wait) and only then asks for its tiles, so
+ * the compositor has seen that frame before it hears of them: the next frame,
+ * the one with the holes, is the one they are drawn from.
+ */
+export function afterNextFrame(widget: Gtk.Widget, after: () => void) {
+    const clock = widget.get_frame_clock()
+    if (!clock) {
+        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            after()
+            return GLib.SOURCE_REMOVE
+        })
+        return
+    }
+    const id = clock.connect("after-paint", () => {
+        clock.disconnect(id)
+        after()
+    })
+    widget.queue_draw()
 }
 
 export function clearPreviews() {
@@ -125,10 +151,25 @@ export const PreviewHoles = GObject.registerClass(
         /** Called after every layout, where the shell measures its tiles. */
         onLayout: (() => void) | null = null
 
-        /** Cut these, at this radius, and redraw. */
+        /** Nothing is drawn while waiting for the compositor (wait()). */
+        waiting = false
+
+        /**
+         * Draw nothing until the holes are cut. The compositor draws its
+         * tiles from the frame the holes are cut in, so a pane shown before
+         * then shows its tiles empty for a frame or two, then filled.
+         */
+        wait() {
+            if (this.waiting) return
+            this.waiting = true
+            this.queue_draw()
+        }
+
+        /** Cut these, at this radius, and redraw — the pane with them. */
         cut(holes: Graphene.Rect[], radius: number) {
             this.holes = holes
             this.radius = radius
+            this.waiting = false
             this.queue_draw()
         }
 
@@ -152,6 +193,7 @@ export const PreviewHoles = GObject.registerClass(
         }
 
         vfunc_snapshot(snapshot: Gtk.Snapshot): void {
+            if (this.waiting) return
             if (this.holes.length === 0) {
                 super.vfunc_snapshot(snapshot)
                 return

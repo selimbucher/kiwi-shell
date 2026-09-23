@@ -28,6 +28,11 @@
 // own titles, icons and selection stay on top — it leaves the tile itself
 // transparent, a hole for this to fill.
 //
+// New tiles wait for the shell's surface to commit its next frame before they
+// are drawn: that is the frame in which the shell opens the holes for them, so
+// the holes, the pane around them and the windows in them all appear at once.
+// Drawn any earlier, a tile shows for a frame without the pane around it.
+//
 // A tile is redrawn when the window in it commits a frame, not on a timer.
 // A window nobody can see is the exception: Hyprland tells such a window it
 // is suspended and stops drawing it, and a client that is told that stops
@@ -194,6 +199,10 @@ namespace {
             });
             // damage and frame callbacks belong outside the render itself
             m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) { keepAlive(monitor); });
+            m_openedListener = Event::bus()->m_events.layer.opened.listen([this](PHLLS layer) {
+                if (m_armed && layer && layer->m_namespace == m_namespace)
+                    listenForCommit(layer);
+            });
             return true;
         }
 
@@ -201,6 +210,7 @@ namespace {
             suspendWoken();
             m_stageListener.reset();
             m_preListener.reset();
+            m_openedListener.reset();
             m_command.reset();
             m_tiles.clear();
         }
@@ -212,9 +222,16 @@ namespace {
         std::vector<STile>                 m_tiles;
         SP<SHyprCtlCommand>                m_command;
         std::vector<PHLWINDOWREF>          m_woken; // suspended again once their tiles are gone
+        // new tiles are held back until the shell's surface next commits;
+        // the ones on screen stay until then
+        std::vector<STile>                 m_pending;
+        bool                               m_armed = false;
+        std::vector<CHyprSignalListener>   m_armListeners;
+        std::vector<PHLLSREF>              m_armLayers;
         size_t                             m_commits = 0, m_damages = 0, m_keepAlives = 0;
         CHyprSignalListener                m_stageListener;
         CHyprSignalListener                m_preListener;
+        CHyprSignalListener                m_openedListener;
 
         static std::vector<std::string_view> split(std::string_view text, char by) {
             std::vector<std::string_view> parts;
@@ -313,11 +330,19 @@ namespace {
             m_namespace = std::string{WORDS[0]};
             m_rounding  = rounding;
             m_live      = LIVE;
-            m_tiles     = std::move(tiles);
-            if (!HAD && !m_tiles.empty())
+            m_armListeners.clear();
+            m_armLayers.clear();
+            m_armed = !tiles.empty();
+            const auto COUNT = tiles.size();
+            if (m_armed) {
+                m_pending = std::move(tiles);
+                listenForCommit();
+            } else if (HAD) {
                 damageAll();
+                m_tiles.clear();
+            }
 
-            return std::format("ok: {} tiles, {} of them on a monitor now\n", m_tiles.size(), drawnNow());
+            return std::format("ok: {} tiles, drawn from the shell's next frame\n", COUNT);
         }
 
         // what the next frame would draw, for the reply
@@ -328,7 +353,42 @@ namespace {
             return drawn;
         }
 
+        // The shell's next frame is the one with the holes in it. A surface
+        // that maps after the request is picked up as it maps (layer.opened),
+        // from inside the commit it maps with: a listener added during a
+        // signal hears only the ones after, and the frame it maps with is the
+        // shell's first, which it draws empty.
+        void listenForCommit() {
+            for (const auto& monitor : State::monitorState()->monitors()) {
+                if (const auto LAYER = layerOn(monitor))
+                    listenForCommit(LAYER);
+            }
+        }
+
+        void listenForCommit(const PHLLS& layer) {
+            if (std::ranges::find(m_armLayers, layer) != m_armLayers.end())
+                return;
+            const auto SURFACE = layer->wlSurface() ? layer->wlSurface()->resource() : nullptr;
+            if (!SURFACE)
+                return;
+            m_armLayers.emplace_back(layer);
+            // the listeners stay until the next request: this runs inside one
+            m_armListeners.emplace_back(SURFACE->m_events.commit.listen([this] {
+                if (!m_armed)
+                    return;
+                m_armed = false;
+                damageAll(); // where the old tiles were
+                m_tiles = std::move(m_pending);
+                m_pending.clear();
+                damageAll();
+            }));
+        }
+
         void clear() {
+            m_armed = false;
+            m_pending.clear();
+            m_armListeners.clear();
+            m_armLayers.clear();
             suspendWoken();
             if (m_tiles.empty())
                 return;

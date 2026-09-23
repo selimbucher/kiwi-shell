@@ -14,7 +14,7 @@ import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePrevi
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { livePreviews, showPreviews, clearPreviews, PreviewHoles, type PreviewTile } from "../services/previews"
+import { livePreviews, showPreviews, clearPreviews, afterNextFrame, PreviewHoles, type PreviewTile } from "../services/previews"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, closeWindow, clientSelector, type BindOp } from "../../hypr"
 import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
@@ -156,8 +156,25 @@ isVisible.subscribe(() => {
         holesRef?.close()
         return
     }
+    // Nothing shows until the compositor has the tiles, and then all at once.
+    // With no tiles to wait for, or should they never be laid out, the pane
+    // shows without them.
+    if (livePreviews()) {
+        holesRef?.wait()
+        const shown = generation
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, REVEAL_ANYWAY_MS, () => {
+            if (generation === shown && holesRef?.waiting) holesRef.cut([], TILE_RADIUS)
+            return GLib.SOURCE_REMOVE
+        })
+    }
+    firstFrameDrawn = false
     GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-        measureTiles()
+        if (!windowRef) return GLib.SOURCE_REMOVE
+        afterNextFrame(windowRef, () => {
+            firstFrameDrawn = true
+            measureTiles()
+            if (tileRefs.size === 0 && holesRef?.waiting) holesRef.cut([], TILE_RADIUS)
+        })
         return GLib.SOURCE_REMOVE
     })
 })
@@ -247,8 +264,16 @@ const tileRefs = new Map<string, Gtk.Widget>()
 // so a measurement that has been overtaken doesn't cut its holes
 let generation = 0
 
+// how long a switcher waits, at most, to show with its tiles in place
+const REVEAL_ANYWAY_MS = 150
+
+// false from showing until the switcher's first, empty frame is drawn
+let firstFrameDrawn = true
+
 function measureTiles() {
     if (!livePreviews() || !windowRef || !holesRef) return
+    // the compositor must see the empty frame before it hears of the tiles
+    if (holesRef.waiting && !firstFrameDrawn) return
 
     // widget coordinates start inside the window's padding; the compositor
     // counts from the surface
@@ -271,15 +296,19 @@ function measureTiles() {
             height: onSurface.get_height(),
         })
     }
+    // a first layout can come before the tiles are on screen; showing the
+    // pane on it would show them empty until the next
+    if (holesRef.waiting && tiles.length === 0 && tileRefs.size > 0) return
 
     // the compositor draws square corners; the pane's own glass covers the
     // rounded ones, which is what gives the picture its corners. A hole is
     // cut once the compositor has the tile that goes in it — cut earlier, it
     // stands open over the windows behind the switcher.
     const measured = ++generation
-    showPreviews(LAYER.switcher, 0, tiles, "live", () => {
+    showPreviews(LAYER.switcher, 0, tiles, "live", ok => {
         if (measured !== generation || !holesRef) return
-        holesRef.cut(holes, TILE_RADIUS)
+        // without the tiles, the pane is shown without holes
+        holesRef.cut(ok ? holes : [], TILE_RADIUS)
     })
 }
 
