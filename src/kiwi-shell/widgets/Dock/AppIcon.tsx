@@ -103,6 +103,11 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
     }
 
     const cancelOpen = () => { if (openTimer) { clearTimeout(openTimer); openTimer = null } }
+    // A click answers the hover: the preview stays shut until the pointer has
+    // really left the icon. Minimizing or restoring changes what is under the
+    // pointer, and Hyprland sends the dock a fresh enter for it, which would
+    // otherwise open the preview of the window that was just clicked away.
+    let clicked = false
     const cancelClose = () => {
         log.debug(`[preview:${entry}] cancelClose (had timer: ${closeTimer !== null})`)
         if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
@@ -138,6 +143,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                 onclicked={() => {
                     cancelOpen()
                     cancelClose()
+                    clicked = true
                     const clients = clientsBinding()
                     if (clients.length === 0) {
                         launchBounce(setHop)
@@ -193,6 +199,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                         log.debug(`[preview:${entry}] icon ENTER`)
                         cancelClose()
                         cancelOpen()
+                        if (clicked) return
                         openTimer = setTimeout(() => {
                             if (clientsBinding().length > 0 && !menu.visible)
                                 previews.popup()
@@ -201,6 +208,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     hover.connect("leave", () => {
                         log.debug(`[preview:${entry}] icon LEAVE`)
                         cancelOpen()
+                        if (clicked && !pointerInKeepRegion()) clicked = false
                         scheduleClose()
                     })
                     self.add_controller(hover)
