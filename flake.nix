@@ -120,17 +120,17 @@
             ];
           };
 
-          # ─── geometry-events Hyprland plugin ─────────────────────────────────────
-          # Posts windowgeometry>> on Hyprland's event socket when a window is
-          # moved or resized, which Hyprland itself never announces; the dock's
-          # auto-hide listens for it, and the shell loads it at start (hypr.ts).
-          # See the header of main.cpp.
-          hyprland-geometry-events = pkgs.hyprlandPlugins.mkHyprlandPlugin {
+          # ─── kiwi's Hyprland plugin ───────────────────────────────────────
+          # Window moves and resizes on the event socket, which Hyprland
+          # doesn't announce and the dock's auto-hide follows, and the
+          # switchers' tiles drawn from the windows themselves rather than
+          # captured. See src/hyprland-plugin/kiwi.hpp.
+          kiwi-plugin = pkgs.hyprlandPlugins.mkHyprlandPlugin {
             hyprland = hyprlandPackage;
-            pluginName = "geometry-events";
-            version = "0.1.0";
+            pluginName = "kiwi";
+            version = "0.2.0";
 
-            src = ./src/hyprland-geometry-events;
+            src = ./src/hyprland-plugin;
 
             nativeBuildInputs = with pkgs; [
               meson
@@ -138,28 +138,7 @@
             ];
 
             meta = {
-              description = "Hyprland plugin: announces window moves and resizes on the event socket";
-              platforms = pkgs.lib.platforms.linux;
-            };
-          };
-
-          # ─── kiwi-previews Hyprland plugin ────────────────────────────────
-          # Draws the switcher's window previews from the windows themselves,
-          # so the shell never has to capture them. See the header of main.cpp.
-          kiwi-previews = pkgs.hyprlandPlugins.mkHyprlandPlugin {
-            hyprland = hyprlandPackage;
-            pluginName = "kiwi-previews";
-            version = "0.1.0";
-
-            src = ./src/hyprland-previews;
-
-            nativeBuildInputs = with pkgs; [
-              meson
-              ninja
-            ];
-
-            meta = {
-              description = "Hyprland plugin: draws kiwi-shell's window previews inside the compositor";
+              description = "Hyprland plugin: what kiwi-shell needs from inside the compositor";
               platforms = pkgs.lib.platforms.linux;
             };
           };
@@ -212,8 +191,7 @@
 
               # Compilation
               ags bundle ${entry} $out/bin/.${pname}-core -d "SRC='$out/share/kiwi-shell'" \
-                -d "GEOMETRY_PLUGIN='${hyprland-geometry-events}/lib/kiwi-shell/libgeometry-events.so'" \
-                -d "PREVIEWS_PLUGIN='${kiwi-previews}/lib/kiwi-shell/libkiwi-previews.so'"
+                -d "PLUGIN='${kiwi-plugin}/lib/kiwi-shell/libkiwi.so'"
 
               # Runtime Dependencies Wrapper
               wrapProgram $out/bin/.${pname}-core \
@@ -288,8 +266,7 @@
             app-capture
             hyprland-shortcuts
             kiwi-surface
-            hyprland-geometry-events
-            kiwi-previews
+            kiwi-plugin
             extraPackages
             ;
           settings = kiwi-settings.packages.${system}.default;

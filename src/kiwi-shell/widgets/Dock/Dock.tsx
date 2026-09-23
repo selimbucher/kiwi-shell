@@ -212,7 +212,7 @@ const HOLD_TICK_MS = 100
 // not for windows. The strip is measured whenever Hyprland says a window
 // moved: in one step (opening, closing, floating, fullscreen, another
 // workspace), or by hand or by a keybind. Hyprland announces the last kind
-// only through kiwi's geometry-events plugin, which the shell loads at start
+// only through kiwi's own Hyprland plugin, which the shell loads at start
 // (hypr.ts): windowgeometry, with the window's new frame, once per move and
 // once per drawn frame while a window is dragged or resized.
 const COVER_EVENTS = new Set(["changefloatingmode", "fullscreen", "movewindowv2"])

@@ -6,7 +6,7 @@ import Graphene from "gi://Graphene"
 import GObject from "gi://GObject"
 
 import { logger } from "../../log"
-import { hasPlugin } from "../../hypr"
+import { hasFeature } from "../../hypr"
 
 const log = logger("previews")
 const hyprland = Hyprland.get_default()
@@ -17,7 +17,7 @@ const hyprland = Hyprland.get_default()
 // window's pixels, and a picture is a still: a playing video stands still in
 // its tile.
 //
-// kiwi-previews (src/hyprland-previews) turns it around — the shell says
+// kiwi's plugin (src/hyprland-plugin) turns it around — the shell says
 // where its tiles are, the compositor draws the windows there itself, and
 // nothing is ever copied out. The tiles are drawn below the shell's own
 // surface, so the shell cuts a hole where each one goes (PreviewHoles) and
@@ -26,7 +26,7 @@ const hyprland = Hyprland.get_default()
 // Without the plugin the shell captures as it always did
 // (AppSwitcher/clientCachingService).
 
-export const livePreviews = () => hasPlugin("kiwi-previews")
+export const livePreviews = () => hasFeature("previews")
 
 /** A tile, in logical pixels from the top-left of the shell's surface. */
 export type PreviewTile = {

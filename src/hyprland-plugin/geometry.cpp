@@ -1,4 +1,4 @@
-// geometry-events: Hyprland announces on its event socket where a window went.
+// Window geometry: Hyprland announces on its event socket where a window went.
 //
 // Hyprland's socket2 says when a window opens, closes, floats, goes
 // fullscreen or changes workspace, but not when it is moved or resized, by
@@ -32,6 +32,8 @@
 // not hooked: outside the layout only trackpad window gestures and the
 // scrolling layout call them (and the open animation, which re-applies the
 // frame the layout already set).
+
+#include "kiwi.hpp"
 
 #include <plugins/PluginAPI.hpp>
 #include <desktop/view/Window.hpp>
@@ -174,29 +176,22 @@ namespace {
         if (g_geometryEvents)
             g_geometryEvents->changed(self);
     }
+
 }
 
-APICALL EXPORT std::string pluginAPIVersion() {
-    return HYPRLAND_API_VERSION;
-}
-
-APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
-    // kiwi loads this at every start and logs why it failed, so a refusal is
-    // quiet here: no notification on screen for something the shell handles
-    if (std::string(__hyprland_api_get_hash()) != __hyprland_api_get_client_hash())
-        throw std::runtime_error("[geometry-events] built for a different Hyprland");
-
-    g_geometryEvents = makeUnique<CGeometryEvents>();
-    if (!g_geometryEvents->init(handle)) {
-        g_geometryEvents.reset();
-        throw std::runtime_error("[geometry-events] no CWindow::setBox to hook");
+namespace Kiwi::Geometry {
+    bool init(HANDLE handle) {
+        g_geometryEvents = makeUnique<CGeometryEvents>();
+        if (!g_geometryEvents->init(handle)) {
+            g_geometryEvents.reset();
+            return false;
+        }
+        return true;
     }
 
-    return {.name = "geometry-events", .description = "Announces window moves and resizes on the event socket", .author = "selim", .version = "0.1.0"};
-}
-
-APICALL EXPORT void pluginExit() {
-    if (g_geometryEvents)
-        g_geometryEvents->exit();
-    g_geometryEvents.reset();
+    void exit() {
+        if (g_geometryEvents)
+            g_geometryEvents->exit();
+        g_geometryEvents.reset();
+    }
 }

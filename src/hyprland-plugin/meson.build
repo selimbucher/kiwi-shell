@@ -1,5 +1,5 @@
-project('geometry-events', 'cpp',
-  version: '0.1.0',
+project('kiwi', 'cpp',
+  version: '0.2.0',
   default_options: ['cpp_std=c++23', 'buildtype=release']
 )
 
@@ -8,7 +8,7 @@ project('geometry-events', 'cpp',
 # Hyprland update.
 hyprland = dependency('hyprland')
 
-shared_module('geometry-events', 'main.cpp',
+shared_module('kiwi', 'main.cpp', 'geometry.cpp', 'previews.cpp',
   dependencies: [hyprland],
   name_prefix: 'lib',
   install: true,

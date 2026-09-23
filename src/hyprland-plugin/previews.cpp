@@ -1,4 +1,4 @@
-// kiwi-previews: the compositor draws the switcher's window previews itself.
+// Previews: the compositor draws the switcher's window previews itself.
 //
 // The app switcher shows what each window looks like. Getting those pictures
 // the usual way means asking the compositor to export every window to the
@@ -34,6 +34,8 @@
 // painting, so while it is in a tile the plugin takes that back and sends it
 // the frame callbacks it would otherwise never get. It is suspended again as
 // soon as its tile is gone.
+
+#include "kiwi.hpp"
 
 #include <plugins/PluginAPI.hpp>
 #include <desktop/state/WindowState.hpp>
@@ -447,27 +449,19 @@ namespace {
     UP<CKiwiPreviews> g_kiwiPreviews;
 }
 
-APICALL EXPORT std::string pluginAPIVersion() {
-    return HYPRLAND_API_VERSION;
-}
-
-APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
-    // kiwi loads this at every start and logs why it failed, so a refusal is
-    // quiet here: no notification on screen for something the shell handles
-    if (std::string(__hyprland_api_get_hash()) != __hyprland_api_get_client_hash())
-        throw std::runtime_error("[kiwi-previews] built for a different Hyprland");
-
-    g_kiwiPreviews = makeUnique<CKiwiPreviews>();
-    if (!g_kiwiPreviews->init(handle)) {
-        g_kiwiPreviews.reset();
-        throw std::runtime_error("[kiwi-previews] could not register the kiwi-previews command");
+namespace Kiwi::Previews {
+    bool init(HANDLE handle) {
+        g_kiwiPreviews = makeUnique<CKiwiPreviews>();
+        if (!g_kiwiPreviews->init(handle)) {
+            g_kiwiPreviews.reset();
+            return false;
+        }
+        return true;
     }
 
-    return {.name = "kiwi-previews", .description = "Draws the shell's window previews from the windows themselves", .author = "selim", .version = "0.1.0"};
-}
-
-APICALL EXPORT void pluginExit() {
-    if (g_kiwiPreviews)
-        g_kiwiPreviews->exit();
-    g_kiwiPreviews.reset();
+    void exit() {
+        if (g_kiwiPreviews)
+            g_kiwiPreviews->exit();
+        g_kiwiPreviews.reset();
+    }
 }

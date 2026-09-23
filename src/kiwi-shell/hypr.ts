@@ -271,42 +271,45 @@ hyprland.connect("config-reloaded", () => {
     })
 })
 
-// The shell's own Hyprland plugins (src/hyprland-*), loaded by the shell so
-// nobody has to add them to their compositor config:
+// kiwi's own Hyprland plugin (src/hyprland-plugin), loaded by the shell so
+// nobody has to add it to their compositor config. It carries what the shell
+// needs from inside the compositor:
 //
-//   geometry-events  announces window moves and resizes, which Hyprland
-//                    doesn't; the dock's auto-hide follows them
-//   kiwi-previews    draws the switcher's window previews from the windows
-//                    themselves, so the shell never captures them
+//   window geometry  moves and resizes on the event socket, which Hyprland
+//                    doesn't announce; the dock's auto-hide follows them
+//   previews         the switchers' tiles, drawn from the windows themselves
+//                    rather than captured
 //
 // Loading is all this ever does. A copy that is already in the compositor,
 // from an older kiwi or from the user's own config, stays: it does the same
 // thing, and taking a plugin out of a running compositor can take the whole
-// session with it. The copy this build ships loads at the next login.
+// session with it. The copy this build ships loads at the next login. Older
+// kiwis carried the two halves as separate plugins, which count here as
+// whichever half they are.
 //
 // Hyprland asks the user first when its plugin permissions are enforced, and
 // a plugin built for another Hyprland refuses to load. Either way the shell
 // carries on without it, and the reason is in the log.
 
-const PLUGINS: { name: string, path: string | undefined, without: string }[] = [
-    {
-        name: "geometry-events",
-        path: typeof GEOMETRY_PLUGIN === "string" ? GEOMETRY_PLUGIN : undefined,
-        without: "the dock won't see windows moved by hand",
-    },
-    {
-        name: "kiwi-previews",
-        path: typeof PREVIEWS_PLUGIN === "string" ? PREVIEWS_PLUGIN : undefined,
-        without: "the switcher captures its previews instead of showing them live",
-    },
-]
+/** What the plugin does for the shell, and which plugins provide it. */
+const FEATURES = {
+    geometry: ["kiwi", "geometry-events"],
+    previews: ["kiwi", "kiwi-previews"],
+} as const
+
+const WITHOUT = {
+    geometry: "the dock won't see windows moved by hand",
+    previews: "the switchers capture their previews instead of showing them live",
+}
 
 const loadedPlugins = new Set<string>()
 
-/** Whether a kiwi plugin is in the compositor. Answers only after loadPlugins(). */
-export const hasPlugin = (name: string) => loadedPlugins.has(name)
+/** Whether the compositor can do this for the shell. Answers after loadPlugins(). */
+export const hasFeature = (feature: keyof typeof FEATURES) =>
+    FEATURES[feature].some(name => loadedPlugins.has(name))
 
 export async function loadPlugins() {
+    const path = typeof PLUGIN === "string" ? PLUGIN : ""
     let loaded: { name: string }[]
     try {
         loaded = JSON.parse(await request("j/plugin list"))
@@ -315,20 +318,20 @@ export async function loadPlugins() {
         return
     }
 
-    for (const plugin of PLUGINS) {
-        if (loaded.some(p => p.name === plugin.name)) {
-            loadedPlugins.add(plugin.name)
-            log.debug(`${plugin.name} plugin already loaded`)
-            continue
-        }
-        if (!plugin.path) {
-            log.info(`this build ships no ${plugin.name} plugin; ${plugin.without}`)
-            continue
-        }
-        if (await send(`plugin load ${plugin.path}`, `load the ${plugin.name} plugin`)) {
-            loadedPlugins.add(plugin.name)
-            log.info(`${plugin.name} plugin loaded`)
-        } else
-            log.info(`without the ${plugin.name} plugin, ${plugin.without}`)
+    for (const plugin of loaded) loadedPlugins.add(plugin.name)
+
+    const known = new Set(Object.values(FEATURES).flat())
+    if ([...loadedPlugins].some(name => known.has(name)))
+        log.debug(`kiwi plugins already loaded: ${[...loadedPlugins].filter(name => known.has(name)).join(", ")}`)
+    else if (!path)
+        log.info("this build ships no kiwi plugin")
+    else if (await send(`plugin load ${path}`, "load the kiwi plugin")) {
+        loadedPlugins.add("kiwi")
+        log.info("kiwi plugin loaded")
+    }
+
+    for (const feature of Object.keys(FEATURES) as (keyof typeof FEATURES)[]) {
+        if (!hasFeature(feature))
+            log.info(`without the kiwi plugin, ${WITHOUT[feature]}`)
     }
 }
