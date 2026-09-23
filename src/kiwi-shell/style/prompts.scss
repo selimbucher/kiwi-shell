@@ -6,25 +6,53 @@
 
 .prompt-container {
     @include panel;
-    padding: 24px;
-    border-radius: 12px;
-    min-width: 275px;
+    padding: 20px 22px 18px;
+    border-radius: 14px;
+    min-width: 380px;
 }
 
 .prompt-header {
-    font-size: 24px;
-    font-weight: bold;
-    margin-bottom: 12px;
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 4px;
 }
 
 .prompt-text {
-    color: var(--k-fg-2);
+    font-size: 13px;
+    color: var(--k-fg-3);
 }
 
+// the one field in the shell that would otherwise be a stock GTK entry,
+// down to the blue focus ring
 .single-entry {
-    margin: 18px 0;
+    margin: 16px 0 14px;
+    background: var(--k-fill);
+    color: var(--k-fg);
+    border: 1px solid var(--k-border);
+    box-shadow: none;
+    outline: none;
+    border-radius: 8px;
+    min-height: 34px;
+    padding: 0 10px;
+    caret-color: var(--primary);
+
+    placeholder {
+        color: var(--k-fg-4);
+    }
+
+    &:focus, &:focus-within {
+        border-color: var(--primary);
+    }
+
+    selection {
+        background-color: var(--k-fill-active);
+        color: var(--k-fg);
+    }
 }
 
-.prompt-actions {
-    margin-top: 4px;
+.prompt-actions button {
+    padding: 6px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
 }

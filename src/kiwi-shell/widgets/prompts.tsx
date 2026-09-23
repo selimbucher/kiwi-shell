@@ -31,7 +31,20 @@ export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monito
             application={app}
             layer={Astal.Layer.OVERLAY}
             keymode={Astal.Keymode.EXCLUSIVE}
-            $={(self) => onCleanup(() => destroyWindow(self))}
+            $={(self) => {
+                // it takes the keyboard while it is up, so escape has to be
+                // answered here or there is no way out but the mouse
+                const keys = new Gtk.EventControllerKey()
+                // ahead of the entry, which has the focus and the key first
+                keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+                keys.connect("key-pressed", (_controller, keyval: number) => {
+                    if (keyval !== Gdk.KEY_Escape) return Gdk.EVENT_PROPAGATE
+                    setShowPrompt(false)
+                    return Gdk.EVENT_STOP
+                })
+                self.add_controller(keys)
+                onCleanup(() => destroyWindow(self))
+            }}
         >
             <box>
                 <WifiPrompt />
@@ -64,6 +77,18 @@ function WifiPrompt() {
             onActivate={self => submitWifiPassword(wifiSSID(), self.text)}
         />
     )
+    const title = (
+        <label class="prompt-header" xalign={0}
+            label={pwInvalid.as(invalid => invalid ? "Wrong Password" : "Wi-Fi Connection")} />
+    )
+    // the name is the one thing being asked about, so it carries the weight;
+    // a long one wraps rather than stretching the dialog
+    const text = (
+        <label class="prompt-text" xalign={0} wrap maxWidthChars={38} useMarkup
+            label={wifiSSID.as(ssid =>
+                `Enter the password for <b>${ssid.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</b>.`)} />
+    )
+
     return (
         <box
             class="prompt-container"
@@ -72,15 +97,10 @@ function WifiPrompt() {
             hexpand
             orientation={Gtk.Orientation.VERTICAL}
         >
-            <box class="prompt-header" halign={Gtk.Align.CENTER}>
-                <label label={pwInvalid.as(invalid => {
-                    if (invalid === true) {
-                        return "Wrong Password"
-                    }
-                    return "Wi-Fi Connection"
-                })} />
+            <box class="prompt-top" orientation={Gtk.Orientation.VERTICAL} hexpand>
+                {title}
+                {text}
             </box>
-            <box class="prompt-text" halign={Gtk.Align.CENTER}>Enter the password for <label label={wifiSSID}/>.</box>
             { pw }
             <box
                 class="prompt-actions"
