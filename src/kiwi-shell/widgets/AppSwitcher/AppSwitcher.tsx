@@ -149,6 +149,11 @@ function hideAppSwitcher() {
 isVisible.subscribe(() => {
     if (!isVisible()) {
         clearPreviews()
+        // the window stays, so its holes would still be cut the next time it
+        // is shown — over a compositor that has just been told to draw
+        // nothing in them
+        ++generation
+        holesRef?.close()
         return
     }
     GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -239,6 +244,8 @@ const TILE_RADIUS = 6
 let windowRef: Astal.Window | null = null
 let holesRef: InstanceType<typeof PreviewHoles> | null = null
 const tileRefs = new Map<string, Gtk.Widget>()
+// so a measurement that has been overtaken doesn't cut its holes
+let generation = 0
 
 function measureTiles() {
     if (!livePreviews() || !windowRef || !holesRef) return
@@ -265,12 +272,15 @@ function measureTiles() {
         })
     }
 
-    holesRef.holes = holes
-    holesRef.radius = TILE_RADIUS
-    holesRef.queue_draw()
     // the compositor draws square corners; the pane's own glass covers the
-    // rounded ones, which is what gives the picture its corners
-    showPreviews(LAYER.switcher, 0, tiles)
+    // rounded ones, which is what gives the picture its corners. A hole is
+    // cut once the compositor has the tile that goes in it — cut earlier, it
+    // stands open over the windows behind the switcher.
+    const measured = ++generation
+    showPreviews(LAYER.switcher, 0, tiles, "live", () => {
+        if (measured !== generation || !holesRef) return
+        holesRef.cut(holes, TILE_RADIUS)
+    })
 }
 
 // Uniform height, width hugs the window's aspect ratio — the tile IS the

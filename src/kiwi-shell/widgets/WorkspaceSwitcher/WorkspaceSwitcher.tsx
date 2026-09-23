@@ -138,6 +138,11 @@ async function registerSuperTabBinds() {
 isVisible.subscribe(() => {
     if (!isVisible()) {
         clearPreviews()
+        // the window stays, so its holes would still be cut the next time it
+        // is shown — over a compositor that has just been told to draw
+        // nothing in them
+        ++generation
+        holesRef?.close()
         return
     }
     GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -290,6 +295,8 @@ const MINI_RADIUS = 4
 let windowRef: Astal.Window | null = null
 let holesRef: InstanceType<typeof PreviewHoles> | null = null
 const tileRefs = new Map<string, Gtk.Widget>()
+// so a measurement that has been overtaken doesn't cut its holes
+let generation = 0
 
 function measureTiles() {
     if (!livePreviews() || !windowRef || !holesRef) return
@@ -314,10 +321,13 @@ function measureTiles() {
         })
     }
 
-    holesRef.holes = holes
-    holesRef.radius = MINI_RADIUS
-    holesRef.queue_draw()
-    showPreviews(LAYER.switcher, 0, tiles, "still")
+    // a hole is cut once the compositor has the tile that goes in it — cut
+    // earlier, it stands open over the windows behind the switcher
+    const measured = ++generation
+    showPreviews(LAYER.switcher, 0, tiles, "still", () => {
+        if (measured !== generation || !holesRef) return
+        holesRef.cut(holes, MINI_RADIUS)
+    })
 }
 
 // A workspace's own monitor in Hyprland layout terms: logical size (physical

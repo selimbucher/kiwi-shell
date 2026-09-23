@@ -37,10 +37,11 @@ export type PreviewTile = {
     height: number
 }
 
-function send(request: string) {
+function send(request: string, taken?: () => void) {
     hyprland.message_async(request, (_source: unknown, result: any) => {
         try {
             log.debug(`${request.slice(0, 120)} -> ${hyprland.message_finish(result).trim()}`)
+            taken?.()
         } catch (e) {
             log.error("kiwi-previews:", e as Error)
         }
@@ -55,12 +56,20 @@ let showing = ""
  * "live" wakes a window nobody can see so its tile keeps up with it; "still"
  * leaves it asleep and shows the last frame it drew, which is all a tile the
  * size of a thumbnail is worth.
+ *
+ * `taken` is called once the compositor has them, which is when it is safe to
+ * cut the holes for them. The compositor draws a tile in the same frame the
+ * shell's surface comes up, so a hole cut from here is never empty; one cut
+ * before the tiles were sent — a hole left over from the last time the
+ * switcher was open — shows the windows behind the switcher for a frame or
+ * two, which is what `PreviewHoles.close` is for.
  */
 export function showPreviews(
     namespace: string,
     rounding: number,
     tiles: PreviewTile[],
     motion: "live" | "still" = "live",
+    taken?: () => void,
 ) {
     if (!livePreviews()) return
     const request = tiles.length === 0
@@ -69,9 +78,12 @@ export function showPreviews(
             + tiles.map(t => `${t.address},${Math.round(t.x)},${Math.round(t.y)},`
                 + `${Math.round(t.width)},${Math.round(t.height)}`).join(" ")
     // the tiles only move when the switcher is laid out again
-    if (request === showing) return
+    if (request === showing) {
+        taken?.()
+        return
+    }
     showing = request
-    send(request)
+    send(request, taken)
 }
 
 export function clearPreviews() {
@@ -112,6 +124,24 @@ export const PreviewHoles = GObject.registerClass(
         radius = 0
         /** Called after every layout, where the shell measures its tiles. */
         onLayout: (() => void) | null = null
+
+        /** Cut these, at this radius, and redraw. */
+        cut(holes: Graphene.Rect[], radius: number) {
+            this.holes = holes
+            this.radius = radius
+            this.queue_draw()
+        }
+
+        /**
+         * Close them again. A switcher keeps its window and only hides it, so
+         * holes left cut are still there when it is shown again — over a
+         * compositor that has been told to draw nothing.
+         */
+        close() {
+            if (this.holes.length === 0) return
+            this.holes = []
+            this.queue_draw()
+        }
 
         _init(props?: Partial<Gtk.Box.ConstructorProps>) {
             // @ts-expect-error GJS constructs GObject classes through _init
