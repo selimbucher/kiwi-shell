@@ -294,7 +294,9 @@ const MINI_RADIUS = 4
 
 let windowRef: Astal.Window | null = null
 let holesRef: InstanceType<typeof PreviewHoles> | null = null
-const tileRefs = new Map<string, Gtk.Widget>()
+// address -> the miniature, and which workspace it is on: the one being
+// looked at is worth keeping up to date, the rest keep their last frame
+const tileRefs = new Map<string, { widget: Gtk.Widget, workspace: number }>()
 // so a measurement that has been overtaken doesn't cut its holes
 let generation = 0
 
@@ -305,10 +307,10 @@ function measureTiles() {
     const holes: Graphene.Rect[] = []
     const tiles: PreviewTile[] = []
 
-    for (const [address, widget] of tileRefs) {
-        if (!widget.get_mapped()) continue
-        const [inHoles, local] = widget.compute_bounds(holesRef)
-        const [inWindow, onSurface] = widget.compute_bounds(windowRef)
+    for (const [address, tile] of tileRefs) {
+        if (!tile.widget.get_mapped()) continue
+        const [inHoles, local] = tile.widget.compute_bounds(holesRef)
+        const [inWindow, onSurface] = tile.widget.compute_bounds(windowRef)
         if (!inHoles || !inWindow || local.get_width() < 1 || local.get_height() < 1) continue
 
         holes.push(local)
@@ -318,6 +320,7 @@ function measureTiles() {
             y: onSurface.get_y() + dy,
             width: onSurface.get_width(),
             height: onSurface.get_height(),
+            motion: tile.workspace === selectedId() ? "live" : "still",
         })
     }
 
@@ -401,7 +404,7 @@ function WorkspaceCard({ id, height }: { id: number, height: number }) {
         const w = Math.max(6, Math.round(win.width * scale))
         const h = Math.max(6, Math.round(win.height * scale))
         canvas.put(
-            <MiniWindowView client={win.client} width={w} height={h} /> as Gtk.Widget,
+            <MiniWindowView client={win.client} width={w} height={h} workspace={id} /> as Gtk.Widget,
             Math.round((win.x - geo.x) * scale),
             Math.round((win.y - geo.y) * scale),
         )
@@ -453,7 +456,10 @@ function WorkspaceCard({ id, height }: { id: number, height: number }) {
     return card
 }
 
-function MiniWindowView({ client, width, height }: { client: Hyprland.Client, width: number, height: number }) {
+function MiniWindowView(
+    { client, width, height, workspace }:
+    { client: Hyprland.Client, width: number, height: number, workspace: number },
+) {
     const address = client.get_address()
     const [texture, setTexture] = createState<Gdk.Texture | null>(
         livePreviews() ? null : getCachedTexture(address))
@@ -468,7 +474,7 @@ function MiniWindowView({ client, width, height }: { client: Hyprland.Client, wi
         <Gtk.ScrolledWindow
             class="ws-mini-window"
             $={(self: Gtk.Widget) => {
-                tileRefs.set(address, self)
+                tileRefs.set(address, { widget: self, workspace })
                 onCleanup(() => tileRefs.delete(address))
             }}
             overflow={Gtk.Overflow.HIDDEN}

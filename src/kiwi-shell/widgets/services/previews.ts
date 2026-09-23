@@ -35,6 +35,8 @@ export type PreviewTile = {
     y: number
     width: number
     height: number
+    /** for this one window, against the request's own */
+    motion?: "live" | "still"
 }
 
 function send(request: string, taken?: () => void) {
@@ -55,7 +57,7 @@ let showing = ""
  *
  * "live" wakes a window nobody can see so its tile keeps up with it; "still"
  * leaves it asleep and shows the last frame it drew, which is all a tile the
- * size of a thumbnail is worth.
+ * size of a thumbnail is worth. A tile can ask for the other one.
  *
  * `taken` is called once the compositor has them, which is when it is safe to
  * cut the holes for them. The compositor draws a tile in the same frame the
@@ -76,7 +78,8 @@ export function showPreviews(
         ? "kiwi-previews clear"
         : `kiwi-previews ${namespace} ${Math.round(rounding)} ${motion} `
             + tiles.map(t => `${t.address},${Math.round(t.x)},${Math.round(t.y)},`
-                + `${Math.round(t.width)},${Math.round(t.height)}`).join(" ")
+                + `${Math.round(t.width)},${Math.round(t.height)}`
+                + (t.motion && t.motion !== motion ? `,${t.motion}` : "")).join(" ")
     // the tiles only move when the switcher is laid out again
     if (request === showing) {
         taken?.()
