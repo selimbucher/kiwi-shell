@@ -1,0 +1,12 @@
+[repository]
+name = "kiwi-shell"
+authors = ["selimbucher"]
+
+[kiwi]
+description = "What kiwi-shell needs from inside the compositor: window geometry events, and the switchers' previews drawn from the windows themselves"
+authors = ["selimbucher"]
+output = "src/hyprland-plugin/build/libkiwi.so"
+build = [
+    "meson setup src/hyprland-plugin src/hyprland-plugin/build",
+    "ninja -C src/hyprland-plugin/build",
+]
