@@ -144,11 +144,15 @@ async function forceBlur() {
 // then blurs nothing, doesn't turn the compositor's blur on for itself, and
 // leaves the compositor's own values alone.
 //
-// xray: windows blur the wallpaper, which Hyprland blurs once and reuses,
-// rather than re-blurring whatever is behind them on every frame something
-// moves. On an Iris Xe at 2880x1800 that halved the GPU's work while a window
-// moved or anything animated. Layers ignore it, so the shell's own glass still
-// shows the windows beneath it.
+// No xray here, though it halves the GPU's work while anything moves: it
+// makes every window blur the wallpaper instead of what is actually behind
+// it, and a window is rarely opaque everywhere. A theme that paints window
+// backgrounds at 96% (WhiteSur does) then shows the wallpaper's colour
+// through the whole window, and the anti-aliased edge of every rounded corner
+// picks it up over the window below. It is also why a fading-out layer
+// flashed the wallpaper: Hyprland's fade-out has no layer to ask, so it falls
+// back to the global setting. Whoever wants the trade can still set it in
+// their own config; the shell doesn't set it for them.
 const BLUR = {
     size: 6,
     passes: 4,
@@ -156,7 +160,6 @@ const BLUR = {
     contrast: 1.4,
     noise: 0.01,
     new_optimizations: true,
-    xray: true,
 }
 
 async function applyBlur() {
