@@ -27,7 +27,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
         .name        = "kiwi",
         .description = std::string{"For kiwi-shell: "} + (GEOMETRY ? "window geometry events" : "(no window geometry events)") + ", " +
             (PREVIEWS ? "window previews" : "(no window previews)") + ", " +
-            (GENIE ? "minimize animation" : "(no minimize animation)"),
+            (GENIE ? "minimize and restore animation" : "(no minimize animation)"),
         .author  = "selim",
         .version = "0.2.0",
     };

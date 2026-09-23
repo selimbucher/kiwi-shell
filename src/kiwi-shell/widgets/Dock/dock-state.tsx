@@ -7,7 +7,7 @@ import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
 import { mapVersion } from "../desktopEntries"
 import { entryForClient } from "../appIcon"
-import { clientSelector, focusWindow, genie, moveWindowToWorkspace, raiseWindow, toggleSpecialWorkspace } from "../../hypr"
+import { clientSelector, focusWindow, genieTo, genieWatch, moveWindowToWorkspace, pluginsReady, raiseWindow, toggleSpecialWorkspace } from "../../hypr"
 import { LAYER } from "../services/theme"
 import type Gtk from "gi://Gtk?version=4.0"
 
@@ -124,15 +124,49 @@ export function isClientVisible(client: Hyprland.Client): boolean {
     return hyprland.get_monitors().some(m => m.activeWorkspace?.id === wsId)
 }
 
-// With the plugin the window pours into `icon` on its way out; the compositor
-// takes its picture first, so the move waits for that.
-export async function minimizeClient(client: Hyprland.Client, icon?: Gtk.Widget) {
-    const root = icon?.get_root()
-    const [ok, bounds] = icon && root ? icon.compute_bounds(root) : [false, null]
-    if (ok && bounds)
-        await genie(client, LAYER.dock, { x: bounds.get_x(), y: bounds.get_y(), width: bounds.get_width(), height: bounds.get_height() })
+export function minimizeClient(client: Hyprland.Client) {
     moveWindowToWorkspace(MINIMIZED_WS, addr(client), { follow: false })
 }
+
+// ─── Genie ────────────────────────────────────────────────────────────────────
+// With kiwi's plugin, a window pours into its dock icon when it is minimized
+// and back out when it is restored — whatever moved it: the dock, the
+// window's own minimize button, the switcher. The plugin asks where the icon
+// is; the icons register themselves here.
+
+const dockIcons = new Map<string, Gtk.Widget>()
+
+/** An app's icon in the dock, for its windows to pour into. Returns the unregister. */
+export function registerDockIcon(entry: string, icon: Gtk.Widget) {
+    dockIcons.set(entry, icon)
+    return () => { if (dockIcons.get(entry) === icon) dockIcons.delete(entry) }
+}
+
+// Where the icon sits in the dock's surface, as laid out: an auto-hidden dock
+// is slid off screen by a transform, and the window should still pour into
+// where its icon shows once the dock is up.
+function layoutRect(icon: Gtk.Widget) {
+    const root = icon.get_root() as Gtk.Widget | null
+    if (!root || !icon.get_mapped()) return null
+    let x = 0, y = 0
+    for (let w: Gtk.Widget | null = icon; w && w !== root; w = w.get_parent()) {
+        const a = w.get_allocation()
+        x += a.x
+        y += a.y
+    }
+    return { x, y, width: icon.get_width(), height: icon.get_height() }
+}
+
+hyprland.connect("event", (_h: unknown, event: string, args: string) => {
+    if (event !== "kiwigenie") return
+    const address = args.split(",")[1] ?? ""
+    const client = hyprland.get_client(address)
+    const icon = client ? dockIcons.get(entryForClient(client)) : undefined
+    const rect = icon ? layoutRect(icon) : null
+    genieTo(address, rect ? { namespace: LAYER.dock, icon: rect } : null)
+})
+
+pluginsReady.then(() => genieWatch(MINIMIZED_WS))
 
 // Hyprland keeps focus and stacking separate: focusing a floating window
 // does not raise it above overlapping siblings, so every activation path

@@ -1,28 +1,45 @@
-// Genie: a window being minimized is drawn pouring into its dock icon.
+// Genie: a minimized window pours into its dock icon, and a restored one
+// pours back out of it.
 //
+//     hyprctl kiwi-genie watch <workspace>
 //     hyprctl kiwi-genie <address> <namespace> <x>,<y>,<w>,<h>
+//     hyprctl kiwi-genie <address> none
 //
-// The shell asks just before it moves the window away. The plugin takes a
-// picture of the window as it is on screen, the same snapshot Hyprland takes
-// for its close animation, and for the next half second draws that picture
-// bent into the icon: the rectangle x, y, w, h in logical pixels from the
-// top-left of the layer surface called <namespace>, which is where the shell
-// knows its icon to be. The window itself is gone by then; only the picture
-// is drawn, and dropped once it has arrived.
+// The shell says once which workspace minimized windows are kept in. From
+// then on, whatever moves a window there — the dock, a minimize button in the
+// window's own title bar, a keybind — the plugin takes a picture of the
+// window on its way out, the same snapshot Hyprland takes for its close
+// animation, and posts
 //
-// It is drawn after the windows and before the layers above them, so the
-// dock stays on top and the window disappears into it rather than over it.
-// The reply is "ok" once the picture is taken; anything else means the shell
-// should just move the window, which is what it does without the plugin.
+//     kiwigenie>>minimize,<address>
+//
+// on the event socket. A window moved back out of it onto a workspace on
+// screen is kept hidden and pictured where it lands, and posts
+//
+//     kiwigenie>>restore,<address>
+//
+// The shell answers with where that window's icon is: x, y, w, h in logical
+// pixels from the top-left of the layer surface called <namespace>, which is
+// where the shell knows its icons to be. Until the answer comes the picture
+// holds still — a minimized window stays where it was, a restored one stays
+// hidden — so the round trip never shows; then the picture runs into the
+// icon, or out of it, and the real window takes its place. "none" means there
+// is no icon to go to: the window just goes, or just appears. So does one the
+// shell doesn't answer for in time.
+//
+// The picture is drawn after the windows and before the layers above them,
+// so the dock stays on top and the window disappears into it.
 
 #include "kiwi.hpp"
 
 #include <plugins/PluginAPI.hpp>
+#include <desktop/Workspace.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/LayerSurface.hpp>
 #include <desktop/view/Window.hpp>
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
+#include <managers/EventManager.hpp>
 #include <output/Monitor.hpp>
 #include <render/Framebuffer.hpp>
 #include <render/OpenGL.hpp>
@@ -33,13 +50,46 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <format>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace {
     using Render::GL::g_pHyprOpenGL;
+    using Desktop::View::CWindow;
+    using Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE;
+    using Desktop::View::WINDOW_ALPHA_MOVE_TO_WORKSPACE;
 
-    constexpr auto DURATION = std::chrono::milliseconds{500};
+    constexpr auto DURATION = std::chrono::milliseconds{450};
+    // how long a picture waits for the shell to say where the icon is
+    constexpr auto HOLD = std::chrono::milliseconds{250};
+
+    // The shape: the window's bottom drops to the icon first while its sides
+    // bend in towards it, then the top follows it down the funnel.
+    constexpr float BEND_END   = 0.45F;
+    constexpr float FALL_START = 0.2F;
+
+    float smooth(float t) {
+        t = std::clamp(t, 0.F, 1.F);
+        return t * t * (3.F - 2.F * t);
+    }
+
+    // where the shape is at a moment, from 0, the window as it is, to 1, gone
+    // into the icon; positions are in the monitor's pixels, from its top-left
+    struct SShape {
+        float bend = 0, top = 0, bottom = 0;
+    };
+
+    SShape shapeAt(float progress, const CBox& window, const CBox& icon) {
+        const float BEND = smooth(progress / BEND_END);
+        const float FALL = smooth((progress - FALL_START) / (1.F - FALL_START));
+        return {
+            .bend   = BEND,
+            .top    = static_cast<float>(window.y + (icon.y - window.y) * FALL),
+            .bottom = static_cast<float>(window.y + window.h + (icon.y + icon.h - window.y - window.h) * BEND),
+        };
+    }
 
     const std::string VERTEX = R"#(#version 300 es
 uniform mat3 proj;
@@ -54,10 +104,7 @@ void main() {
 )#";
 
     // Every pixel of the quad asks which pixel of the window lands on it. The
-    // window's bottom edge drops to the icon first while its sides bend in
-    // towards it, then the top follows it down the funnel.
-    //
-    // All positions are in the monitor's pixels, from its top-left.
+    // funnel stays where it is, from the window's top down to the icon.
     const std::string FRAGMENT = R"#(#version 300 es
 precision highp float;
 in vec2 v_texcoord;
@@ -69,74 +116,82 @@ uniform vec2 windowPos;
 uniform vec2 windowSize;
 uniform vec2 iconPos;
 uniform vec2 iconSize;
-uniform float progress;
+uniform float bend;
+uniform float top;
+uniform float bottom;
 layout(location = 0) out vec4 fragColor;
 
-float ease(float t) {
+float smooth01(float t) {
+    t = clamp(t, 0.0, 1.0);
     return t * t * (3.0 - 2.0 * t);
 }
 
 void main() {
     vec2 p = quadPos + v_texcoord * quadSize;
-
-    float bend = ease(clamp(progress / 0.45, 0.0, 1.0));
-    float fall = ease(clamp((progress - 0.2) / 0.8, 0.0, 1.0));
-
-    float top    = mix(windowPos.y, iconPos.y, fall);
-    float bottom = mix(windowPos.y + windowSize.y, iconPos.y + iconSize.y, bend);
-    if (p.y < top || p.y > bottom)
+    if (p.y < top || p.y > bottom || bottom - top < 0.5)
         discard;
 
-    // the funnel stays where it is, from the window's top down to the icon
-    float along = clamp((p.y - windowPos.y) / max(iconPos.y - windowPos.y, 1.0), 0.0, 1.0);
-    float squeeze = bend * ease(along);
-    float left  = mix(windowPos.x, iconPos.x, squeeze);
-    float right = mix(windowPos.x + windowSize.x, iconPos.x + iconSize.x, squeeze);
+    float along   = clamp((p.y - windowPos.y) / max(iconPos.y - windowPos.y, 1.0), 0.0, 1.0);
+    float squeeze = bend * smooth01(along);
+    float left    = mix(windowPos.x, iconPos.x, squeeze);
+    float right   = mix(windowPos.x + windowSize.x, iconPos.x + iconSize.x, squeeze);
     if (p.x < left - 1.0 || p.x > right + 1.0)
         discard;
 
-    vec2 uv = vec2((p.x - left) / max(right - left, 1.0), (p.y - top) / max(bottom - top, 1.0));
-    vec2 source = windowPos + clamp(uv, 0.0, 1.0) * windowSize;
+    vec2 uv     = clamp(vec2((p.x - left) / max(right - left, 1.0), (p.y - top) / (bottom - top)), 0.0, 1.0);
+    vec2 source = windowPos + uv * windowSize;
     // a pixel's worth of soft edge, so the curved sides don't stair-step
     float edge = clamp(p.x - left + 0.5, 0.0, 1.0) * clamp(right - p.x + 0.5, 0.0, 1.0);
-    fragColor = texture(tex, source / snapshotSize) * edge;
+    fragColor  = texture(tex, source / snapshotSize) * edge;
 }
 )#";
 
-    // one window on its way into the dock, in its monitor's pixels
+    // one window on its way into the dock or out of it, in its monitor's
+    // pixels
     struct SGenie {
-        PHLWINDOWREF               source;
-        PHLMONITORREF              monitor;
-        SP<Render::IFramebuffer>   snapshot;
-        CBox                       window, icon;
-        Time::steady_tp            start;
+        PHLWINDOWREF                   window;
+        PHLMONITORREF                  monitor;
+        bool                           restore = false;
+        SP<Render::IFramebuffer>       snapshot; // a restored window is pictured in the frame after its move
+        CBox                           from;     // the window, where it is on screen
+        std::optional<CBox>            icon;     // until the shell says, the picture holds still
+        Time::steady_tp                since;    // held since, then running since
     };
 
+    // how far along a running genie is, from 0 (the window) to 1 (the icon)
     float progressOf(const SGenie& genie) {
-        const auto ELAPSED = std::chrono::duration<float>(Time::steadyNow() - genie.start);
-        return std::clamp(ELAPSED.count() / std::chrono::duration<float>(DURATION).count(), 0.F, 1.F);
+        if (!genie.icon)
+            return genie.restore ? 1.F : 0.F;
+        const float T = std::chrono::duration<float>(Time::steadyNow() - genie.since).count() / std::chrono::duration<float>(DURATION).count();
+        const float CLAMPED = std::clamp(T, 0.F, 1.F);
+        return genie.restore ? 1.F - CLAMPED : CLAMPED;
     }
 
-    // everything the genie can cover in the frame, in the monitor's pixels
+    bool finished(const SGenie& genie) {
+        const auto ELAPSED = Time::steadyNow() - genie.since;
+        return genie.icon ? ELAPSED >= DURATION : ELAPSED >= HOLD;
+    }
+
+    // everything the genie can cover, in the monitor's pixels
     CBox extentOf(const SGenie& genie) {
-        const double LEFT   = std::min(genie.window.x, genie.icon.x);
-        const double TOP    = std::min(genie.window.y, genie.icon.y);
-        const double RIGHT  = std::max(genie.window.x + genie.window.w, genie.icon.x + genie.icon.w);
-        const double BOTTOM = std::max(genie.window.y + genie.window.h, genie.icon.y + genie.icon.h);
+        const CBox ICON   = genie.icon.value_or(genie.from);
+        const double LEFT   = std::min(genie.from.x, ICON.x);
+        const double TOP    = std::min(genie.from.y, ICON.y);
+        const double RIGHT  = std::max(genie.from.x + genie.from.w, ICON.x + ICON.w);
+        const double BOTTOM = std::max(genie.from.y + genie.from.h, ICON.y + ICON.h);
         return CBox{LEFT, TOP, RIGHT - LEFT, BOTTOM - TOP}.round();
     }
 
     class CGeniePassElement : public IPassElement {
       public:
-        CGeniePassElement(SP<CShader> shader, const SGenie& genie) : m_shader(std::move(shader)), m_genie(genie), m_progress(progressOf(genie)) {}
+        CGeniePassElement(SP<CShader> shader, const SGenie& genie) :
+            m_shader(std::move(shader)), m_snapshot(genie.snapshot), m_window(genie.from), m_icon(genie.icon.value_or(genie.from)), m_quad(extentOf(genie)),
+            m_scale(genie.monitor ? genie.monitor->m_scale : 1.0), m_shape(shapeAt(progressOf(genie), m_window, m_icon)) {}
 
         std::vector<UP<IPassElement>> draw() override {
-            const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
-            const auto TEXTURE = m_genie.snapshot ? m_genie.snapshot->getTexture() : nullptr;
-            if (!MONITOR || !TEXTURE || g_pHyprRenderer->m_renderData.damage.empty())
+            const auto TEXTURE = m_snapshot ? m_snapshot->getTexture() : nullptr;
+            if (!TEXTURE || g_pHyprRenderer->m_renderData.damage.empty() || m_shape.bottom - m_shape.top < 0.5F)
                 return {};
-
-            const CBox QUAD = extentOf(m_genie);
 
             glActiveTexture(GL_TEXTURE0);
             TEXTURE->bind();
@@ -146,18 +201,21 @@ void main() {
             g_pHyprOpenGL->blend(true);
             const auto SHADER  = g_pHyprOpenGL->useShader(m_shader);
             const auto PROGRAM = SHADER->program();
-            SHADER->setUniformMatrix3fv(SHADER_PROJ, 1, GL_TRUE, g_pHyprRenderer->projectBoxToTarget(QUAD).getMatrix());
+            SHADER->setUniformMatrix3fv(SHADER_PROJ, 1, GL_TRUE, g_pHyprRenderer->projectBoxToTarget(m_quad).getMatrix());
             SHADER->setUniformInt(SHADER_TEX, 0);
 
-            const auto SET = [PROGRAM](const char* name, const Vector2D& value) { glUniform2f(glGetUniformLocation(PROGRAM, name), value.x, value.y); };
-            SET("quadPos", QUAD.pos());
-            SET("quadSize", QUAD.size());
-            SET("snapshotSize", m_genie.snapshot->m_size);
-            SET("windowPos", m_genie.window.pos());
-            SET("windowSize", m_genie.window.size());
-            SET("iconPos", m_genie.icon.pos());
-            SET("iconSize", m_genie.icon.size());
-            glUniform1f(glGetUniformLocation(PROGRAM, "progress"), m_progress);
+            const auto PAIR  = [PROGRAM](const char* name, const Vector2D& value) { glUniform2f(glGetUniformLocation(PROGRAM, name), value.x, value.y); };
+            const auto FLOAT = [PROGRAM](const char* name, float value) { glUniform1f(glGetUniformLocation(PROGRAM, name), value); };
+            PAIR("quadPos", m_quad.pos());
+            PAIR("quadSize", m_quad.size());
+            PAIR("snapshotSize", m_snapshot->m_size);
+            PAIR("windowPos", m_window.pos());
+            PAIR("windowSize", m_window.size());
+            PAIR("iconPos", m_icon.pos());
+            PAIR("iconSize", m_icon.size());
+            FLOAT("bend", m_shape.bend);
+            FLOAT("top", m_shape.top);
+            FLOAT("bottom", m_shape.bottom);
 
             glBindVertexArray(SHADER->getUniformLocation(SHADER_SHADER_VAO));
             g_pHyprRenderer->m_renderData.damage.forEachRect([](const auto& RECT) {
@@ -187,17 +245,16 @@ void main() {
         }
 
         std::optional<CBox> boundingBox() override {
-            const auto MONITOR = m_genie.monitor.lock();
-            if (!MONITOR)
-                return {};
             // the pass wants it unscaled
-            return extentOf(m_genie).scale(1.0 / MONITOR->m_scale).round();
+            return m_quad.copy().scale(1.0 / m_scale).round();
         }
 
       private:
-        SP<CShader> m_shader;
-        SGenie      m_genie;
-        float       m_progress = 0;
+        SP<CShader>                    m_shader;
+        SP<Render::IFramebuffer>       m_snapshot;
+        CBox                           m_window, m_icon, m_quad;
+        double                         m_scale = 1;
+        SShape                         m_shape;
     };
 
     class CKiwiGenie {
@@ -212,7 +269,10 @@ void main() {
             if (!m_command)
                 return false;
 
-            m_preListener   = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) { m_rendering = monitor; });
+            m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) {
+                m_rendering = monitor;
+                pictureRestored(monitor);
+            });
             m_stageListener = Event::bus()->m_events.render.stage.listen([this](eRenderStage stage) {
                 if (stage == RENDER_POST_WINDOWS)
                     render();
@@ -220,33 +280,32 @@ void main() {
                 else if (stage == RENDER_POST)
                     advance(m_rendering.lock());
             });
-            // Hyprland fades a window out of the workspace it leaves, which
-            // would show it twice: where it was, and in the genie
-            m_moveListener = Event::bus()->m_events.window.moveToWorkspace.listen([this](PHLWINDOW window, PHLWORKSPACE) {
-                if (std::ranges::any_of(m_genies, [&](const SGenie& genie) { return genie.source == window; }))
-                    window->alpha(Desktop::View::WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(0.F);
-            });
+            m_moveListener = Event::bus()->m_events.window.moveToWorkspace.listen([this](PHLWINDOW window, PHLWORKSPACE workspace) { moved(window, workspace); });
             return true;
         }
 
         void exit() {
+            for (auto& genie : m_genies)
+                show(genie);
+            m_genies.clear();
             m_stageListener.reset();
             m_preListener.reset();
             m_moveListener.reset();
             m_command.reset();
-            m_genies.clear();
             m_shader.reset();
         }
 
       private:
-        std::vector<SGenie> m_genies;
-        PHLMONITORREF       m_rendering;
-        SP<CShader>         m_shader;
-        bool                m_shaderFailed = false;
-        SP<SHyprCtlCommand> m_command;
-        CHyprSignalListener m_stageListener;
-        CHyprSignalListener m_preListener;
-        CHyprSignalListener m_moveListener;
+        std::string               m_watched;
+        std::vector<PHLWINDOWREF> m_inside; // the windows in the watched workspace
+        std::vector<SGenie>       m_genies;
+        PHLMONITORREF             m_rendering;
+        SP<CShader>               m_shader;
+        bool                      m_shaderFailed = false;
+        SP<SHyprCtlCommand>       m_command;
+        CHyprSignalListener       m_stageListener;
+        CHyprSignalListener       m_preListener;
+        CHyprSignalListener       m_moveListener;
 
         template <typename T>
         static bool parse(std::string_view text, T& out, int base = 10) {
@@ -299,24 +358,49 @@ void main() {
             return nullptr;
         }
 
-        // "kiwi-genie <address> <namespace> <x>,<y>,<w>,<h>"
+        static CBox onMonitor(const PHLMONITOR& monitor, CBox box) {
+            return box.translate(-monitor->m_position).scale(monitor->m_scale).round();
+        }
+
+        SGenie* genieOf(const PHLWINDOW& window) {
+            const auto IT = std::ranges::find_if(m_genies, [&](const SGenie& genie) { return genie.window == window; });
+            return IT == m_genies.end() ? nullptr : &*IT;
+        }
+
+        // "watch <workspace>", "<address> <namespace> <x>,<y>,<w>,<h>" or "<address> none"
         std::string take(std::string_view request) {
             request.remove_prefix(std::string_view{"kiwi-genie"}.size());
             const auto WORDS = split(request, ' ');
-            if (WORDS.size() != 3)
-                return "usage: kiwi-genie <address> <namespace> <x>,<y>,<w>,<h>";
+
+            if (WORDS.size() == 2 && WORDS[0] == "watch") {
+                m_watched = std::string{WORDS[1]};
+                m_inside.clear();
+                for (const auto& window : Desktop::windowState()->windows()) {
+                    if (window->m_isMapped && window->m_workspace && window->m_workspace->m_name == m_watched)
+                        m_inside.emplace_back(window);
+                }
+                return "ok";
+            }
+
+            if (WORDS.size() < 2 || WORDS.size() > 3)
+                return "usage: kiwi-genie watch <workspace> | <address> <namespace> <x>,<y>,<w>,<h> | <address> none";
 
             const auto WINDOW = windowFrom(WORDS[0]);
-            if (!WINDOW || !WINDOW->m_isMapped)
-                return "no such window";
-            const auto MONITOR = WINDOW->m_monitor.lock();
-            if (!MONITOR)
-                return "the window is on no monitor";
-            const auto LAYER = layerOn(MONITOR, WORDS[1]);
-            if (!LAYER)
-                return "no such layer on the window's monitor";
+            auto*      genie  = WINDOW ? genieOf(WINDOW) : nullptr;
+            // gone by now, or not ours to animate; either way nothing to do
+            if (!genie || genie->icon)
+                return "ok";
 
-            const auto FIELDS = split(WORDS[2], ',');
+            if (WORDS[1] == "none") {
+                genie->since = Time::steadyNow() - HOLD;
+                return "ok";
+            }
+            if (WORDS.size() != 3)
+                return "the icon is <namespace> <x>,<y>,<w>,<h>";
+
+            const auto MONITOR = genie->monitor.lock();
+            const auto LAYER   = MONITOR ? layerOn(MONITOR, WORDS[1]) : nullptr;
+            const auto FIELDS  = split(WORDS[2], ',');
             double     icon[4];
             if (FIELDS.size() != 4)
                 return "the icon is <x>,<y>,<w>,<h>";
@@ -324,25 +408,128 @@ void main() {
                 if (!parse(FIELDS[i], icon[i]))
                     return "the icon's x, y, width and height must be numbers";
             }
+            if (!LAYER) {
+                genie->since = Time::steadyNow() - HOLD;
+                return "no such layer on the window's monitor";
+            }
 
-            // the snapshot is the whole monitor, with the window where it is
-            auto snapshot = g_pHyprRenderer->makeSnapshotFB(WINDOW);
-            if (!snapshot)
-                return "the window is not on screen";
-
-            const auto TO_MONITOR = [&MONITOR](CBox box) { return box.translate(-MONITOR->m_position).scale(MONITOR->m_scale).round(); };
-            const CBox ICON       = CBox{icon[0], icon[1], icon[2], icon[3]}.translate(LAYER->m_geometry.pos());
-
-            m_genies.emplace_back(SGenie{
-                .source   = WINDOW,
-                .monitor  = MONITOR,
-                .snapshot = std::move(snapshot),
-                .window   = TO_MONITOR(WINDOW->getFullWindowBoundingBox()),
-                .icon     = TO_MONITOR(ICON),
-                .start    = Time::steadyNow(),
-            });
-            damage(m_genies.back());
+            genie->icon  = onMonitor(MONITOR, CBox{icon[0], icon[1], icon[2], icon[3]}.translate(LAYER->m_geometry.pos()));
+            genie->since = Time::steadyNow();
+            damage(*genie);
             return "ok";
+        }
+
+        void post(const char* kind, const PHLWINDOW& window) {
+            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigenie", .data = std::format("{},{:x}", kind, reinterpret_cast<uintptr_t>(window.get()))});
+        }
+
+        void moved(const PHLWINDOW& window, const PHLWORKSPACE& workspace) {
+            if (m_watched.empty() || !workspace)
+                return;
+
+            const bool INTO = workspace->m_name == m_watched;
+            const bool OUT  = std::ranges::find(m_inside, window) != m_inside.end();
+            std::erase_if(m_inside, [&](const PHLWINDOWREF& ref) { return ref.expired() || ref == window; });
+            if (INTO)
+                m_inside.emplace_back(window);
+
+            // moved again mid-flight: the last move wins
+            if (auto* genie = genieOf(window)) {
+                show(*genie);
+                std::erase_if(m_genies, [&](const SGenie& other) { return other.window == window; });
+            }
+
+            const auto MONITOR = window->m_monitor.lock();
+            if (!MONITOR)
+                return;
+
+            // Leaving a workspace on screen, Hyprland is fading the window out
+            // and still draws it, so this is the last chance to picture it;
+            // the fade itself is cut, or the window would show twice.
+            if (INTO && window->m_monitorMovedFrom != -1) {
+                auto snapshot = pictureLeaving(window);
+                if (!snapshot)
+                    return;
+                window->alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(0.F);
+                m_genies.emplace_back(SGenie{
+                    .window   = window,
+                    .monitor  = MONITOR,
+                    .snapshot = std::move(snapshot),
+                    .from     = onMonitor(MONITOR, window->getFullWindowBoundingBox()),
+                    .since    = Time::steadyNow(),
+                });
+                post("minimize", window);
+                damage(m_genies.back());
+                return;
+            }
+
+            // Coming back onto a workspace on screen: the layout places the
+            // window after this, so it is pictured before the next frame
+            // (pictureRestored) and hidden until the genie has put it back.
+            if (OUT && !INTO && workspace->isVisible()) {
+                m_genies.emplace_back(SGenie{.window = window, .monitor = MONITOR, .restore = true, .since = Time::steadyNow()});
+                post("restore", window);
+                g_pHyprRenderer->damageMonitor(MONITOR);
+            }
+        }
+
+        // By the time Hyprland says a window moved, it is already on the
+        // hidden workspace, and a snapshot is only taken of a window on one
+        // being drawn. For the length of the picture the workspace is drawn
+        // the way Hyprland draws one it is sliding in, held where it would
+        // be on screen, then put back as it was.
+        static SP<Render::IFramebuffer> pictureLeaving(const PHLWINDOW& window) {
+            const auto WORKSPACE = window->m_workspace;
+            if (!WORKSPACE)
+                return nullptr;
+            auto& offset = WORKSPACE->m_renderOffset;
+            if (offset->isBeingAnimated())
+                return nullptr; // sliding somewhere already; not ours to hold
+
+            const bool     FORCED = WORKSPACE->m_forceRendering;
+            const Vector2D OFFSET = offset->value();
+            WORKSPACE->m_forceRendering = true;
+            *offset                     = Vector2D{};
+            offset->warp(false);
+
+            auto snapshot = g_pHyprRenderer->makeSnapshotFB(window);
+
+            *offset = OFFSET;
+            offset->warp(false);
+            WORKSPACE->m_forceRendering = FORCED;
+            return snapshot;
+        }
+
+        // A restored window is pictured where it is going, before its first
+        // frame back: it is put there at once rather than sliding (it is
+        // hidden anyway), pictured, and hidden until its genie is done.
+        void pictureRestored(const PHLMONITOR& monitor) {
+            for (auto& genie : m_genies) {
+                if (!genie.restore || genie.snapshot || genie.monitor != monitor)
+                    continue;
+                const auto WINDOW = genie.window.lock();
+                if (!WINDOW || !WINDOW->m_isMapped)
+                    continue;
+
+                WINDOW->positionAnimation()->warp();
+                WINDOW->sizeAnimation()->warp();
+                WINDOW->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
+                genie.snapshot = g_pHyprRenderer->makeSnapshotFB(WINDOW);
+                genie.from     = onMonitor(monitor, WINDOW->getFullWindowBoundingBox());
+                if (genie.snapshot)
+                    WINDOW->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(0.F);
+                else
+                    genie.since = Time::steadyNow() - DURATION - HOLD; // just appears
+            }
+        }
+
+        // the real window back, for a restore; a minimized one is gone already
+        void show(SGenie& genie) {
+            const auto WINDOW = genie.window.lock();
+            if (!genie.restore || !WINDOW)
+                return;
+            WINDOW->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
+            g_pHyprRenderer->damageWindow(WINDOW);
         }
 
         void damage(const SGenie& genie) {
@@ -371,21 +558,26 @@ void main() {
             if (m_genies.empty() || !MONITOR || !ensureShader())
                 return;
             for (const auto& genie : m_genies) {
-                if (genie.monitor == MONITOR)
+                // a restored window waiting for its icon stays hidden
+                if (genie.monitor == MONITOR && genie.snapshot && (genie.icon || !genie.restore))
                     g_pHyprRenderer->m_renderPass.add(makeUnique<CGeniePassElement>(m_shader, genie));
             }
         }
 
-        // Once a frame is drawn, each genie asks for the next one; one that
-        // has arrived asks once more, for a frame without it.
+        // Once a frame is drawn, each genie asks for the next one. One that
+        // has arrived, or waited too long for its icon, is dropped — and a
+        // restored window shown — and asks once more, for a frame without it.
         void advance(const PHLMONITOR& monitor) {
             if (!monitor)
                 return;
-            for (const auto& genie : m_genies) {
-                if (genie.monitor == monitor)
-                    damage(genie);
+            for (auto& genie : m_genies) {
+                if (genie.monitor != monitor)
+                    continue;
+                damage(genie);
+                if (finished(genie))
+                    show(genie);
             }
-            std::erase_if(m_genies, [&](const SGenie& genie) { return genie.monitor == monitor && progressOf(genie) >= 1.F; });
+            std::erase_if(m_genies, [&](const SGenie& genie) { return genie.monitor.expired() || (genie.monitor == monitor && finished(genie)); });
         }
     };
 
@@ -403,6 +595,8 @@ namespace Kiwi::Genie {
     }
 
     void exit() {
+        if (g_kiwiGenie)
+            g_kiwiGenie->exit();
         g_kiwiGenie.reset();
     }
 }

@@ -301,28 +301,35 @@ const FEATURES = {
 const WITHOUT = {
     geometry: "the dock won't see windows moved by hand",
     previews: "the switchers capture their previews instead of showing them live",
-    genie: "minimized windows vanish instead of pouring into the dock",
+    genie: "windows vanish into the dock and reappear instead of pouring in and out of it",
 }
 
 const loadedPlugins = new Set<string>()
 
+let pluginsLoaded = () => {}
+/** Settles once loadPlugins() knows what the compositor can do. */
+export const pluginsReady = new Promise<void>(resolve => { pluginsLoaded = resolve })
+
 /**
- * Have the compositor pour this window into the rectangle `icon`, in logical
- * pixels from the top-left of the layer surface called `namespace`. Resolves
- * once it has its picture of the window, which is then free to go; false
- * means there is no animation and the window should just go.
+ * Tell the plugin which workspace minimized windows are kept in. From then on
+ * it posts `kiwigenie>>minimize,ADDRESS` for every window moved there from the
+ * screen and `kiwigenie>>restore,ADDRESS` for every one moved back, and holds
+ * the window's picture until it hears where the window's icon is (genieTo).
  */
-export async function genie(client: Hyprland.Client, namespace: string, icon: { x: number; y: number; width: number; height: number }): Promise<boolean> {
-    if (!hasFeature("genie")) return false
-    const rect = [icon.x, icon.y, icon.width, icon.height].map(Math.round).join(",")
-    try {
-        const reply = (await request(`kiwi-genie 0x${client.address} ${namespace} ${rect}`)).trim()
-        if (reply !== "ok") log.debug(`kiwi-genie: ${reply}`)
-        return reply === "ok"
-    } catch (e) {
-        log.error("kiwi-genie:", e as Error)
-        return false
-    }
+export function genieWatch(workspace: string) {
+    if (hasFeature("genie")) void send(`kiwi-genie watch ${workspace}`, "watch minimized windows")
+}
+
+/**
+ * Where the window the plugin asked about should pour into or out of: the
+ * rectangle `icon`, in logical pixels from the top-left of the layer surface
+ * called `namespace` — or nowhere, and it just goes or appears.
+ */
+export function genieTo(address: string, target: { namespace: string; icon: { x: number; y: number; width: number; height: number } } | null) {
+    const where = target
+        ? `${target.namespace} ${[target.icon.x, target.icon.y, target.icon.width, target.icon.height].map(Math.round).join(",")}`
+        : "none"
+    void send(`kiwi-genie 0x${address} ${where}`, "place the genie", true)
 }
 
 /** Whether the compositor can do this for the shell. Answers after loadPlugins(). */
@@ -336,6 +343,7 @@ export async function loadPlugins() {
         loaded = JSON.parse(await request("j/plugin list"))
     } catch (e) {
         log.error("could not list the compositor's plugins:", e as Error)
+        pluginsLoaded()
         return
     }
 
@@ -355,4 +363,5 @@ export async function loadPlugins() {
         if (!hasFeature(feature))
             log.info(`without the kiwi plugin, ${WITHOUT[feature]}`)
     }
+    pluginsLoaded()
 }
