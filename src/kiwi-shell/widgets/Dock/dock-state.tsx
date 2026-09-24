@@ -142,19 +142,30 @@ export function registerDockIcon(entry: string, icon: Gtk.Widget) {
     return () => { if (dockIcons.get(entry) === icon) dockIcons.delete(entry) }
 }
 
-// Where the icon sits in the dock's surface, as laid out: an auto-hidden dock
-// is slid off screen by a transform, and the window should still pour into
-// where its icon shows once the dock is up.
-function layoutRect(icon: Gtk.Widget) {
-    const root = icon.get_root() as Gtk.Widget | null
+// Where the icon sits in the dock's surface, the way the plugin counts: from
+// the surface's top-left, which lies above the window's own (the headroom the
+// icons hop in). An auto-hidden dock is slid down out of sight by a transform
+// on its bar, which every GTK position includes; the window should pour into
+// where its icon shows once the dock is up, so the slide is taken back out —
+// how far the bar sits below where it rests, at the bottom of its container.
+function surfaceRect(icon: Gtk.Widget) {
+    const root = icon.get_root() as (Gtk.Widget & Gtk.Native) | null
     if (!root || !icon.get_mapped()) return null
-    let x = 0, y = 0
-    for (let w: Gtk.Widget | null = icon; w && w !== root; w = w.get_parent()) {
-        const a = w.get_allocation()
-        x += a.x
-        y += a.y
+    const [ok, bounds] = icon.compute_bounds(root)
+    if (!ok) return null
+    const [dx, dy] = root.get_surface_transform()
+
+    let bar: Gtk.Widget | null = icon
+    while (bar && !bar.has_css_class("dock-bar")) bar = bar.get_parent()
+    const parent = bar?.get_parent()
+    const slide = bar && parent ? bar.get_allocation().y - (parent.get_height() - bar.get_height()) : 0
+
+    return {
+        x: bounds.get_x() + dx,
+        y: bounds.get_y() + dy - Math.max(slide, 0),
+        width: bounds.get_width(),
+        height: bounds.get_height(),
     }
-    return { x, y, width: icon.get_width(), height: icon.get_height() }
 }
 
 hyprland.connect("event", (_h: unknown, event: string, args: string) => {
@@ -162,7 +173,7 @@ hyprland.connect("event", (_h: unknown, event: string, args: string) => {
     const address = args.split(",")[1] ?? ""
     const client = hyprland.get_client(address)
     const icon = client ? dockIcons.get(entryForClient(client)) : undefined
-    const rect = icon ? layoutRect(icon) : null
+    const rect = icon ? surfaceRect(icon) : null
     genieTo(address, rect ? { namespace: LAYER.dock, icon: rect } : null)
 })
 
