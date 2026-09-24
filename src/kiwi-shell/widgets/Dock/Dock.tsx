@@ -6,7 +6,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, list, unpinnedList, setDockOverlap, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
+import { hyprland, list, unpinnedList, setDockOverlap, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
@@ -533,6 +533,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             $={(self) => {
                 selfRef = self
                 onCleanup(() => destroyWindow(self))
+                onCleanup(registerDockShowing(self, () => showDock()))
                 // This runs once the window is already on screen, so what
                 // follows its map has to run now as well as on any later map.
                 const whenMapped = (fn: () => void) => {

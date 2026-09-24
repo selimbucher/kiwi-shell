@@ -136,18 +136,32 @@ export function minimizeClient(client: Hyprland.Client) {
 
 const dockIcons = new Map<string, Gtk.Widget>()
 
+// whether each dock (by its window) is up, or about to come up
+const dockShowing = new WeakMap<Gtk.Widget, () => boolean>()
+
+/** How a dock tells the genie whether it is up. Returns the unregister. */
+export function registerDockShowing(dock: Gtk.Widget, showing: () => boolean) {
+    dockShowing.set(dock, showing)
+    return () => { dockShowing.delete(dock) }
+}
+
 /** An app's icon in the dock, for its windows to pour into. Returns the unregister. */
 export function registerDockIcon(entry: string, icon: Gtk.Widget) {
     dockIcons.set(entry, icon)
     return () => { if (dockIcons.get(entry) === icon) dockIcons.delete(entry) }
 }
 
+// what a hidden dock's icon is at the screen's edge: a line the window pours into
+const EDGE_SLIVER = 2
+
 // Where the icon sits in the dock's surface, the way the plugin counts: from
 // the surface's top-left, which lies above the window's own (the headroom the
 // icons hop in). An auto-hidden dock is slid down out of sight by a transform
-// on its bar, which every GTK position includes; the window should pour into
-// where its icon shows once the dock is up, so the slide is taken back out —
-// how far the bar sits below where it rests, at the bottom of its container.
+// on its bar, which every GTK position includes; a dock about to come up is
+// aimed at where its icon will show, so the slide is taken back out — how far
+// the bar sits below where it rests, at the bottom of its container. A dock
+// that stays hidden (another window still covers it) is aimed at the screen's
+// bottom edge below the icon, into the dock out of sight, as a Mac does.
 function surfaceRect(icon: Gtk.Widget) {
     const root = icon.get_root() as (Gtk.Widget & Gtk.Native) | null
     if (!root || !icon.get_mapped()) return null
@@ -160,6 +174,10 @@ function surfaceRect(icon: Gtk.Widget) {
     const parent = bar?.get_parent()
     const slide = bar && parent ? bar.get_allocation().y - (parent.get_height() - bar.get_height()) : 0
 
+    if (!(dockShowing.get(root)?.() ?? true)) {
+        const edge = root.get_surface()?.get_height() ?? 0
+        return { x: bounds.get_x() + dx, y: edge - EDGE_SLIVER, width: bounds.get_width(), height: EDGE_SLIVER }
+    }
     return {
         x: bounds.get_x() + dx,
         y: bounds.get_y() + dy - Math.max(slide, 0),
@@ -167,6 +185,7 @@ function surfaceRect(icon: Gtk.Widget) {
         height: bounds.get_height(),
     }
 }
+
 
 hyprland.connect("event", (_h: unknown, event: string, args: string) => {
     if (event !== "kiwigenie") return
