@@ -64,8 +64,10 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
     // pointer inside the icon's dock cell or the flyout above it? The dock
     // is a bottom-anchored monitor-wide layer, so widget bounds translate by
     // monitor geometry; the flyout rect is reconstructed from its content
-    // size (slop absorbs GTK's edge clamping).
-    const pointerInKeepRegion = (): boolean => {
+    // size (slop absorbs GTK's edge clamping). onIconOnly asks about the
+    // icon alone, edge to edge.
+    const pointerInKeepRegion = (onIconOnly = false): boolean => {
+        const slop = onIconOnly ? 0 : KEEP_SLOP_PX
         if (!iconWidget) { log.debug(`[keep:${entry}] no iconWidget`); return false }
         const root = iconWidget.get_root() as any
         const monitor: Gdk.Monitor | null = root?.gdkmonitor ?? null
@@ -87,11 +89,11 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
         const dockTop = geo.y + geo.height - root.get_height()
         const [ok, bounds] = iconWidget.compute_bounds(root)
         if (!ok) { log.debug(`[keep:${entry}] compute_bounds failed`); return false }
-        const iconL = geo.x + bounds.get_x() - KEEP_SLOP_PX
-        const iconR = geo.x + bounds.get_x() + bounds.get_width() + KEEP_SLOP_PX
+        const iconL = geo.x + bounds.get_x() - slop
+        const iconR = geo.x + bounds.get_x() + bounds.get_width() + slop
         if (py >= dockTop && px >= iconL && px <= iconR) return true
 
-        if (!previews.visible) { log.debug(`[keep:${entry}] outside icon (${px},${py} vs x ${iconL}-${iconR}, dockTop ${dockTop}), no flyout`); return false }
+        if (onIconOnly || !previews.visible) { log.debug(`[keep:${entry}] outside icon (${px},${py} vs x ${iconL}-${iconR}, dockTop ${dockTop}), no flyout`); return false }
         const flyout = previews.get_child()?.get_allocation()
         const w = (flyout?.width ?? 0) + 2 * KEEP_SLOP_PX
         const h = (flyout?.height ?? 0) + 2 * KEEP_SLOP_PX
@@ -103,11 +105,6 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
     }
 
     const cancelOpen = () => { if (openTimer) { clearTimeout(openTimer); openTimer = null } }
-    // A click answers the hover: the preview stays shut until the pointer has
-    // really left the icon. Minimizing or restoring changes what is under the
-    // pointer, and Hyprland sends the dock a fresh enter for it, which would
-    // otherwise open the preview of the window that was just clicked away.
-    let clicked = false
     const cancelClose = () => {
         log.debug(`[preview:${entry}] cancelClose (had timer: ${closeTimer !== null})`)
         if (closeTimer) { clearTimeout(closeTimer); closeTimer = null }
@@ -143,7 +140,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                 onclicked={() => {
                     cancelOpen()
                     cancelClose()
-                    clicked = true
+                    clickedEntry = entry
                     const clients = clientsBinding()
                     if (clients.length === 0) {
                         launchBounce(setHop)
@@ -199,7 +196,8 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                         log.debug(`[preview:${entry}] icon ENTER`)
                         cancelClose()
                         cancelOpen()
-                        if (clicked) return
+                        if (clickedEntry === entry) return
+                        clickedEntry = null
                         openTimer = setTimeout(() => {
                             if (clientsBinding().length > 0 && !menu.visible)
                                 previews.popup()
@@ -208,7 +206,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     hover.connect("leave", () => {
                         log.debug(`[preview:${entry}] icon LEAVE`)
                         cancelOpen()
-                        if (clicked && !pointerInKeepRegion()) clicked = false
+                        if (clickedEntry === entry && !pointerInKeepRegion(true)) clickedEntry = null
                         scheduleClose()
                     })
                     self.add_controller(hover)
@@ -237,7 +235,14 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
     )
 }
 
-const PREVIEW_HOVER_OPEN_MS = 400
+const PREVIEW_HOVER_OPEN_MS = 500
+
+// A click answers the hover: the clicked icon's preview stays shut until the
+// pointer has left it — out past its edge, or onto another icon. Minimizing
+// or restoring changes what is under the pointer, and Hyprland sends the dock
+// a fresh enter for it, which would otherwise open the preview of the window
+// that was just clicked away.
+let clickedEntry: string | null = null
 const PREVIEW_HOVER_CLOSE_MS = 300
 
 // Windows-taskbar-style window picker: one live thumbnail per window of the
