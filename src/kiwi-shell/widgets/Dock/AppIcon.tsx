@@ -8,6 +8,8 @@ import { mapVersion } from "../desktopEntries"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { closeWindow, clientSelector } from "../../hypr"
+import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
+import { LAYER } from "../services/theme"
 import { conf } from "../config"
 import { logger } from "../../log"
 const log = logger("dock")
@@ -260,12 +262,40 @@ const PREVIEW_HOVER_CLOSE_MS = 300
 
 // Windows-taskbar-style window picker: one live thumbnail per window of the
 // app, click to focus (or restore, if minimized), ✕ to close.
+// ─── The flyout ───────────────────────────────────────────────────────────────
+// With kiwi-previews in the compositor the windows are drawn into the flyout
+// by the compositor itself (services/previews.ts), in the popup the dock has
+// open; without, they are captures. One flyout is open at a time, so they
+// share one set of tiles. Still: a window nobody can see keeps the last frame
+// it drew rather than being woken for a thumbnail.
+const flyout = new LiveTiles({ set: "dock-flyout", namespace: LAYER.dock, popup: true, motion: "still", radius: 6 })
+let openFlyout: Gtk.Popover | null = null
+
 function WindowPreviews(
     clientsBinding: ReturnType<typeof createComputed<Hyprland.Client[]>>,
     setMenuOpen: (v: boolean) => void,
 ) {
     let popover: Gtk.Popover
     const [open, setOpen] = createState(false)
+
+    const items = (
+        <box spacing={4}>
+            <For each={clientsBinding}>
+                {(client) => (
+                    <WindowPreviewItem
+                        client={client}
+                        pickerOpen={open}
+                        popdown={() => popover.popdown()}
+                    />
+                )}
+            </For>
+        </box>
+    ) as Gtk.Box
+    // the box that tells when the tiles move, and holds off drawing until the
+    // compositor has them
+    const pane = new PreviewPane()
+    pane.append(items)
+    pane.onLayout = () => { if (flyout.pane === pane) flyout.measure() }
 
     return (
         <popover
@@ -286,6 +316,18 @@ function WindowPreviews(
                     log.debug(`[preview] popover notify::visible → ${self.visible}`)
                     setOpen(self.visible)
                     setMenuOpen(self.visible)
+                    if (self.visible) {
+                        // one flyout at a time: moving on to the next icon
+                        // before the last one's has closed closes it
+                        if (openFlyout && openFlyout !== self) openFlyout.popdown()
+                        openFlyout = self
+                        flyout.window = self
+                        flyout.pane = pane
+                        flyout.shown()
+                    } else if (openFlyout === self) {
+                        openFlyout = null
+                        flyout.hidden()
+                    }
                 })
                 // closing the last window from the picker leaves nothing
                 // to show — dismiss instead of floating an empty pill
@@ -297,17 +339,7 @@ function WindowPreviews(
                 })
             }}
         >
-            <box spacing={4}>
-                <For each={clientsBinding}>
-                    {(client) => (
-                        <WindowPreviewItem
-                            client={client}
-                            pickerOpen={open}
-                            popdown={() => popover.popdown()}
-                        />
-                    )}
-                </For>
-            </box>
+            {pane}
         </popover>
     ) as Gtk.Popover
 }
@@ -347,7 +379,7 @@ function WindowPreviewItem({ client, pickerOpen, popdown }: {
     const title = createBinding(client, "title")
 
     createEffect(() => {
-        if (!pickerOpen()) return
+        if (!pickerOpen() || livePreviews()) return
         captureWindowToTexture(address).then(t => {
             if (t) setTexture(t)
         })
@@ -402,6 +434,12 @@ function WindowPreviewItem({ client, pickerOpen, popdown }: {
                 tile then hugs the image with no letterbox bars */}
             <Gtk.ScrolledWindow
                 class="dock-preview-shot"
+                $={(self: Gtk.Widget) => {
+                    flyout.tiles.set(address, self)
+                    self.connect("destroy", () => {
+                        if (flyout.tiles.get(address) === self) flyout.tiles.delete(address)
+                    })
+                }}
                 overflow={Gtk.Overflow.HIDDEN}
                 hscrollbarPolicy={Gtk.PolicyType.NEVER}
                 vscrollbarPolicy={Gtk.PolicyType.NEVER}
@@ -426,12 +464,13 @@ function WindowPreviewItem({ client, pickerOpen, popdown }: {
                         widthRequest={-1}
                         paintable={texture}
                     />
-                    {/* until the window has a capture */}
+                    {/* until the window has a capture; with live previews
+                        the compositor has drawn it before this is seen */}
                     <box
                         $type="overlay"
                         halign={Gtk.Align.CENTER}
                         valign={Gtk.Align.CENTER}
-                        visible={texture(t => !t)}
+                        visible={texture(t => !t && !livePreviews())}
                     >
                         <AppIconImage entry={entryForClient(client)} pixelSize={48} cssClass="dock-preview-icon" />
                     </box>

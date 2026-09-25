@@ -4,7 +4,7 @@
 // Each part is its own file and says there what it is for:
 //
 //   geometry.cpp  announces window moves and resizes on the event socket
-//   previews.cpp  draws the switchers' tiles from the windows themselves
+//   previews.cpp  draws the switchers' and the dock's previews from the windows themselves
 //   genie.cpp     pours a window into its dock icon and back out of it
 //   requests.hpp  reading the shell's requests, shared by the parts
 //
@@ -21,7 +21,7 @@ namespace Kiwi {
     // with `hyprctl kiwi-version` and won't use a plugin that says otherwise:
     // on Arch the plugin is built by hyprpm from the repository, the shell by
     // the AUR package from a release, and the two need not be the same.
-    constexpr int PROTOCOL = 3;
+    constexpr int PROTOCOL = 4;
 
     namespace Geometry {
         bool init(HANDLE handle);

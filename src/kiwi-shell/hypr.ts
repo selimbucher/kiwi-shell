@@ -304,7 +304,7 @@ const FEATURES = {
 // says its own with `hyprctl kiwi-version` (src/hyprland-plugin/kiwi.hpp).
 // One that says another number, or nothing, isn't used: its requests or
 // events differ, and what it would do is guesswork.
-const PLUGIN_PROTOCOL = 3
+const PLUGIN_PROTOCOL = 4
 
 const WITHOUT = {
     geometry: "the dock won't see windows moved by hand",
@@ -387,12 +387,13 @@ async function checkPluginProtocol(shipsPlugin: boolean) {
 
     loadedPlugins.delete("kiwi")
     log.warn(`kiwi's plugin speaks protocol ${version ?? "(none, too old to say)"}, this shell ${PLUGIN_PROTOCOL}: not using it`)
-    const action = shipsPlugin
-        ? "Log out and back in to load the plugin that came with this version."
+    // Everything keeps working meanwhile, the way it does without the plugin
+    // (previews are captured, windows vanish into the dock rather than
+    // pouring in), so this is a note to finish the update, not a warning.
+    const [summary, body] = shipsPlugin
+        ? ["Log out to finish updating Kiwi Shell", "Its compositor plugin updates when you log back in."]
         : version !== null && version > PLUGIN_PROTOCOL
-            ? "The plugin is newer than the shell: update Kiwi Shell, then log out and back in."
-            : "Run hyprpm update, then log out and back in."
-    notify("Kiwi's plugin doesn't match",
-        `Live previews, the dock following moved windows and the minimize animation are off until then. ${action}`,
-        { icon: "dialog-warning-symbolic" })
+            ? ["Update Kiwi Shell", "Its compositor plugin is newer than the shell. Update the shell, then log out and back in."]
+            : ["Finish updating Kiwi Shell", "Run hyprpm update, then log out and back in."]
+    notify(summary, body, { icon: "system-software-update-symbolic" })
 }

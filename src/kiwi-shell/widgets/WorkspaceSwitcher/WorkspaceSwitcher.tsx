@@ -9,7 +9,7 @@ import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { livePreviews, clearPreviews, LiveTiles, PreviewPane } from "../services/previews"
+import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, focusWorkspace, type BindOp } from "../../hypr"
@@ -260,7 +260,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
             $={(self) => {
                 live.window = self
                 onCleanup(() => {
-                    clearPreviews()
+                    live.hidden()
                     if (live.window === self) live.window = null
                     destroyWindow(self)
                 })
@@ -279,6 +279,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
 // being woken for a picture this small.
 
 const live = new LiveTiles({
+    set: "workspace-switcher",
     namespace: LAYER.switcher,
     motion: "still",
     radius: 4,

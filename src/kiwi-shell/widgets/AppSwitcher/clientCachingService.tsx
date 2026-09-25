@@ -4,6 +4,7 @@ import { Gdk } from "ags/gtk4"
 import AppCapture from "gi://AppCapture?version=1.0"
 import Hyprland from "gi://AstalHyprland"
 import { isValidClient } from "../Dock/dock-state"
+import { livePreviews } from "../services/previews"
 
 // How long a cached texture is considered fresh.
 // Switcher opens under this threshold → instant display, no capture fired.
@@ -131,11 +132,14 @@ function captureNow(address: string): Promise<Gdk.Texture | null> {
 // visual state is fresh. This keeps the cache warm without any polling.
 let lastFocusedAddress: string | null = null
 
+// With kiwi-previews in the compositor nothing shows a capture — the
+// switchers and the dock's flyouts are drawn from the windows themselves —
+// so nothing is captured ahead of time either.
 hyprland.connect("notify::focused-client", () => {
     const client = hyprland.get_focused_client()
     const newAddr = client?.get_address() ?? null
 
-    if (lastFocusedAddress && lastFocusedAddress !== newAddr)
+    if (lastFocusedAddress && lastFocusedAddress !== newAddr && !livePreviews())
         captureNow(lastFocusedAddress)
 
     lastFocusedAddress = newAddr
@@ -190,7 +194,7 @@ hyprland.connect("notify::clients", () => {
 
     // Schedule a capture for windows we haven't seen before
     for (const [addr] of current) {
-        if (!knownAddresses.has(addr))
+        if (!knownAddresses.has(addr) && !livePreviews())
             setTimeout(() => captureNow(addr), NEW_WINDOW_CAPTURE_DELAY_MS)
     }
 
@@ -199,6 +203,7 @@ hyprland.connect("notify::clients", () => {
 
 // ─── Proactive capture: on startup ────────────────────────────────────────────
 setTimeout(() => {
+    if (livePreviews()) return
     for (const client of hyprland.get_clients()) {
         if (isValidClient(client) && !cache.has(client.get_address()))
             captureNow(client.get_address())

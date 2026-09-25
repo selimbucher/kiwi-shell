@@ -44,7 +44,7 @@ export type PreviewTile = Rect & {
 }
 
 // resolves whether the compositor took it: it answers errors as text too
-function send(request: string, taken?: (ok: boolean) => void) {
+function send(request: string, set?: string, taken?: (ok: boolean) => void) {
     hyprland.message_async(request, (_source: unknown, result: any) => {
         let ok = false
         try {
@@ -56,18 +56,21 @@ function send(request: string, taken?: (ok: boolean) => void) {
             log.error("kiwi-previews:", e as Error)
         }
         // a request that didn't take must go again the next time
-        if (!ok && showing === request) showing = ""
+        if (!ok && set !== undefined && showing.get(set) === request) showing.delete(set)
         taken?.(ok)
     })
 }
 
-let showing = ""
+// what each set was last sent as
+const showing = new Map<string, string>()
 
 const numbers = (r: Rect) => [r.x, r.y, r.width, r.height].map(Math.round).join(",")
 
 /**
- * Draw these tiles in the surface of the layer called `namespace`, their
- * corners rounded by `rounding`.
+ * Draw these tiles as the set called `set`, in the surface of the layer
+ * called `namespace` (or in the popup it has open, with `popup`), their
+ * corners rounded by `rounding`. Each part of the shell that shows previews
+ * has its own set, which it clears without touching the others'.
  *
  * "live" wakes a window nobody can see so its tile keeps up with it; "still"
  * leaves it asleep and shows the last frame it drew, which is all a tile the
@@ -77,30 +80,31 @@ const numbers = (r: Rect) => [r.x, r.y, r.width, r.height].map(Math.round).join(
  * draws them from the shell's next frame on: the frame to show the pane in.
  */
 export function showPreviews(
+    set: string,
     namespace: string,
     rounding: number,
     tiles: PreviewTile[],
-    motion: "live" | "still" = "live",
+    options: { motion?: "live" | "still", popup?: boolean } = {},
     taken?: (ok: boolean) => void,
 ) {
     if (!livePreviews()) return
     const request = tiles.length === 0
-        ? "kiwi-previews clear"
-        : `kiwi-previews ${namespace} ${Math.round(rounding)} ${motion} `
+        ? `kiwi-previews clear ${set}`
+        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""} `
             + tiles.map(t => `${t.address},${numbers(t)}${t.clip ? `,${numbers(t.clip)}` : ""}`).join(" ")
-    // the tiles only move when the switcher is laid out again
-    if (request === showing) {
+    // the tiles only move when their surface is laid out again
+    if (request === showing.get(set)) {
         taken?.(true)
         return
     }
-    showing = request
-    send(request, taken)
+    showing.set(set, request)
+    send(request, set, taken)
 }
 
-export function clearPreviews() {
-    if (!livePreviews() || showing === "") return
-    showing = ""
-    send("kiwi-previews clear")
+export function clearPreviews(set: string) {
+    if (!livePreviews() || !showing.has(set)) return
+    showing.delete(set)
+    send(`kiwi-previews clear ${set}`)
 }
 
 // Run `after` once `widget`'s window has drawn a frame.
@@ -185,7 +189,11 @@ export const PreviewPane = GObject.registerClass(
 const REVEAL_ANYWAY_MS = 150
 
 type Options = {
+    // the name the tiles go by in the compositor, one per part of the shell
+    set: string
     namespace: string
+    // the tiles are in the popup the layer has open, not in the layer
+    popup?: boolean
     motion: "live" | "still"
     // the tiles' corner radius, logical pixels
     radius: number
@@ -209,7 +217,8 @@ type Options = {
  */
 export class LiveTiles {
     readonly tiles = new Map<string, Gtk.Widget>()
-    window: (Gtk.Window & Gtk.Native) | null = null
+    // the surface the tiles are measured on: a window, or a popover
+    window: (Gtk.Widget & Gtk.Native) | null = null
     pane: InstanceType<typeof PreviewPane> | null = null
     // so a measurement that has been overtaken doesn't show the pane
     private generation = 0
@@ -239,7 +248,7 @@ export class LiveTiles {
     }
 
     hidden() {
-        clearPreviews()
+        clearPreviews(this.options.set)
         ++this.generation
     }
 
@@ -276,7 +285,8 @@ export class LiveTiles {
         if (pane.waiting && tiles.length === 0 && this.tiles.size > 0) return
 
         const measured = ++this.generation
-        showPreviews(this.options.namespace, radius, tiles, this.options.motion, () => {
+        const { set, namespace, motion, popup } = this.options
+        showPreviews(set, namespace, radius, tiles, { motion, popup }, () => {
             if (measured === this.generation) this.pane?.show()
         })
     }

@@ -12,7 +12,7 @@ import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePrevi
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { livePreviews, clearPreviews, LiveTiles, PreviewPane } from "../services/previews"
+import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, closeWindow, clientSelector, type BindOp } from "../../hypr"
 import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
@@ -208,7 +208,7 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
             $={(self) => {
                 live.window = self
                 onCleanup(() => {
-                    clearPreviews()
+                    live.hidden()
                     if (live.window === self) live.window = null
                     destroyWindow(self)
                 })
@@ -225,7 +225,7 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
 // holds the picture. Its top corners meet the title bar, so only the bottom
 // ones are rounded.
 
-const live = new LiveTiles({ namespace: LAYER.switcher, motion: "live", radius: 6, squareTop: true })
+const live = new LiveTiles({ set: "app-switcher", namespace: LAYER.switcher, motion: "live", radius: 6, squareTop: true })
 
 // Uniform height, width hugs the window's aspect ratio — the tile IS the
 // preview (narrow windows get narrow tiles, same as Windows Alt-Tab).
