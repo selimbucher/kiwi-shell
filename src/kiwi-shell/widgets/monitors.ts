@@ -1,7 +1,7 @@
 import app from "ags/gtk4/app"
 import { Gdk, Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
-import { Accessor, createBinding, createComputed } from "ags"
+import { Accessor, createBinding, createComputed, onCleanup } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { conf } from "./config"
 
@@ -50,7 +50,8 @@ export function remeasureOn(
     width: () => number = () => -1,
 ) {
     let last = key()
-    conf.subscribe(() => {
+    // conf outlives the window (a monitor unplugged)
+    onCleanup(conf.subscribe(() => {
         const next = key()
         if (next === last) return
         last = next
@@ -58,5 +59,5 @@ export function remeasureOn(
             win.set_default_size(width(), -1)
             return GLib.SOURCE_REMOVE
         })
-    })
+    }))
 }

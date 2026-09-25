@@ -30,6 +30,9 @@ export const DOCK_SLIDE_OUT_DURATION = 600
 export const dockSlideDistance = (iconSize: number) => iconSize + 68
 
 export const hyprland = Hyprland.get_default()
+// one binding for every icon and list that follows the windows; a binding
+// made inside a computed is made again on every run
+export const clientsBinding = createBinding(hyprland, "clients")
 
 // ─── Launch bounce ────────────────────────────────────────────────────────────
 // macOS's: an icon clicked to start its app hops, whole hop after whole hop,
@@ -134,7 +137,8 @@ export function minimizeClient(client: Hyprland.Client) {
 // window's own minimize button, the switcher. The plugin asks where the icon
 // is; the icons register themselves here.
 
-const dockIcons = new Map<string, Gtk.Widget>()
+// every dock has its own, one per monitor
+const dockIcons = new Map<string, Set<Gtk.Widget>>()
 
 // whether each dock (by its window) is up, or about to come up
 const dockShowing = new WeakMap<Gtk.Widget, () => boolean>()
@@ -147,8 +151,20 @@ export function registerDockShowing(dock: Gtk.Widget, showing: () => boolean) {
 
 /** An app's icon in the dock, for its windows to pour into. Returns the unregister. */
 export function registerDockIcon(entry: string, icon: Gtk.Widget) {
-    dockIcons.set(entry, icon)
-    return () => { if (dockIcons.get(entry) === icon) dockIcons.delete(entry) }
+    const icons = dockIcons.get(entry) ?? new Set()
+    dockIcons.set(entry, icons.add(icon))
+    return () => {
+        icons.delete(icon)
+        if (icons.size === 0 && dockIcons.get(entry) === icons) dockIcons.delete(entry)
+    }
+}
+
+// the app's icon in the dock on the window's own monitor, which is the one
+// the plugin draws on
+function iconFor(client: Hyprland.Client) {
+    const icons = [...dockIcons.get(entryForClient(client)) ?? []]
+    const monitor = client.get_monitor()?.get_name()
+    return icons.find(icon => (icon.get_root() as any)?.gdkmonitor?.get_connector() === monitor) ?? icons[0]
 }
 
 // what a hidden dock's icon is at the screen's edge: a line the window pours into
@@ -191,7 +207,8 @@ hyprland.connect("event", (_h: unknown, event: string, args: string) => {
     if (event !== "kiwigenie") return
     const address = args.split(",")[1] ?? ""
     const client = hyprland.get_client(address)
-    const icon = client ? dockIcons.get(entryForClient(client)) : undefined
+    // no dock, nothing to pour into: the window just goes, or just appears
+    const icon = client && conf().dock !== "disabled" ? iconFor(client) : undefined
     const rect = icon ? surfaceRect(icon) : null
     genieTo(address, rect ? { namespace: LAYER.dock, icon: rect } : null)
 })
@@ -245,7 +262,7 @@ hyprland.connect("notify::focused-client", () => {
 
 export const unpinnedList = createComputed(get => {
     get(mapVersion) // reactive dependency — re-runs when maps rebuild
-    const clients = get(createBinding(hyprland, "clients"))
+    const clients = get(clientsBinding)
     const pinned = new Set(get(list))
 
     const seen = new Set<string>()

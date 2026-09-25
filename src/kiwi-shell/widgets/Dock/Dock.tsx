@@ -6,7 +6,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, list, unpinnedList, setDockOverlap, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
+import { hyprland, clientsBinding, list, unpinnedList, setDockOverlap, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
@@ -18,7 +18,7 @@ import Gio from "gi://Gio"
 import Gtk4LayerShell from "gi://Gtk4LayerShell"
 import KiwiSurface from "gi://KiwiSurface"
 
-const clients = createBinding(hyprland, "clients")
+const clients = clientsBinding
 const activeWorkspace = createBinding(hyprland, "focusedWorkspace")
 
 const lengths = createComputed(get => [
@@ -564,8 +564,12 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     showDock() && conf().dock !== "default"
                         ? bandHeight()
                         : 0)
-                showDock.subscribe(syncOverlap)
-                conf.subscribe(syncOverlap)
+                // conf, lengths and the rest outlive this dock (a monitor
+                // unplugged), so every subscription goes when it does
+                const unsubscribe: (() => void)[] = []
+                onCleanup(() => unsubscribe.forEach(dispose => dispose()))
+
+                unsubscribe.push(showDock.subscribe(syncOverlap), conf.subscribe(syncOverlap))
                 whenMapped(syncOverlap)
                 onCleanup(() => setDockOverlap(0))
 
@@ -574,42 +578,41 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 // zone is set by hand rather than left to cover the surface
                 const syncExclusiveZone = () => Gtk4LayerShell.set_exclusive_zone(self,
                     conf().dock === "default" ? bandHeight() : 0)
-                conf.subscribe(syncExclusiveZone)
+                unsubscribe.push(conf.subscribe(syncExclusiveZone))
                 whenMapped(syncExclusiveZone)
 
                 // the strip, measured whenever Hyprland says a window moved
-                const unsubscribeCover = [
+                unsubscribe.push(
                     conf.subscribe(measureCover),
                     clients.subscribe(measureCover),
                     activeWorkspace.subscribe(measureCover),
-                ]
+                )
                 const eventId = hyprland.connect("event", (_h, event: string, args: string) => {
                     if (event === "windowgeometry") windowMoved(args)
                     else if (COVER_EVENTS.has(event)) measureCover()
                 })
                 whenMapped(measureCover)
-                onCleanup(() => {
-                    unsubscribeCover.forEach(unsubscribe => unsubscribe())
-                    hyprland.disconnect(eventId)
-                })
+                onCleanup(() => hyprland.disconnect(eventId))
 
                 // the region follows every state change at once, and again
                 // when whatever moved the pill has come to rest: the slide
                 // on a reveal (and the dock's own entrance on map), the icons
                 // growing or shrinking when apps come and go
                 const settleSlide = DOCK_SLIDE_DURATION + 200
-                showDock.subscribe(() => {
-                    syncInputRegion()
-                    if (showDock()) syncWhenSettled(settleSlide)
-                })
-                conf.subscribe(() => {
-                    syncInputRegion()
-                    syncWhenSettled(settleSlide)
-                })
-                lengths.subscribe(() => {
-                    syncInputRegion()
-                    syncWhenSettled(ICON_ANIM_MS + 100)
-                })
+                unsubscribe.push(
+                    showDock.subscribe(() => {
+                        syncInputRegion()
+                        if (showDock()) syncWhenSettled(settleSlide)
+                    }),
+                    conf.subscribe(() => {
+                        syncInputRegion()
+                        syncWhenSettled(settleSlide)
+                    }),
+                    lengths.subscribe(() => {
+                        syncInputRegion()
+                        syncWhenSettled(ICON_ANIM_MS + 100)
+                    }),
+                )
                 whenMapped(() => {
                     syncInputRegion()
                     syncWhenSettled(settleSlide)

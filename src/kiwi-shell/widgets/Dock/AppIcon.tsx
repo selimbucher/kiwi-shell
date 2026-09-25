@@ -1,7 +1,7 @@
 import { Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createBinding, createEffect, For } from "ags"
 import Pango from "gi://Pango"
-import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient, registerDockIcon } from "./dock-state"
+import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient, registerDockIcon, clientsBinding as windowsBinding } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
 import { mapVersion } from "../desktopEntries"
@@ -28,7 +28,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
     // of truth for "which app does this window belong to"
     const clientsBinding = createComputed(get => {
         get(mapVersion) // reactive dependency — re-runs when maps rebuild
-        const allClients = get(createBinding(hyprland, "clients"))
+        const allClients = get(windowsBinding)
         return allClients.filter(client =>
             isValidClient(client) && entryForClient(client) === entry)
     })
@@ -176,7 +176,13 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                 $={(self) => {
                     iconWidget = self
                     const unregister = registerDockIcon(entry, self)
-                    self.connect("destroy", unregister)
+                    // an icon removed mid-hover must not open or close
+                    // the picker of an icon that's gone
+                    self.connect("destroy", () => {
+                        unregister()
+                        cancelOpen()
+                        cancelClose()
+                    })
                     const gesture = new Gtk.GestureClick()
                     gesture.set_button(3)
                     gesture.connect("released", (_gesture, _nPress, x, y) => {
