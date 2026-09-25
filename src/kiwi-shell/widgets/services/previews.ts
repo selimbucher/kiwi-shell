@@ -1,8 +1,5 @@
 import Hyprland from "gi://AstalHyprland"
 import Gtk from "gi://Gtk?version=4.0"
-import Gsk from "gi://Gsk"
-import Gdk from "gi://Gdk?version=4.0"
-import Graphene from "gi://Graphene"
 import GObject from "gi://GObject"
 import GLib from "gi://GLib"
 
@@ -20,53 +17,64 @@ const hyprland = Hyprland.get_default()
 //
 // kiwi's plugin (src/hyprland-plugin) turns it around — the shell says
 // where its tiles are, the compositor draws the windows there itself, and
-// nothing is ever copied out. The tiles are drawn below the shell's own
-// surface, so the shell cuts a hole where each one goes (PreviewHoles) and
-// keeps its titles and badges on top.
+// nothing is ever copied out. They are drawn over the shell's own surface,
+// which keeps its titles, close buttons and selection around the pictures
+// rather than on them.
 //
 // Without the plugin the shell captures as it always did
 // (AppSwitcher/clientCachingService).
 
 export const livePreviews = () => hasFeature("previews")
 
-/** A tile, in logical pixels from the top-left of the shell's surface. */
-export type PreviewTile = {
-    address: string
+/** A rectangle in logical pixels from the top-left of the shell's surface. */
+export type Rect = {
     x: number
     y: number
     width: number
     height: number
 }
 
+/**
+ * A tile: the window at `address`, fitted into the rectangle and cut off at
+ * `clip` if there is one.
+ */
+export type PreviewTile = Rect & {
+    address: string
+    clip?: Rect
+}
+
+// resolves whether the compositor took it: it answers errors as text too
 function send(request: string, taken?: (ok: boolean) => void) {
     hyprland.message_async(request, (_source: unknown, result: any) => {
         let ok = false
         try {
-            log.debug(`${request.slice(0, 120)} -> ${hyprland.message_finish(result).trim()}`)
-            ok = true
+            const reply = hyprland.message_finish(result).trim()
+            ok = reply.startsWith("ok")
+            if (ok) log.debug(`${request.slice(0, 120)} -> ${reply}`)
+            else log.warn(`${request.slice(0, 60)}… -> ${reply}`)
         } catch (e) {
             log.error("kiwi-previews:", e as Error)
         }
+        // a request that didn't take must go again the next time
+        if (!ok && showing === request) showing = ""
         taken?.(ok)
     })
 }
 
 let showing = ""
 
+const numbers = (r: Rect) => [r.x, r.y, r.width, r.height].map(Math.round).join(",")
+
 /**
- * Draw these tiles in the surface of the layer called `namespace`.
+ * Draw these tiles in the surface of the layer called `namespace`, their
+ * corners rounded by `rounding`.
  *
  * "live" wakes a window nobody can see so its tile keeps up with it; "still"
  * leaves it asleep and shows the last frame it drew, which is all a tile the
  * size of a thumbnail is worth.
  *
  * `taken` is called once the compositor has them, with whether it does. It
- * draws them from the shell's next frame on, so the holes cut from here open
- * in the same frame the tiles appear in them. A hole cut before the tiles
- * were sent — one left over from the last time the switcher was open — shows
- * the windows behind the switcher for a frame or two, which is what
- * `PreviewHoles.close` is for; a pane shown before, its tiles empty, which is
- * what `PreviewHoles.wait` is for.
+ * draws them from the shell's next frame on: the frame to show the pane in.
  */
 export function showPreviews(
     namespace: string,
@@ -79,8 +87,7 @@ export function showPreviews(
     const request = tiles.length === 0
         ? "kiwi-previews clear"
         : `kiwi-previews ${namespace} ${Math.round(rounding)} ${motion} `
-            + tiles.map(t => `${t.address},${Math.round(t.x)},${Math.round(t.y)},`
-                + `${Math.round(t.width)},${Math.round(t.height)}`).join(" ")
+            + tiles.map(t => `${t.address},${numbers(t)}${t.clip ? `,${numbers(t.clip)}` : ""}`).join(" ")
     // the tiles only move when the switcher is laid out again
     if (request === showing) {
         taken?.(true)
@@ -90,13 +97,14 @@ export function showPreviews(
     send(request, taken)
 }
 
-/**
- * Run `after` once `widget`'s window has drawn a frame. A switcher shows its
- * first frame empty (PreviewHoles.wait) and only then asks for its tiles, so
- * the compositor has seen that frame before it hears of them: the next frame,
- * the one with the holes, is the one they are drawn from.
- */
-export function afterNextFrame(widget: Gtk.Widget, after: () => void) {
+export function clearPreviews() {
+    if (!livePreviews() || showing === "") return
+    showing = ""
+    send("kiwi-previews clear")
+}
+
+// Run `after` once `widget`'s window has drawn a frame.
+function afterNextFrame(widget: Gtk.Widget, after: () => void) {
     const clock = widget.get_frame_clock()
     if (!clock) {
         GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -112,25 +120,15 @@ export function afterNextFrame(widget: Gtk.Widget, after: () => void) {
     widget.queue_draw()
 }
 
-export function clearPreviews() {
-    if (!livePreviews() || showing === "") return
-    showing = ""
-    send("kiwi-previews clear")
-}
-
-// ─── The holes the previews show through ──────────────────────────────────────
-// A hole is a piece of the surface with nothing in it, not even the pane's
-// own glass, so what the compositor drew underneath comes through unchanged.
-// GTK has no such thing as an eraser, so the pane is drawn through a mask of
-// everything but the holes.
+// ─── The pane the tiles are in ────────────────────────────────────────────────
 
 // GTK hands a widget's own size_allocate to its layout manager, and an
 // override of it on a GtkBox subclass is never reached; the manager's is.
-const HolesLayout = GObject.registerClass(
+const PaneLayout = GObject.registerClass(
     {
-        GTypeName: "KiwiPreviewHolesLayout",
+        GTypeName: "KiwiPreviewPaneLayout",
     },
-    class HolesLayout extends Gtk.BoxLayout {
+    class PaneLayout extends Gtk.BoxLayout {
         onLayout: (() => void) | null = null
 
         vfunc_allocate(widget: Gtk.Widget, width: number, height: number, baseline: number): void {
@@ -140,77 +138,146 @@ const HolesLayout = GObject.registerClass(
     },
 )
 
-export const PreviewHoles = GObject.registerClass(
+/**
+ * The box a switcher's tiles are laid out in. It tells after every layout,
+ * for the tiles to be measured, and it can hold off drawing anything until
+ * the compositor has them (wait, show).
+ */
+export const PreviewPane = GObject.registerClass(
     {
-        GTypeName: "KiwiPreviewHoles",
+        GTypeName: "KiwiPreviewPane",
     },
-    class PreviewHoles extends Gtk.Box {
-        /** Holes in this widget's coordinates, and their corner radius. */
-        holes: Graphene.Rect[] = []
-        radius = 0
+    class PreviewPane extends Gtk.Box {
         /** Called after every layout, where the shell measures its tiles. */
         onLayout: (() => void) | null = null
-
-        /** Nothing is drawn while waiting for the compositor (wait()). */
         waiting = false
 
-        /**
-         * Draw nothing until the holes are cut. The compositor draws its
-         * tiles from the frame the holes are cut in, so a pane shown before
-         * then shows its tiles empty for a frame or two, then filled.
-         */
+        /** Draw nothing until show(). */
         wait() {
             if (this.waiting) return
             this.waiting = true
             this.queue_draw()
         }
 
-        /** Cut these, at this radius, and redraw — the pane with them. */
-        cut(holes: Graphene.Rect[], radius: number) {
-            this.holes = holes
-            this.radius = radius
+        show() {
+            if (!this.waiting) return
             this.waiting = false
-            this.queue_draw()
-        }
-
-        /**
-         * Close them again. A switcher keeps its window and only hides it, so
-         * holes left cut are still there when it is shown again — over a
-         * compositor that has been told to draw nothing.
-         */
-        close() {
-            if (this.holes.length === 0) return
-            this.holes = []
             this.queue_draw()
         }
 
         _init(props?: Partial<Gtk.Box.ConstructorProps>) {
             // @ts-expect-error GJS constructs GObject classes through _init
             super._init(props)
-            const layout = new HolesLayout({ orientation: Gtk.Orientation.VERTICAL })
+            const layout = new PaneLayout({ orientation: Gtk.Orientation.VERTICAL })
             layout.onLayout = () => this.onLayout?.()
             this.set_layout_manager(layout)
         }
 
         vfunc_snapshot(snapshot: Gtk.Snapshot): void {
-            if (this.waiting) return
-            if (this.holes.length === 0) {
-                super.vfunc_snapshot(snapshot)
-                return
-            }
-
-            snapshot.push_mask(Gsk.MaskMode.INVERTED_ALPHA)
-            const opaque = new Gdk.RGBA({ red: 1, green: 1, blue: 1, alpha: 1 })
-            for (const hole of this.holes) {
-                const rounded = new Gsk.RoundedRect()
-                rounded.init_from_rect(hole, this.radius)
-                snapshot.push_rounded_clip(rounded)
-                snapshot.append_color(opaque, hole)
-                snapshot.pop()
-            }
-            snapshot.pop()
-            super.vfunc_snapshot(snapshot)
-            snapshot.pop()
+            if (!this.waiting) super.vfunc_snapshot(snapshot)
         }
     },
 )
+
+// ─── A switcher's live tiles ──────────────────────────────────────────────────
+
+// how long a switcher waits, at most, to show with its tiles in place
+const REVEAL_ANYWAY_MS = 150
+
+type Options = {
+    namespace: string
+    motion: "live" | "still"
+    // the tiles' corner radius, logical pixels
+    radius: number
+    // the widget a tile's picture is cut off at, if not the tile's own edges
+    clipOf?: (tile: Gtk.Widget) => Gtk.Widget | null
+    // the tiles' top corners meet a title bar: they are rounded out of sight,
+    // above the tile, so only the bottom ones show
+    squareTop?: boolean
+}
+
+/**
+ * What a switcher does to have the compositor draw its tiles: it registers
+ * each tile's widget by window address, and says when it is shown and hidden.
+ *
+ * On showing, nothing is drawn until the compositor has the tiles, and then
+ * the pane and the windows in it appear in the same frame. The switcher first
+ * draws one empty frame, then sends its tiles, and on the reply shows the
+ * pane: the compositor draws them from the frame after the request, which is
+ * that one. A switcher with no tiles, or whose tiles never get laid out, is
+ * shown without them.
+ */
+export class LiveTiles {
+    readonly tiles = new Map<string, Gtk.Widget>()
+    window: (Gtk.Window & Gtk.Native) | null = null
+    pane: InstanceType<typeof PreviewPane> | null = null
+    // so a measurement that has been overtaken doesn't show the pane
+    private generation = 0
+    // false from showing until the switcher's first, empty frame is drawn
+    private firstFrameDrawn = true
+
+    constructor(private readonly options: Options) {}
+
+    shown() {
+        if (!livePreviews()) return
+        this.pane?.wait()
+        const shown = this.generation
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, REVEAL_ANYWAY_MS, () => {
+            if (this.generation === shown) this.pane?.show()
+            return GLib.SOURCE_REMOVE
+        })
+        this.firstFrameDrawn = false
+        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            if (!this.window) return GLib.SOURCE_REMOVE
+            afterNextFrame(this.window, () => {
+                this.firstFrameDrawn = true
+                this.measure()
+                if (this.tiles.size === 0) this.pane?.show()
+            })
+            return GLib.SOURCE_REMOVE
+        })
+    }
+
+    hidden() {
+        clearPreviews()
+        ++this.generation
+    }
+
+    /** Measure the tiles and send them; after every layout. */
+    measure() {
+        const { window, pane } = this
+        if (!livePreviews() || !window || !pane) return
+        // the compositor must see the empty frame before it hears of the tiles
+        if (pane.waiting && !this.firstFrameDrawn) return
+
+        // widget coordinates start inside the window's padding; the compositor
+        // counts from the surface
+        const [dx, dy] = window.get_surface_transform()
+        const onSurface = (widget: Gtk.Widget): Rect | null => {
+            const [ok, bounds] = widget.compute_bounds(window)
+            if (!ok || bounds.get_width() < 1 || bounds.get_height() < 1) return null
+            return { x: bounds.get_x() + dx, y: bounds.get_y() + dy, width: bounds.get_width(), height: bounds.get_height() }
+        }
+
+        const { radius, clipOf, squareTop } = this.options
+        const tiles: PreviewTile[] = []
+        for (const [address, widget] of this.tiles) {
+            if (!widget.get_mapped()) continue
+            const rect = onSurface(widget)
+            if (!rect) continue
+            const clipWidget = clipOf?.(widget)
+            const clip = clipWidget ? onSurface(clipWidget) ?? undefined : undefined
+            tiles.push(squareTop
+                ? { address, ...rect, y: rect.y - radius, height: rect.height + radius, clip: clip ?? rect }
+                : { address, ...rect, clip })
+        }
+        // a first layout can come before the tiles are on screen; showing the
+        // pane on it would show them empty until the next
+        if (pane.waiting && tiles.length === 0 && this.tiles.size > 0) return
+
+        const measured = ++this.generation
+        showPreviews(this.options.namespace, radius, tiles, this.options.motion, () => {
+            if (measured === this.generation) this.pane?.show()
+        })
+    }
+}

@@ -13,10 +13,17 @@
     padding: 4px 8px;
 }
 
-.switcher-preview-close {
+// A GTK button, so the GTK theme styles it too: WhiteSur gives every button a
+// border, a 6px radius, box-shadows and a hover fill. Each of those is set
+// here, in every state, with selectors that outrank the theme's button:hover.
+// Hidden by colour rather than opacity, which would draw it through an
+// offscreen for nothing.
+button.switcher-preview-close {
     background: none;
     background-image: none;
     border: none;
+    box-shadow: none;
+    outline: none;
     // fixed square + Align.CENTER in the widget — FILL alignment would
     // stretch it to the title bar and turn the radius into an oval
     border-radius: 9999px;
@@ -24,19 +31,24 @@
     min-height: 16px;
     padding: 0;
     margin-right: 3px;
+    background-color: transparent;
+    color: transparent;
+    transition: background-color 150ms ease, color 150ms ease;
+
+    &:hover, &:active {
+        box-shadow: none;
+        background-image: none;
+    }
+}
+
+.preview-tile:hover button.switcher-preview-close {
     background-color: var(--k-close);
     color: var(--k-fg-3);
-    opacity: 0;
-    transition: opacity 150ms ease, background-color 150ms ease, color 150ms ease;
 
     &:hover {
         color: var(--k-fg);
         background-image: linear-gradient(var(--k-fill-hover), var(--k-fill-hover));
     }
-}
-
-.preview-tile:hover .switcher-preview-close {
-    opacity: 1;
 }
 
 // the title ends before the ✕, 3px short of it: the bar is glass in most

@@ -14,7 +14,7 @@
 // back, and a client that talked to this plugin could only make windows
 // appear on the screen, which it can already see.
 //
-//     hyprctl kiwi-previews <namespace> <rounding> [live|still] <address>,<x>,<y>,<w>,<h> ...
+//     hyprctl kiwi-previews <namespace> <rounding> [live|still] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>] ...
 //     hyprctl kiwi-previews clear
 //
 // live wakes a window nobody can see so its tile keeps up; still leaves it
@@ -23,15 +23,22 @@
 //
 // x and y are logical pixels from the top-left of the layer surface called
 // <namespace>, which is where the shell knows its tiles to be; the plugin
-// looks up where that surface currently is on each monitor. The tiles are
-// drawn after the windows and before the layers above them, so the shell's
-// own titles, icons and selection stay on top — it leaves the tile itself
-// transparent, a hole for this to fill.
+// looks up where that surface currently is on each monitor. The window is
+// fitted into x, y, w, h with its corners rounded by <rounding>, and cut off
+// at cx, cy, cw, ch when the shell names such a rectangle — a workspace's
+// miniature window at the edge of its card, a picture whose top corners go
+// under the title bar above it.
+//
+// The tiles are drawn over the shell's surface, after every layer: the shell
+// keeps nothing on top of a picture, only around it. They used to be drawn
+// under it, through holes the shell cut in its own surface, but GTK 4.22
+// does not reliably redraw what lies inside the mask such holes are cut with,
+// and the desktop showed through in patches.
 //
 // New tiles wait for the shell's surface to commit its next frame before they
-// are drawn: that is the frame in which the shell opens the holes for them, so
-// the holes, the pane around them and the windows in them all appear at once.
-// Drawn any earlier, a tile shows for a frame without the pane around it.
+// are drawn: the shell shows its pane in that frame, so the pane and the
+// windows in it appear at once. Drawn any earlier, a tile shows for a frame
+// without the pane around it.
 //
 // A tile is redrawn when the window in it commits a frame, not on a timer.
 // A window nobody can see is the exception: Hyprland tells such a window it
@@ -73,6 +80,7 @@ namespace {
     struct STile {
         PHLWINDOWREF        window;
         CBox                rect; // logical, from the layer surface's top-left
+        CBox                clip; // where the picture is cut off; the rect if the shell named none
         CHyprSignalListener commit;
     };
 
@@ -80,7 +88,7 @@ namespace {
     // render pass.
     struct SDrawTile {
         PHLWINDOWREF window;
-        CBox         box;
+        CBox         box, clip;
     };
 
     class CPreviewPassElement : public IPassElement {
@@ -112,7 +120,7 @@ namespace {
                 const double FACTOR = std::max(tile.box.w / SIZE.x, tile.box.h / SIZE.y);
                 const Vector2D OFFSET{tile.box.x + (tile.box.w - SIZE.x * FACTOR) / 2, tile.box.y + (tile.box.h - SIZE.y * FACTOR) / 2};
 
-                g_pHyprRenderer->m_renderData.clipBox = tile.box;
+                g_pHyprRenderer->m_renderData.clipBox = tile.clip;
 
                 SURFACE->resource()->breadthfirst(
                     [&](SP<CWLSurfaceResource> surface, const Vector2D& offset, void*) {
@@ -122,15 +130,29 @@ namespace {
                         CBox box{OFFSET + offset * FACTOR, surface->m_current.size * FACTOR};
                         box.round();
 
-                        // the corners are the tile's, so only the window's own
-                        // surface is rounded; anything inside it is square
-                        const bool MAIN = surface == SURFACE->resource();
-                        g_pHyprOpenGL->renderTexture(surface->m_current.texture, box,
+                        // anything inside the window is drawn square, and cut
+                        // off by the clip
+                        if (surface != SURFACE->resource()) {
+                            g_pHyprOpenGL->renderTexture(surface->m_current.texture, box, {.surface = surface, .a = 1.F});
+                            return;
+                        }
+
+                        // The window itself is what carries the tile's rounded
+                        // corners, so it is drawn at the tile's size, the part
+                        // of it outside the tile left out by its texture
+                        // coordinates: rounding applies to the box drawn.
+                        const CBox SHOWN = box.intersection(tile.box);
+                        if (SHOWN.empty())
+                            return;
+                        g_pHyprOpenGL->renderTexture(surface->m_current.texture, SHOWN,
                                                      {
-                                                         .surface       = surface,
-                                                         .a             = 1.F,
-                                                         .round         = MAIN ? m_rounding : 0,
-                                                         .roundingPower = 2.F,
+                                                         .surface                     = surface,
+                                                         .a                           = 1.F,
+                                                         .round                       = m_rounding,
+                                                         .roundingPower               = 2.F,
+                                                         .allowCustomUV               = true,
+                                                         .primarySurfaceUVTopLeft     = (SHOWN.pos() - box.pos()) / box.size(),
+                                                         .primarySurfaceUVBottomRight = (SHOWN.pos() + SHOWN.size() - box.pos()) / box.size(),
                                                      });
                     },
                     nullptr);
@@ -162,13 +184,13 @@ namespace {
             if (!MONITOR || m_tiles.empty())
                 return {};
 
-            double left = m_tiles[0].box.x, top = m_tiles[0].box.y;
-            double right = left + m_tiles[0].box.w, bottom = top + m_tiles[0].box.h;
+            double left = m_tiles[0].clip.x, top = m_tiles[0].clip.y;
+            double right = left + m_tiles[0].clip.w, bottom = top + m_tiles[0].clip.h;
             for (const auto& tile : m_tiles) {
-                left   = std::min(left, tile.box.x);
-                top    = std::min(top, tile.box.y);
-                right  = std::max(right, tile.box.x + tile.box.w);
-                bottom = std::max(bottom, tile.box.y + tile.box.h);
+                left   = std::min(left, tile.clip.x);
+                top    = std::min(top, tile.clip.y);
+                right  = std::max(right, tile.clip.x + tile.clip.w);
+                bottom = std::max(bottom, tile.clip.y + tile.clip.h);
             }
             // the pass wants it unscaled
             return CBox{left, top, right - left, bottom - top}.scale(1.0 / MONITOR->m_scale).round();
@@ -178,6 +200,12 @@ namespace {
         std::vector<SDrawTile> m_tiles;
         int                    m_rounding = 0;
     };
+
+    constexpr auto RENDER_LAYER =
+        "Render::IHyprRenderer::renderLayer(Hyprutils::Memory::CSharedPointer<Desktop::View::CLayerSurface>, Hyprutils::Memory::CSharedPointer<Monitor::CMonitor>, "
+        "std::chrono::time_point<std::chrono::_V2::steady_clock, std::chrono::duration<long, std::ratio<1l, 1000000000l> > > const&, bool, bool)";
+    CFunctionHook* g_renderLayerHook = nullptr;
+    void           hkRenderLayer(Render::IHyprRenderer* self, PHLLS layer, PHLMONITOR monitor, const Time::steady_tp& time, bool popups, bool lockscreen);
 
     class CKiwiPreviews {
       public:
@@ -193,10 +221,18 @@ namespace {
             if (!m_command)
                 return false;
 
-            m_stageListener = Event::bus()->m_events.render.stage.listen([this](eRenderStage stage) {
-                if (stage == RENDER_POST_WINDOWS)
-                    render();
-            });
+            // Right over the shell's surface: drawn just after its layer is,
+            // so whatever is above it — another layer, the lock screen, the
+            // cursor — stays above the pictures too. Hyprland has no signal
+            // there, so the layer's render is hooked.
+            for (const auto& fn : HyprlandAPI::findFunctionsByName(handle, "renderLayer")) {
+                if (fn.demangled != RENDER_LAYER)
+                    continue;
+                g_renderLayerHook = HyprlandAPI::createFunctionHook(handle, fn.address, reinterpret_cast<void*>(&hkRenderLayer));
+                break;
+            }
+            if (!g_renderLayerHook || !g_renderLayerHook->hook())
+                return false;
             // damage and frame callbacks belong outside the render itself
             m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) { keepAlive(monitor); });
             m_openedListener = Event::bus()->m_events.layer.opened.listen([this](PHLLS layer) {
@@ -208,7 +244,7 @@ namespace {
 
         void exit() {
             suspendWoken();
-            m_stageListener.reset();
+            // Hyprland removes the hook itself, after this has returned
             m_preListener.reset();
             m_openedListener.reset();
             m_command.reset();
@@ -229,7 +265,6 @@ namespace {
         std::vector<CHyprSignalListener>   m_armListeners;
         std::vector<PHLLSREF>              m_armLayers;
         size_t                             m_commits = 0, m_damages = 0, m_keepAlives = 0;
-        CHyprSignalListener                m_stageListener;
         CHyprSignalListener                m_preListener;
         CHyprSignalListener                m_openedListener;
 
@@ -302,22 +337,26 @@ namespace {
             std::vector<STile> tiles;
             for (const auto& word : WORDS | std::views::drop(first)) {
                 const auto FIELDS = split(word, ',');
-                if (FIELDS.size() != 5)
-                    return "a tile is <address>,<x>,<y>,<w>,<h>";
+                if (FIELDS.size() != 5 && FIELDS.size() != 9)
+                    return "a tile is <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>]";
 
-                const auto WINDOW = windowFrom(FIELDS[0]);
-                if (!WINDOW)
-                    continue; // closed between the shell's list and this call
-
-                double numbers[4];
-                for (size_t i = 0; i < 4; ++i) {
+                double numbers[8];
+                for (size_t i = 0; i + 1 < FIELDS.size(); ++i) {
                     if (!parse(FIELDS[i + 1], numbers[i]))
-                        return "a tile's x, y, width and height must be numbers";
+                        return "a tile's rectangles must be numbers";
                 }
-                if (numbers[2] < 1 || numbers[3] < 1)
+
+                // closed, or closing, between the shell's list and this call
+                const auto WINDOW = windowFrom(FIELDS[0]);
+                if (!WINDOW || !WINDOW->m_isMapped || !WINDOW->wlSurface() || !WINDOW->wlSurface()->resource())
                     continue;
 
-                tiles.emplace_back(STile{.window = WINDOW, .rect = {numbers[0], numbers[1], numbers[2], numbers[3]}});
+                const CBox RECT{numbers[0], numbers[1], numbers[2], numbers[3]};
+                const CBox CLIP = FIELDS.size() == 9 ? CBox{numbers[4], numbers[5], numbers[6], numbers[7]}.intersection(RECT) : RECT;
+                if (RECT.w < 1 || RECT.h < 1 || CLIP.w < 1 || CLIP.h < 1)
+                    continue;
+
+                tiles.emplace_back(STile{.window = WINDOW, .rect = RECT, .clip = CLIP});
                 // the window's own frames are what the tile follows
                 tiles.back().commit = WINDOW->wlSurface()->resource()->m_events.commit.listen([this, ref = PHLWINDOWREF{WINDOW}] {
                     ++m_commits;
@@ -420,23 +459,26 @@ namespace {
                 if (tile.window.expired())
                     continue;
 
-                CBox box = tile.rect.copy().translate(LAYER->m_geometry.pos() - monitor->m_position).scale(monitor->m_scale);
-                box.round();
-                tiles.emplace_back(SDrawTile{.window = tile.window, .box = box});
+                const auto ON_MONITOR = [&](const CBox& rect) { return rect.copy().translate(LAYER->m_geometry.pos() - monitor->m_position).scale(monitor->m_scale).round(); };
+                tiles.emplace_back(SDrawTile{.window = tile.window, .box = ON_MONITOR(tile.rect), .clip = ON_MONITOR(tile.clip)});
             }
             return tiles;
         }
 
-        void render() {
-            if (m_tiles.empty())
+      public:
+        // just after a layer has been added to the frame
+        void afterLayer(const PHLLS& layer, const PHLMONITOR& monitor) {
+            if (m_tiles.empty() || !layer || !monitor || layer->m_namespace != m_namespace)
                 return;
 
-            auto tiles = tilesOn(g_pHyprRenderer->m_renderData.pMonitor.lock());
+            auto tiles = tilesOn(monitor);
             if (tiles.empty())
                 return;
 
-            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(m_rounding * g_pHyprRenderer->m_renderData.pMonitor->m_scale)));
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(m_rounding * monitor->m_scale)));
         }
+
+      private:
 
         // A window nobody can see is suspended and never drawn, so it would
         // freeze in its tile: it is woken here and sent the frame callbacks
@@ -491,7 +533,7 @@ namespace {
                     if (tile.window != window)
                         continue;
                     ++m_damages;
-                    g_pHyprRenderer->damageBox(tile.box.copy().scale(1.0 / monitor->m_scale).translate(monitor->m_position));
+                    g_pHyprRenderer->damageBox(tile.clip.copy().scale(1.0 / monitor->m_scale).translate(monitor->m_position));
                 }
             }
         }
@@ -499,7 +541,7 @@ namespace {
         void damageAll() {
             for (const auto& monitor : State::monitorState()->monitors()) {
                 for (const auto& tile : tilesOn(monitor)) {
-                    CBox damage = tile.box.copy().scale(1.0 / monitor->m_scale).translate(monitor->m_position);
+                    CBox damage = tile.clip.copy().scale(1.0 / monitor->m_scale).translate(monitor->m_position);
                     g_pHyprRenderer->damageBox(damage);
                 }
             }
@@ -507,6 +549,14 @@ namespace {
     };
 
     UP<CKiwiPreviews> g_kiwiPreviews;
+
+    void hkRenderLayer(Render::IHyprRenderer* self, PHLLS layer, PHLMONITOR monitor, const Time::steady_tp& time, bool popups, bool lockscreen) {
+        using FRenderLayer = void (*)(Render::IHyprRenderer*, PHLLS, PHLMONITOR, const Time::steady_tp&, bool, bool);
+        reinterpret_cast<FRenderLayer>(g_renderLayerHook->m_original)(self, layer, monitor, time, popups, lockscreen);
+        // the layer's popups are a second call, drawn over the pictures
+        if (!popups && !lockscreen && g_kiwiPreviews)
+            g_kiwiPreviews->afterLayer(layer, monitor);
+    }
 }
 
 namespace Kiwi::Previews {
