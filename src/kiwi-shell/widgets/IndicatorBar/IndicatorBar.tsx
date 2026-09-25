@@ -3,7 +3,6 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { Accessor, createState, createComputed, createBinding, onCleanup } from "ags"
 import AstalWp from "gi://AstalWp"
 import { timeout } from "ags/time"
-import { exec } from "ags/process"
 import { readFile } from "ags/file"
 import GLib from "gi://GLib"
 import Gtk4LayerShell from "gi://Gtk4LayerShell"
@@ -12,7 +11,7 @@ import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../ico
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { dockOverlap, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance } from "../Dock/dock-state"
-import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessAvailable } from "../brightness"
+import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessWritable, refreshKbdBrightness } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 import { watchIndicatorKeys } from "../inputWatcher"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
@@ -22,8 +21,6 @@ const fadeTimeout = 2500
 const wp = AstalWp.get_default()
 const volumeBinding = createBinding(wp.audio.defaultSpeaker, 'volume');
 const muteBinding = createBinding(wp.audio.defaultSpeaker, 'mute')
-const max_brightness = brightnessAvailable ? parseInt(exec("brightnessctl max")) : 1
-const min_brightness = 10;
 
 let waiting = true;
 
@@ -31,7 +28,10 @@ if (kbdAvailable) {
   kbdBrightness.subscribe(() => showIndicator('keyboardBrightness'))
 }
 
-watchIndicatorKeys((type) => showIndicator(type))
+watchIndicatorKeys((type) => {
+  if (type === 'keyboardBrightness') refreshKbdBrightness()
+  showIndicator(type)
+})
 
 export function showIndicator(type: string){
   setIndicatorType(type)
@@ -71,7 +71,7 @@ const isSensitive = createComputed(get => {
     case 'volume':
       return true
     case 'brightness':
-      return brightnessAvailable;
+      return brightnessWritable;
     default:
       return false;
   }
@@ -261,14 +261,4 @@ function Indicator(){
       </box>
     </box>
   )
-}
-
-function absoluteBrightness(percentage: number) {
-  const range = max_brightness - min_brightness;
-  return min_brightness + (percentage*range)
-}
-
-function percentageBrightness(absoluteValue: number) {
-  const range = max_brightness - min_brightness;
-  return (absoluteValue - min_brightness) / range
 }

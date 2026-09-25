@@ -141,7 +141,8 @@ export function keyboardBrightnessIcon(percentage: number) {
     return 'keyboard-brightness-high-symbolic'
   } else if (percentage >= 0.66) {
     return 'keyboard-brightness-symbolic'
-  } else if (percentage >= 0.33) {
+  } else if (percentage > 0) {
+    // a backlight with many steps (max_brightness 255) is still on below a third
     return 'keyboard-brightness-medium-symbolic'
   }
   return 'keyboard-brightness-off-symbolic'
