@@ -1,10 +1,9 @@
 import { Gtk } from 'ags/gtk4'
-import { exec } from 'ags/process';
-import { createState, With } from 'ags'
+import { With } from 'ags'
 
 import { CircularProgress } from '../../../Misc';
 import { Icon } from "../../../iconNames";
-import { cpuUsage, gpuUsage, ramUsage, cpuTemp } from "./hardwarePolling"
+import { cpuUsage, gpuUsage, ramUsage, cpuTemp, hardwareAvailable } from "./hardwarePolling"
 import { conf } from '../../../config';
 
 export default function PerformanceTab({visible}) {
@@ -23,6 +22,7 @@ export default function PerformanceTab({visible}) {
                                 color="#68b3e5"
                             />
                             <PerformanceGraph
+                                visible={hardwareAvailable(a => a.gpu)}
                                 progress={gpuUsage}
                                 icon="gpu-symbolic"
                                 color="#e56868"
@@ -33,8 +33,9 @@ export default function PerformanceTab({visible}) {
                                 color="#7fea7f"
                             />
                             <PerformanceGraph
+                                visible={hardwareAvailable(a => a.cpuTemp)}
                                 // Normalize to 0–1 for the ring (capped at 100°C)
-                                progress={cpuTemp(t => Math.min(t / 100, 1))}
+                                progress={cpuTemp(t => Math.max(0, Math.min(t / 100, 1)))}
                                 icon="am-temperature-symbolic"
                                 color={conf(conf => conf.primary_color)}
                                 labelFn={cpuTemp(t => `${Math.round(t)}°C`)}
@@ -49,9 +50,9 @@ export default function PerformanceTab({visible}) {
     )
 }
 
-function PerformanceGraph({progress, icon, color, labelFn = null}) {
+function PerformanceGraph({progress, icon, color, labelFn = null, visible = true}) {
     return (
-        <box orientation={Gtk.Orientation.VERTICAL}>
+        <box orientation={Gtk.Orientation.VERTICAL} visible={visible}>
             <overlay>
                 <Icon
                     pixelSize={20}

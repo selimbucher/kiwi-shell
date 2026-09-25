@@ -1,37 +1,54 @@
 import { Gtk } from "ags/gtk4"
 import Pango from "gi://Pango"
-import { exec, execAsync } from "ags/process"
+import { execAsync } from "ags/process"
 import { createState, createBinding, createComputed, With } from "ags"
 import { subprocess } from "ags/process"
 
 import AstalWp from "gi://AstalWp"
 import AstalPowerProfiles from "gi://AstalPowerProfiles"
+import AstalBattery from "gi://AstalBattery"
 import Notifd from "gi://AstalNotifd"
 
 
 import { MediaPlayer } from "../../../Misc"
 import { KeyedList } from "../../../KeyedList"
 import { Icon, powerProfileIcon, volumeIcon, brightnessIcon } from "../../../iconNames"
-import { brightness, setBrightnessLevel } from "../../../brightness"
+import { brightness, setBrightnessLevel, brightnessAvailable, brightnessWritable } from "../../../brightness"
 import { closeSystemMenu } from "../SystemMenu";
 import { conf } from "../../../config";
 
 export const [nightShift, setNightShift] = createState(false);
 
-const max_brightness = parseInt(exec("brightnessctl max"))
 const nightShiftTemp = 4000;
 
 const notifd = Notifd.get_default()
 const dontDisturb = createBinding(notifd, "dont-disturb")
 
-const hasBacklight = exec(`sh -c 'ls /sys/class/backlight/ | grep -q . && echo yes || echo no'`).trim() === 'yes';
-
-const activePowerProfile = hasBacklight ? "power-saver" : "performance"
-const defaultPowerProfile = "balanced"
-
 const wp = AstalWp.get_default()
 const mic = wp.audio.defaultMicrophone;
 const powerprofiles = AstalPowerProfiles.get_default()
+
+// Which profiles there are depends on the machine: power-profiles-daemon
+// always has power-saver and balanced, performance only where a driver can
+// deliver it, and without the daemon there are none and the row is hidden.
+// The list is read once; the daemon only works it out when it starts.
+const powerProfiles = powerprofiles.activeProfile
+  ? ["power-saver", "balanced", "performance"].filter(p =>
+      powerprofiles.get_profiles().some(profile => profile.profile === p))
+  : []
+const hasPowerProfiles = powerProfiles.length > 0
+
+// The button leaves balanced for the profile the machine most likely wants:
+// saving power on battery, speed on a desktop that has it.
+const hasBattery = AstalBattery.get_default().get_is_present()
+const activePowerProfile = !hasBattery && powerProfiles.includes("performance")
+  ? "performance" : "power-saver"
+const defaultPowerProfile = "balanced"
+
+// set on the daemon over D-Bus, as powerprofilesctl would, without needing it
+function setPowerProfile(profile: string) {
+  powerprofiles.activeProfile = profile
+}
 
 
 const speakerBinding = createBinding(wp.audio, "defaultSpeaker")
@@ -76,24 +93,14 @@ function PowerProfiles({setPpOpen}){
           marginStart={8}
           marginEnd={8}
         >
-          <button
-            class="menu-item"
-            onClicked={() => { execAsync("powerprofilesctl set power-saver"); setPpOpen(false) }}
-          >
-            Power Saver
-          </button>
-          <button
-            class="menu-item"
-            onClicked={() => { execAsync("powerprofilesctl set balanced"); setPpOpen(false) }}
-          >
-            Balanced
-          </button>
-          <button
-            class="menu-item"
-            onClicked={() => { execAsync("powerprofilesctl set performance"); setPpOpen(false) }}
-          >
-            Performance
-          </button>
+          {powerProfiles.map(profile => (
+            <button
+              class="menu-item"
+              onClicked={() => { setPowerProfile(profile); setPpOpen(false) }}
+            >
+              {powerProfileName(profile)}
+            </button>
+          ))}
         </box>
   )
 }
@@ -104,7 +111,7 @@ function OptionButtons(){
 
   return (
     <box orientation={Gtk.Orientation.VERTICAL} class="option-buttons" spacing={spacing}>
-      <box class="row dropdown" spacing={spacing}>
+      <box class="row dropdown" spacing={spacing} visible={hasPowerProfiles}>
         <button
         class={powerProfileBinding.as( p =>
           (p != defaultPowerProfile) ? 'option active' : 'option'
@@ -112,9 +119,9 @@ function OptionButtons(){
         hexpand={true}
           onClicked={() => {
             if (powerProfileBinding.get() == defaultPowerProfile) {
-              execAsync(`powerprofilesctl set ${activePowerProfile}`);
+              setPowerProfile(activePowerProfile);
             } else {
-              execAsync(`powerprofilesctl set ${defaultPowerProfile}`);
+              setPowerProfile(defaultPowerProfile);
             }
             setPpOpen(false)
           }}
@@ -143,6 +150,7 @@ function OptionButtons(){
       </box>
 
       <revealer
+        visible={hasPowerProfiles}
         reveal_child={ppOpen}
         transition_type={Gtk.RevealerTransitionType.SLIDE_DOWN}
       >
@@ -314,7 +322,7 @@ function Sliders() {
   return (
     <box class="sliders" orientation={Gtk.Orientation.VERTICAL}>
       <VolumeSlider />
-      <box visible={hasBacklight} class="slider-container">
+      <box visible={brightnessAvailable} class="slider-container">
         <button class="bar-button">
           <Icon 
             class="icon brightnessIcon"
@@ -332,6 +340,7 @@ function Sliders() {
           max={1}
           step={0.01}
           value={brightness}
+          sensitive={brightnessWritable}
           onChangeValue={(self) => {
             setBrightnessLevel(self.value)
           }}
