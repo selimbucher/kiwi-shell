@@ -4,13 +4,16 @@ import { logger } from "./log"
 const log = logger("shortcuts")
 
 // The shell's own shortcuts, configurable as "shortcuts": { "launcher": "Super", ... }.
-// A lone modifier ("Super") is a tap; anything else is modifiers + key.
-export type ShortcutName = "launcher" | "app_switcher" | "workspace_switcher"
+// A lone modifier ("Super") is a tap; anything else is modifiers + key. The
+// optional ones are unset ("") until the user sets them.
+export type OptionalShortcutName = "notification_center"
+export type ShortcutName = "launcher" | "app_switcher" | "workspace_switcher" | OptionalShortcutName
 
 export const DEFAULT_SHORTCUTS: Record<ShortcutName, string> = {
     launcher: "Super",
     app_switcher: "Alt+Tab",
     workspace_switcher: "Super+Tab",
+    notification_center: "",
 }
 
 const MODIFIERS: Record<string, { name: string; key: string; mask: number }> = {
@@ -68,21 +71,33 @@ export const heldModifierKey = (s: Shortcut) =>
     MODIFIERS[s.mods[0].toLowerCase()].key
 
 // Switchers are held: exactly one modifier, whose release confirms, and no
-// Shift, which the workspace switcher adds for going backwards.
+// Shift, which the workspace switcher adds for going backwards. Only the
+// launcher can be a tap; anything else needs a modifier, or a key of its own
+// (F keys, XF86 media keys).
 function valid(name: ShortcutName, s: Shortcut | null): s is Shortcut {
     if (!s) return false
     if (name === "launcher") return true
+    if (name === "notification_center") return !s.tap && (s.mods.length > 0 || /^(F\d+|XF86)/i.test(s.key))
     return !s.tap && s.mods.length === 1 && s.mods[0] !== "SHIFT"
 }
 
-export function shortcut(name: ShortcutName): Shortcut {
+function configuredShortcut(name: ShortcutName): Shortcut | null {
     const configured: string | undefined = conf().shortcuts?.[name]
     if (configured) {
         const parsed = parseShortcut(configured)
         if (valid(name, parsed)) return parsed
-        log.warn(`ignoring shortcuts.${name} = "${configured}", using ${DEFAULT_SHORTCUTS[name]}`)
+        log.warn(`ignoring shortcuts.${name} = "${configured}", using ${DEFAULT_SHORTCUTS[name] || "none"}`)
     }
-    return parseShortcut(DEFAULT_SHORTCUTS[name])!
+    return parseShortcut(DEFAULT_SHORTCUTS[name])
+}
+
+export function shortcut(name: Exclude<ShortcutName, OptionalShortcutName>): Shortcut {
+    return configuredShortcut(name)!
+}
+
+/** An optional shortcut, or null when it isn't set. */
+export function optionalShortcut(name: OptionalShortcutName): Shortcut | null {
+    return configuredShortcut(name)
 }
 
 // ─── binds left by a kiwi that ran with other shortcuts ──────────────────────
@@ -99,6 +114,7 @@ const DESCRIPTIONS: Record<ShortcutName, string[]> = {
     workspace_switcher: [
         "kiwi: workspaces next", "kiwi: workspaces prev", "kiwi: workspaces switch", "kiwi: workspaces close",
     ],
+    notification_center: ["kiwi: notification center"],
 }
 
 // binds a kiwi from before the global shortcuts left (they ran kiwictl); the
@@ -107,6 +123,10 @@ const DESCRIPTIONS: Record<ShortcutName, string[]> = {
 const RETIRED = ["kiwi: launcher toggle", "kiwi: workspaces confirm", "kiwi: workspaces escape"]
 
 function wantedCombos(name: ShortcutName): string[] {
+    if (name === "notification_center") {
+        const s = optionalShortcut(name)
+        return s ? [combo(s)] : []
+    }
     const s = shortcut(name)
     const release = s.tap ? combo(s) : `${s.mods[0]} + ${heldModifierKey(s)}`
     if (name === "launcher") return [combo(s)]
@@ -135,7 +155,7 @@ enqueueBindJob("leftover shortcut binds", async () => {
 const isKiwi = (b: any) => (b.description ?? "").startsWith("kiwi:")
 
 const resolved = () =>
-    JSON.stringify((Object.keys(DEFAULT_SHORTCUTS) as ShortcutName[]).map(shortcut))
+    JSON.stringify((Object.keys(DEFAULT_SHORTCUTS) as ShortcutName[]).map(configuredShortcut))
 
 let current = resolved()
 conf.subscribe(() => {
