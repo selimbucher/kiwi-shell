@@ -3,7 +3,6 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { Accessor, createState, createComputed, createBinding, onCleanup } from "ags"
 import AstalWp from "gi://AstalWp"
 import { timeout } from "ags/time"
-import { readFile } from "ags/file"
 import GLib from "gi://GLib"
 import Gtk4LayerShell from "gi://Gtk4LayerShell"
 

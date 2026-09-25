@@ -66,7 +66,7 @@ function powerProfileName(profile: string) {
   if (profile == "power-saver") {
     return "Power Saver"
   }
-  return "Unkown Powerprofile"
+  return "Unknown Power Profile"
 }
 
 export default function SystemTab({ visible }) {
