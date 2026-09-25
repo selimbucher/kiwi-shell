@@ -24,7 +24,7 @@ import {
   startBluetoothDiscovery,
   stopBluetoothDiscovery,
 } from "./tabs/BluetoothTab"
-import { execAsync } from "ags/process"
+import { notify } from "../../../notify"
 
 const network = Network.get_default()
 const wifi = network.wifi
@@ -67,17 +67,11 @@ if (hasBattery) {
     const pct = `${Math.round(p * 100)}%`
     if (p <= BAT_CRITICAL && !warnedCritical) {
       warnedCritical = true
-      execAsync([
-        "notify-send", "-u", "critical", "-i", "battery-caution-symbolic",
-        "-a", "Battery", "Battery critically low",
-        `${pct} remaining — connect the charger now`,
-      ])
+      notify("Battery critically low", `${pct} remaining — connect the charger now`,
+        { app: "Battery", icon: "battery-caution-symbolic", urgency: 2 })
     } else if (p <= BAT_WARN && !warnedLow) {
       warnedLow = true
-      execAsync([
-        "notify-send", "-u", "normal", "-i", "battery-low-symbolic",
-        "-a", "Battery", "Battery low", `${pct} remaining`,
-      ])
+      notify("Battery low", `${pct} remaining`, { app: "Battery", icon: "battery-low-symbolic" })
     }
   }
 

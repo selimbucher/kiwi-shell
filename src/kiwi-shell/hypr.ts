@@ -8,6 +8,7 @@
 import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
 import { logger } from "./log"
+import { notify } from "./notify"
 
 const log = logger("hypr")
 const hyprland = Hyprland.get_default()
@@ -279,6 +280,7 @@ hyprland.connect("config-reloaded", () => {
 //                    doesn't announce; the dock's auto-hide follows them
 //   previews         the switchers' tiles, drawn from the windows themselves
 //                    rather than captured
+//   genie            minimized windows pouring into their dock icon and back
 //
 // Loading is all this ever does. A copy that is already in the compositor,
 // from an older kiwi or from the user's own config, stays: it does the same
@@ -297,6 +299,12 @@ const FEATURES = {
     previews: ["kiwi", "kiwi-previews"],
     genie: ["kiwi"],
 } as const
+
+// What the shell and kiwi's plugin say to each other, numbered; the plugin
+// says its own with `hyprctl kiwi-version` (src/hyprland-plugin/kiwi.hpp).
+// One that says another number, or nothing, isn't used: its requests or
+// events differ, and what it would do is guesswork.
+const PLUGIN_PROTOCOL = 3
 
 const WITHOUT = {
     geometry: "the dock won't see windows moved by hand",
@@ -359,9 +367,32 @@ export async function loadPlugins() {
         log.info("kiwi plugin loaded")
     }
 
+    if (loadedPlugins.has("kiwi")) await checkPluginProtocol(path !== "")
+
     for (const feature of Object.keys(FEATURES) as (keyof typeof FEATURES)[]) {
         if (!hasFeature(feature))
             log.info(`without the kiwi plugin, ${WITHOUT[feature]}`)
     }
     pluginsLoaded()
+}
+
+// A plugin from another version stays loaded until the next login (see
+// above): a Nix rebuild without logging out, or on Arch a plugin rebuilt by
+// hyprpm from the repository ahead of the release the shell came from, or
+// behind it. The user is told which of the two to do.
+async function checkPluginProtocol(shipsPlugin: boolean) {
+    const reply = await request("kiwi-version").catch(() => "")
+    const version = /^\d+$/.test(reply.trim()) ? Number(reply.trim()) : null
+    if (version === PLUGIN_PROTOCOL) return
+
+    loadedPlugins.delete("kiwi")
+    log.warn(`kiwi's plugin speaks protocol ${version ?? "(none, too old to say)"}, this shell ${PLUGIN_PROTOCOL}: not using it`)
+    const action = shipsPlugin
+        ? "Log out and back in to load the plugin that came with this version."
+        : version !== null && version > PLUGIN_PROTOCOL
+            ? "The plugin is newer than the shell: update Kiwi Shell, then log out and back in."
+            : "Run hyprpm update, then log out and back in."
+    notify("Kiwi's plugin doesn't match",
+        `Live previews, the dock following moved windows and the minimize animation are off until then. ${action}`,
+        { icon: "dialog-warning-symbolic" })
 }

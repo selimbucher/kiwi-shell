@@ -38,10 +38,9 @@ sudo pacman -S networkmanager bluez power-profiles-daemon wireplumber upower
 yay -S kiwi-shell
 ```
 
-**3.** Optional: kiwi's Hyprland plugin, which lets the dock follow a window
-while you drag it and the switchers show their windows live instead of
-capturing them. It is built against the Hyprland you run, so it goes through
-hyprpm and is rebuilt with `hyprpm update` after every Hyprland update:
+**3.** Optional: kiwi's Hyprland plugin (the dock follows dragged windows,
+live switcher previews, the minimize animation), rebuilt with `hyprpm update`
+after every Hyprland or Kiwi Shell update:
 
 ```bash
 hyprpm add https://github.com/selimbucher/kiwi-shell
@@ -49,9 +48,11 @@ hyprpm enable kiwi
 hyprpm reload
 ```
 
-```ini
-# hyprland.conf: load it at login
-exec-once = hyprpm reload -n
+```lua
+-- hyprland.lua: load it at login
+hl.on("hyprland.start", function()
+  hl.exec_cmd("hyprpm reload -n")
+end)
 ```
 
 kiwi-settings shows the same under Desktop → Compositor.
@@ -85,6 +86,20 @@ kiwi-settings shows the same under Desktop → Compositor.
 
 Without Home Manager, apply `inputs.kiwi-shell.overlays.default` and install
 `pkgs.kiwi-shell`.
+
+### Updating
+
+```bash
+# Arch
+yay -Syu
+hyprpm update
+
+# NixOS & Home Manager
+nix flake update kiwi-shell
+sudo nixos-rebuild switch --flake .   # or: home-manager switch --flake .
+
+# then log out and back in: a running Hyprland keeps the plugin it loaded
+```
 
 ---
 
