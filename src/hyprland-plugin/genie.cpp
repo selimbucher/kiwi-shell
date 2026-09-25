@@ -182,10 +182,31 @@ void main() {
         return CBox{LEFT, TOP, RIGHT - LEFT, BOTTOM - TOP}.round();
     }
 
+    // where the shader's own inputs are, looked up once it is compiled
+    struct SUniforms {
+        GLint quadPos = -1, quadSize = -1, snapshotSize = -1, windowPos = -1, windowSize = -1, iconPos = -1, iconSize = -1, bend = -1, top = -1, bottom = -1;
+
+        explicit SUniforms(GLuint program = 0) {
+            if (!program)
+                return;
+            const auto AT = [program](const char* name) { return glGetUniformLocation(program, name); };
+            quadPos      = AT("quadPos");
+            quadSize     = AT("quadSize");
+            snapshotSize = AT("snapshotSize");
+            windowPos    = AT("windowPos");
+            windowSize   = AT("windowSize");
+            iconPos      = AT("iconPos");
+            iconSize     = AT("iconSize");
+            bend         = AT("bend");
+            top          = AT("top");
+            bottom       = AT("bottom");
+        }
+    };
+
     class CGeniePassElement : public IPassElement {
       public:
-        CGeniePassElement(SP<CShader> shader, const SGenie& genie) :
-            m_shader(std::move(shader)), m_snapshot(genie.snapshot), m_window(genie.from), m_icon(genie.icon.value_or(genie.from)), m_quad(extentOf(genie)),
+        CGeniePassElement(SP<CShader> shader, const SUniforms& uniforms, const SGenie& genie) :
+            m_shader(std::move(shader)), m_uniforms(uniforms), m_snapshot(genie.snapshot), m_window(genie.from), m_icon(genie.icon.value_or(genie.from)), m_quad(extentOf(genie)),
             m_scale(genie.monitor ? genie.monitor->m_scale : 1.0), m_shape(shapeAt(progressOf(genie), m_window, m_icon)) {}
 
         std::vector<UP<IPassElement>> draw() override {
@@ -199,23 +220,21 @@ void main() {
             TEXTURE->setTexParameter(GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
             g_pHyprOpenGL->blend(true);
-            const auto SHADER  = g_pHyprOpenGL->useShader(m_shader);
-            const auto PROGRAM = SHADER->program();
+            const auto SHADER = g_pHyprOpenGL->useShader(m_shader);
             SHADER->setUniformMatrix3fv(SHADER_PROJ, 1, GL_TRUE, g_pHyprRenderer->projectBoxToTarget(m_quad).getMatrix());
             SHADER->setUniformInt(SHADER_TEX, 0);
 
-            const auto PAIR  = [PROGRAM](const char* name, const Vector2D& value) { glUniform2f(glGetUniformLocation(PROGRAM, name), value.x, value.y); };
-            const auto FLOAT = [PROGRAM](const char* name, float value) { glUniform1f(glGetUniformLocation(PROGRAM, name), value); };
-            PAIR("quadPos", m_quad.pos());
-            PAIR("quadSize", m_quad.size());
-            PAIR("snapshotSize", m_snapshot->m_size);
-            PAIR("windowPos", m_window.pos());
-            PAIR("windowSize", m_window.size());
-            PAIR("iconPos", m_icon.pos());
-            PAIR("iconSize", m_icon.size());
-            FLOAT("bend", m_shape.bend);
-            FLOAT("top", m_shape.top);
-            FLOAT("bottom", m_shape.bottom);
+            const auto PAIR = [](GLint at, const Vector2D& value) { glUniform2f(at, value.x, value.y); };
+            PAIR(m_uniforms.quadPos, m_quad.pos());
+            PAIR(m_uniforms.quadSize, m_quad.size());
+            PAIR(m_uniforms.snapshotSize, m_snapshot->m_size);
+            PAIR(m_uniforms.windowPos, m_window.pos());
+            PAIR(m_uniforms.windowSize, m_window.size());
+            PAIR(m_uniforms.iconPos, m_icon.pos());
+            PAIR(m_uniforms.iconSize, m_icon.size());
+            glUniform1f(m_uniforms.bend, m_shape.bend);
+            glUniform1f(m_uniforms.top, m_shape.top);
+            glUniform1f(m_uniforms.bottom, m_shape.bottom);
 
             glBindVertexArray(SHADER->getUniformLocation(SHADER_SHADER_VAO));
             g_pHyprRenderer->m_renderData.damage.forEachRect([](const auto& RECT) {
@@ -251,6 +270,7 @@ void main() {
 
       private:
         SP<CShader>                    m_shader;
+        SUniforms                      m_uniforms;
         SP<Render::IFramebuffer>       m_snapshot;
         CBox                           m_window, m_icon, m_quad;
         double                         m_scale = 1;
@@ -301,6 +321,7 @@ void main() {
         std::vector<SGenie>       m_genies;
         PHLMONITORREF             m_rendering;
         SP<CShader>               m_shader;
+        SUniforms                 m_uniforms;
         bool                      m_shaderFailed = false;
         SP<SHyprCtlCommand>       m_command;
         CHyprSignalListener       m_stageListener;
@@ -549,7 +570,8 @@ void main() {
                 m_shaderFailed = true;
                 return false;
             }
-            m_shader = shader;
+            m_shader   = shader;
+            m_uniforms = SUniforms{shader->program()};
             return true;
         }
 
@@ -560,7 +582,7 @@ void main() {
             for (const auto& genie : m_genies) {
                 // a restored window waiting for its icon stays hidden
                 if (genie.monitor == MONITOR && genie.snapshot && (genie.icon || !genie.restore))
-                    g_pHyprRenderer->m_renderPass.add(makeUnique<CGeniePassElement>(m_shader, genie));
+                    g_pHyprRenderer->m_renderPass.add(makeUnique<CGeniePassElement>(m_shader, m_uniforms, genie));
             }
         }
 

@@ -1,5 +1,5 @@
 import { createState } from "ags"
-import { exec, execAsync } from "ags/process"
+import { execAsync } from "ags/process"
 import { Gdk } from "ags/gtk4"
 import Gio from "gi://Gio"
 import GLib from "gi://GLib"
@@ -30,16 +30,6 @@ function sameIncluded(path: string): string {
     return GLib.file_test(included, GLib.FileTest.EXISTS) ? included : path
 }
 
-function queryWallpaper(): string | null {
-    try {
-        return parseQuery(exec("awww query"))
-    } catch {
-        execAsync("awww-daemon").catch(() => {})
-        log.debug("awww daemon not running, starting...")
-    }
-    return null
-}
-
 // Picks up changes made elsewhere (kiwi-settings, a terminal).
 export function refreshWallpaper() {
     execAsync("awww query")
@@ -50,35 +40,31 @@ export function refreshWallpaper() {
         .catch(() => {})
 }
 
-let retryInterval: number | null = null
+// At startup awww's daemon may not be up yet, or not running at all: it is
+// started once, and asked again every 2s for a little while. Capped, so
+// without awww installed nothing keeps trying for the life of the shell.
+const ATTEMPTS = 15
 
-function setupWallpaperPolling() {
-    const path = queryWallpaper()
-    if (path) {
-        storeWallpaperPath(path)
-        return
-    }
-
-    log.debug("Starting wallpaper polling...")
-    // capped: without awww installed this would otherwise spawn two
-    // processes every 2s for the lifetime of the shell
-    let attempts = 0
-    retryInterval = setInterval(() => {
-        const path = queryWallpaper()
-        if (path) {
-            log.debug("Successfully connected to awww daemon")
-            storeWallpaperPath(path)
-        } else if (++attempts < 15) {
-            return
-        } else {
-            log.debug("Giving up on awww daemon")
-        }
-        clearInterval(retryInterval!)
-        retryInterval = null
-    }, 2000) as unknown as number
+function findWallpaper(attempt = 0) {
+    execAsync("awww query")
+        .then(output => {
+            const path = parseQuery(output)
+            if (path) storeWallpaperPath(path)
+        })
+        .catch(() => {
+            if (attempt === 0) {
+                log.debug("awww daemon not running, starting it")
+                execAsync("awww-daemon").catch(() => log.debug("awww-daemon could not be started"))
+            }
+            if (attempt + 1 >= ATTEMPTS) return log.debug("giving up on the awww daemon")
+            GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
+                findWallpaper(attempt + 1)
+                return GLib.SOURCE_REMOVE
+            })
+        })
 }
 
-setupWallpaperPolling()
+findWallpaper()
 
 export function setWallpaper(path: string) {
     if (conf().auto_color) {

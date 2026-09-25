@@ -50,6 +50,10 @@ function patchDesktopFile(path: string): void {
     }
 }
 
+// one patch per file for a burst of changes: writing a file is several
+// events, the patch's own write among them
+const pending = new Map<string, number>()
+
 function handleFileEvent(
     _monitor: Gio.FileMonitor,
     file: Gio.File,
@@ -64,11 +68,17 @@ function handleFileEvent(
     const path = file.get_path()
     if (!path?.endsWith(".desktop")) return
 
-    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+    const earlier = pending.get(path)
+    if (earlier !== undefined) GLib.source_remove(earlier)
+    pending.set(path, GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+        pending.delete(path)
         patchDesktopFile(path)
         return GLib.SOURCE_REMOVE
-    })
+    }))
 }
+
+// stops when collected, so it is kept for as long as kiwi runs
+let monitor: Gio.FileMonitor | null = null
 
 export default function steamDesktopPatcher(): void {
     const dir = Gio.File.new_for_path(APPLICATIONS_DIR)
@@ -90,9 +100,8 @@ export default function steamDesktopPatcher(): void {
         log.warn("[SteamPatcher] Could not enumerate applications dir:", e)
     }
 
-    const monitor = dir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
+    monitor = dir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
     monitor.connect("changed", handleFileEvent)
-    ;(globalThis as any).__steamDesktopMonitor = monitor
 
     log.debug("[SteamPatcher] Watching", APPLICATIONS_DIR)
 }

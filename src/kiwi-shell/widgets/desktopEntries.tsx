@@ -98,6 +98,22 @@ export function buildClassMap() {
     setMapVersion(v => v + 1)
 }
 
+// One rebuild for a burst of changes: writing a file is several events, and a
+// rebuild of the system (/run/current-system) hundreds, each of which would
+// otherwise rebuild the map and have every dock icon re-sort its windows.
+let rebuildId: number | null = null
+function rebuildSoon() {
+    if (rebuildId !== null) GLib.source_remove(rebuildId)
+    rebuildId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+        rebuildId = null
+        buildClassMap()
+        return GLib.SOURCE_REMOVE
+    })
+}
+
+// the monitors stop when collected, so they are kept for as long as kiwi runs
+const monitors: Gio.FileMonitor[] = []
+
 function watchDir(path: string) {
     const dir = Gio.File.new_for_path(path)
     if (!dir.query_exists(null)) {
@@ -113,14 +129,9 @@ function watchDir(path: string) {
             eventType !== Gio.FileMonitorEvent.DELETED
         ) return
         log.debug(`[ClassMap] Detected change in ${path}, rebuilding...`)
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
-            buildClassMap()
-            return GLib.SOURCE_REMOVE
-        })
+        rebuildSoon()
     })
-
-    ;(globalThis as any).__classMapMonitors ??= []
-    ;(globalThis as any).__classMapMonitors.push(monitor)
+    monitors.push(monitor)
 
     log.debug(`[ClassMap] Watching ${path}`)
 }
