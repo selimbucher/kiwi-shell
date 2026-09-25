@@ -31,6 +31,7 @@
 // so the dock stays on top and the window disappears into it.
 
 #include "kiwi.hpp"
+#include "requests.hpp"
 
 #include <plugins/PluginAPI.hpp>
 #include <desktop/Workspace.hpp>
@@ -56,6 +57,10 @@
 #include <vector>
 
 namespace {
+    using Kiwi::layerOn;
+    using Kiwi::parse;
+    using Kiwi::split;
+    using Kiwi::windowFrom;
     using Render::GL::g_pHyprOpenGL;
     using Desktop::View::CWindow;
     using Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE;
@@ -327,57 +332,6 @@ void main() {
         CHyprSignalListener       m_stageListener;
         CHyprSignalListener       m_preListener;
         CHyprSignalListener       m_moveListener;
-
-        template <typename T>
-        static bool parse(std::string_view text, T& out, int base = 10) {
-            const auto END    = text.data() + text.size();
-            const auto RESULT = [&] {
-                if constexpr (std::is_integral_v<T>)
-                    return std::from_chars(text.data(), END, out, base);
-                else
-                    return std::from_chars(text.data(), END, out);
-            }();
-            return RESULT.ec == std::errc{} && RESULT.ptr == END;
-        }
-
-        static std::vector<std::string_view> split(std::string_view text, char by) {
-            std::vector<std::string_view> parts;
-            while (!text.empty()) {
-                const auto AT = text.find(by);
-                if (AT == std::string_view::npos) {
-                    parts.emplace_back(text);
-                    break;
-                }
-                if (AT > 0)
-                    parts.emplace_back(text.substr(0, AT));
-                text.remove_prefix(AT + 1);
-            }
-            return parts;
-        }
-
-        static PHLWINDOW windowFrom(std::string_view address) {
-            uintptr_t handle = 0;
-            if (address.starts_with("0x"))
-                address.remove_prefix(2);
-            if (!parse(address, handle, 16))
-                return nullptr;
-            for (const auto& window : Desktop::windowState()->windows()) {
-                if (reinterpret_cast<uintptr_t>(window.get()) == handle)
-                    return window;
-            }
-            return nullptr;
-        }
-
-        static PHLLS layerOn(const PHLMONITOR& monitor, std::string_view name) {
-            for (const auto& level : monitor->m_layerSurfaceLayers) {
-                for (const auto& layer : level) {
-                    const auto LAYER = layer.lock();
-                    if (LAYER && LAYER->m_layerSurface && LAYER->m_namespace == name && LAYER->m_mapped)
-                        return LAYER;
-                }
-            }
-            return nullptr;
-        }
 
         static CBox onMonitor(const PHLMONITOR& monitor, CBox box) {
             return box.translate(-monitor->m_position).scale(monitor->m_scale).round();

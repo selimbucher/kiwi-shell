@@ -48,6 +48,7 @@
 // soon as its tile is gone.
 
 #include "kiwi.hpp"
+#include "requests.hpp"
 
 #include <plugins/PluginAPI.hpp>
 #include <desktop/state/WindowState.hpp>
@@ -72,6 +73,9 @@
 #include <vector>
 
 namespace {
+    using Kiwi::parse;
+    using Kiwi::split;
+    using Kiwi::windowFrom;
     using Render::GL::g_pHyprOpenGL;
     using Desktop::View::CWindow;
     using Desktop::View::IGeometric;
@@ -268,49 +272,7 @@ namespace {
         CHyprSignalListener                m_preListener;
         CHyprSignalListener                m_openedListener;
 
-        static std::vector<std::string_view> split(std::string_view text, char by) {
-            std::vector<std::string_view> parts;
-            while (!text.empty()) {
-                const auto AT = text.find(by);
-                if (AT == std::string_view::npos) {
-                    parts.emplace_back(text);
-                    break;
-                }
-                if (AT > 0)
-                    parts.emplace_back(text.substr(0, AT));
-                text.remove_prefix(AT + 1);
-            }
-            return parts;
-        }
-
-        // from_chars takes a base for integers and a format for floats
-        template <typename T>
-        static bool parse(std::string_view text, T& out, int base = 10) {
-            const auto END    = text.data() + text.size();
-            const auto RESULT = [&] {
-                if constexpr (std::is_integral_v<T>)
-                    return std::from_chars(text.data(), END, out, base);
-                else
-                    return std::from_chars(text.data(), END, out);
-            }();
-            return RESULT.ec == std::errc{} && RESULT.ptr == END;
-        }
-
-        static PHLWINDOW windowFrom(std::string_view address) {
-            uintptr_t handle = 0;
-            if (address.starts_with("0x"))
-                address.remove_prefix(2);
-            if (!parse(address, handle, 16))
-                return nullptr;
-
-            for (const auto& window : Desktop::windowState()->windows()) {
-                if (reinterpret_cast<uintptr_t>(window.get()) == handle)
-                    return window;
-            }
-            return nullptr;
-        }
-
-        // "kiwi-previews <namespace> <rounding> <address>,<x>,<y>,<w>,<h> ..."
+        // "kiwi-previews <namespace> <rounding> [live|still] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>] ..."
         // or "kiwi-previews clear"
         std::string take(std::string_view request) {
             request.remove_prefix(std::string_view{"kiwi-previews"}.size());
@@ -437,16 +399,7 @@ namespace {
 
         // the surface the shell's tile coordinates are relative to
         PHLLS layerOn(const PHLMONITOR& monitor) const {
-            if (!monitor)
-                return nullptr;
-            for (const auto& level : monitor->m_layerSurfaceLayers) {
-                for (const auto& layer : level) {
-                    const auto LAYER = layer.lock();
-                    if (LAYER && LAYER->m_layerSurface && LAYER->m_namespace == m_namespace && LAYER->m_mapped)
-                        return LAYER;
-                }
-            }
-            return nullptr;
+            return Kiwi::layerOn(monitor, m_namespace);
         }
 
         std::vector<SDrawTile> tilesOn(const PHLMONITOR& monitor) const {

@@ -6,6 +6,7 @@
 //   geometry.cpp  announces window moves and resizes on the event socket
 //   previews.cpp  draws the switchers' tiles from the windows themselves
 //   genie.cpp     pours a window into its dock icon and back out of it
+//   requests.hpp  reading the shell's requests, shared by the parts
 //
 // They are one plugin because one is one thing to build, to enable and to
 // build again after a Hyprland update — which every plugin needs, being
