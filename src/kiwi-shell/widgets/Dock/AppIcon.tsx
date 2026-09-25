@@ -133,6 +133,13 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
         scheduleClose()
     })
     previews.add_controller(previewsMotion)
+    // The flyout hangs off the icon, so GTK counts the pointer over it as over
+    // the icon. A preview clicked sends the pointer to its window and the
+    // flyout goes away under it: GTK never sees the pointer leave the icon,
+    // which would stay lifted as if hovered until the pointer next crossed it.
+    previews.connect("closed", () => {
+        if (iconWidget && !pointerInKeepRegion(true)) iconWidget.unset_state_flags(Gtk.StateFlags.PRELIGHT)
+    })
 
     return (
         <box class="app-icon-container">
