@@ -1,7 +1,6 @@
 import { Gtk } from "ags/gtk4"
 import { createState, createBinding, createComputed } from "ags"
 import AstalBattery from "gi://AstalBattery"
-import Network from "gi://AstalNetwork"
 
 import { CircularProgress } from "../../Misc"
 
@@ -25,9 +24,10 @@ import {
   stopBluetoothDiscovery,
 } from "./tabs/BluetoothTab"
 import { notify } from "../../../notify"
+import { network } from "../../services/network"
 
-const network = Network.get_default()
-const wifi = network.wifi
+// present when the machine has Wi-Fi at all
+const wifi = network.get().wifi
 
 // .adapter is null when no bluetooth controller is present
 const bluetooth: AstalBluetooth.Adapter | undefined =

@@ -12,16 +12,16 @@ import Workspaces from "./Workspaces"
 import PowerMenu from "./PowerMenu"
 import Tray, { hasTrayItems } from "./Tray"
 import { conf } from "../config"
+import { network, wifiProperty } from "../services/network"
 import { Icon, iconTheme, wifiIcon } from "../iconNames"
 import { themeClasses, LAYER } from "../services/theme"
 import { minuteNow } from "../services/minuteClock"
 
 const battery = Battery.get_default()
-const network = Network.get_default()
-const wifi = network.wifi
-const wiredBinding = createBinding(network, "wired")
-const wifiStateBinding = createBinding(wifi, "state")
-const activeAPBinding = createBinding(wifi, "activeAccessPoint")
+// the current Network, not the first one (services/network.ts)
+const wiredBinding = network.as(n => n.wired)
+const wifiStateBinding = wifiProperty("state", Network.DeviceState.UNAVAILABLE)
+const activeAPBinding = wifiProperty<Network.AccessPoint | null>("activeAccessPoint", null)
 
 const hasBattery = battery.get_is_present()
 
@@ -143,7 +143,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
             <menubutton class="toggle-powermenu">
                 <box class="icons">
                     <PreferencesIcon />
-                    {wifi && <NetworkIcon />}
+                    {network.get().wifi && <NetworkIcon />}
                     <BatteryIcon />
                 </box>
                 <SystemMenu />

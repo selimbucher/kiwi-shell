@@ -7,33 +7,21 @@ import { openWifiPrompt } from "../../../prompts"
 import { ContextMenu } from "../../../ContextMenu"
 import { wifiIcon } from "../../../iconNames"
 import { logger } from "../../../../log"
+import { network, wifiProperty, currentWifi } from "../../../services/network"
 const log = logger("network")
 
-const network = Network.get_default()
-const wifi = network.wifi
-
-// A machine can have no Wi-Fi device at all, in which case network.wifi is null.
-// Everything at module scope therefore has to tolerate it: this runs at *import*
-// time, long before the `{wifi && <NetworkTab/>}` guard at the render site.
-const wifiEnabledRaw = wifi ? createBinding(wifi, "enabled") : null
-const scanningRaw = wifi ? createBinding(wifi, "scanning") : null
-const stateRaw = wifi ? createBinding(wifi, "state") : null
+// The current Wi-Fi device, followed across NetworkManager restarts
+// (services/network.ts). A machine can have none at all, so everything here
+// tolerates its absence.
+const wifiEnabledRaw = wifiProperty("enabled", false)
+const scanningBinding = wifiProperty("scanning", false)
+const stateBinding = wifiProperty("state", Network.DeviceState.UNKNOWN)
 
 const [frozen, setFrozen] = createState(false)
-const [frozenValue, setFrozenValue] = createState(wifi?.enabled ?? false)
+const [frozenValue, setFrozenValue] = createState(currentWifi()?.enabled ?? false)
 
-const wifiEnabledBinding = createComputed((get) => {
-  if (get(frozen)) return get(frozenValue)
-  if (!wifiEnabledRaw) return false
-  return get(wifiEnabledRaw)
-})
-
-const scanningBinding = createComputed((get) =>
-  scanningRaw ? get(scanningRaw) : false,
-)
-
-const stateBinding = createComputed((get) =>
-  stateRaw ? get(stateRaw) : Network.DeviceState.UNKNOWN,
+const wifiEnabledBinding = createComputed((get) =>
+  get(frozen) ? get(frozenValue) : get(wifiEnabledRaw),
 )
 
 // NetworkManager reports PREPARE/CONFIG/IP_CONFIG on the *device*, not per
@@ -43,11 +31,13 @@ const stateBinding = createComputed((get) =>
 const [connectingSsid, setConnectingSsid] = createState("")
 
 export function rescanWifi() {
-  wifi?.scan()
+  currentWifi()?.scan()
 }
 
 export default function NetworkTab({ visible }) {
   const accessPointsBinding = createComputed((get) => {
+    const wifi = get(network).wifi
+    if (!wifi) return []
     const aps = get(createBinding(wifi, "accessPoints"))
     const activeAP = get(createBinding(wifi, "activeAccessPoint"))
 
@@ -96,7 +86,7 @@ export default function NetworkTab({ visible }) {
           class="refresh-button"
           visible={wifiEnabledBinding}
           onClicked={() => {
-            wifi?.scan()
+            currentWifi()?.scan()
             setRotation(rotation.get() + 180)
           }}
           css={rotation((r) => `transform: rotate(${r}deg);`)}
@@ -119,7 +109,8 @@ export default function NetworkTab({ visible }) {
         <switch
           active={wifiEnabledBinding}
           onStateSet={(self, state) => {
-            wifi.enabled = state
+            const wifi = currentWifi()
+            if (wifi) wifi.enabled = state
             setFrozenValue(state)
             setFrozen(true)
             setTimeout(() => setFrozen(false), 2000)
@@ -151,7 +142,8 @@ function AccessPoint(ap) {
   })
 
   const isActiveBinding = createComputed((get) => {
-    const activeAP = get(createBinding(wifi, "activeAccessPoint"))
+    const wifi = get(network).wifi
+    const activeAP = wifi ? get(createBinding(wifi, "activeAccessPoint")) : null
     const state = get(stateBinding)
     return activeAP?.ssid === ap.ssid && state === Network.DeviceState.ACTIVATED
   })
@@ -208,7 +200,8 @@ function AccessPoint(ap) {
             const strength = get(createBinding(ap, "strength"))
             const isActive = get(isActiveBinding)
             if (!isActive) return wifiIcon(strength)
-            const wiredState = network.wired ? get(createBinding(network.wired, "state")) : 0
+            const wired = get(network).wired
+            const wiredState = wired ? get(createBinding(wired, "state")) : 0
             return networkIcon(wiredState, strength)
           })}
         />
