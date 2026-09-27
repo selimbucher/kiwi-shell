@@ -20,6 +20,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
 
     // The shell can do without any part, so one that won't start is not
     // worth refusing the others over; it says in its own log what is missing.
+    // the previews and the genie are drawn right after the shell's layers
+    Kiwi::Layers::init(handle);
     const bool GEOMETRY = Kiwi::Geometry::init(handle);
     const bool PREVIEWS = Kiwi::Previews::init(handle);
     const bool GENIE    = Kiwi::Genie::init(handle);
@@ -47,5 +49,6 @@ APICALL EXPORT void pluginExit() {
     Kiwi::Genie::exit();
     Kiwi::Previews::exit();
     Kiwi::Geometry::exit();
+    Kiwi::Layers::exit();
     g_versionCommand.reset();
 }

@@ -27,8 +27,10 @@
 // is no icon to go to: the window just goes, or just appears. So does one the
 // shell doesn't answer for in time.
 //
-// The picture is drawn after the windows and before the layers above them,
-// so the dock stays on top and the window disappears into it.
+// The picture is drawn over the icon's surface, as a Mac draws it over the
+// Dock: the window visibly lands in its icon rather than slipping behind the
+// dock. A dock kept hidden has its icon below the screen, and the window
+// pours out through the bottom edge into it.
 
 #include "kiwi.hpp"
 #include "requests.hpp"
@@ -160,6 +162,8 @@ void main() {
         SP<Render::IFramebuffer>       snapshot; // a restored window is pictured in the frame after its move
         CBox                           from;     // the window, where it is on screen
         std::optional<CBox>            icon;     // until the shell says, the picture holds still
+        std::string                    layer;    // the surface the icon is in, drawn under the picture
+        bool                           drawn = false; // this frame
         Time::steady_tp                since;    // held since, then running since
     };
 
@@ -297,13 +301,26 @@ void main() {
             m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) {
                 m_rendering = monitor;
                 pictureRestored(monitor);
+                for (auto& genie : m_genies)
+                    genie.drawn = false;
             });
+            // A picture waiting for its icon is where its window was, among
+            // the windows. One on its way is drawn over the icon's surface,
+            // as a Mac draws it over the Dock, so it visibly lands in the
+            // icon rather than behind it; should that surface not be drawn
+            // this frame (a dock slid away), at the end of the frame.
             m_stageListener = Event::bus()->m_events.render.stage.listen([this](eRenderStage stage) {
                 if (stage == RENDER_POST_WINDOWS)
-                    render();
+                    render([](const SGenie& genie) { return !genie.icon; });
+                else if (stage == RENDER_LAST_MOMENT)
+                    render([](const SGenie& genie) { return genie.icon && !genie.drawn; });
                 // damage from here on is the next frame's
                 else if (stage == RENDER_POST)
                     advance(m_rendering.lock());
+            });
+            Kiwi::Layers::afterLayer([this](const PHLLS& layer, const PHLMONITOR&, bool popups) {
+                if (!popups)
+                    render([&layer](const SGenie& genie) { return genie.icon && !genie.drawn && genie.layer == layer->m_namespace; });
             });
             m_moveListener = Event::bus()->m_events.window.moveToWorkspace.listen([this](PHLWINDOW window, PHLWORKSPACE workspace) { moved(window, workspace); });
             return true;
@@ -388,6 +405,7 @@ void main() {
                 return "no such layer on the window's monitor";
             }
 
+            genie->layer = std::string{WORDS[1]};
             genie->icon  = onMonitor(MONITOR, CBox{icon[0], icon[1], icon[2], icon[3]}.translate(LAYER->m_geometry.pos()));
             genie->since = Time::steadyNow();
             damage(*genie);
@@ -529,14 +547,17 @@ void main() {
             return true;
         }
 
-        void render() {
+        template <typename F>
+        void render(F&& now) {
             const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
             if (m_genies.empty() || !MONITOR || !ensureShader())
                 return;
-            for (const auto& genie : m_genies) {
+            for (auto& genie : m_genies) {
                 // a restored window waiting for its icon stays hidden
-                if (genie.monitor == MONITOR && genie.snapshot && (genie.icon || !genie.restore))
-                    g_pHyprRenderer->m_renderPass.add(makeUnique<CGeniePassElement>(m_shader, m_uniforms, genie));
+                if (genie.monitor != MONITOR || !genie.snapshot || (!genie.icon && genie.restore) || !now(genie))
+                    continue;
+                genie.drawn = true;
+                g_pHyprRenderer->m_renderPass.add(makeUnique<CGeniePassElement>(m_shader, m_uniforms, genie));
             }
         }
 

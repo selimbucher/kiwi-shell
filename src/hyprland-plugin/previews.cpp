@@ -421,12 +421,6 @@ namespace {
         }
     };
 
-    constexpr auto RENDER_LAYER =
-        "Render::IHyprRenderer::renderLayer(Hyprutils::Memory::CSharedPointer<Desktop::View::CLayerSurface>, Hyprutils::Memory::CSharedPointer<Monitor::CMonitor>, "
-        "std::chrono::time_point<std::chrono::_V2::steady_clock, std::chrono::duration<long, std::ratio<1l, 1000000000l> > > const&, bool, bool)";
-    CFunctionHook* g_renderLayerHook = nullptr;
-    void           hkRenderLayer(Render::IHyprRenderer* self, PHLLS layer, PHLMONITOR monitor, const Time::steady_tp& time, bool popups, bool lockscreen);
-
     class CKiwiPreviews {
       public:
         bool init(HANDLE handle) {
@@ -441,18 +435,10 @@ namespace {
             if (!m_command)
                 return false;
 
-            // Right over the shell's surface: drawn just after its layer is,
-            // so whatever is above it — another layer, the lock screen, the
-            // cursor — stays above the pictures too. Hyprland has no signal
-            // there, so the layer's render is hooked.
-            for (const auto& fn : HyprlandAPI::findFunctionsByName(handle, "renderLayer")) {
-                if (fn.demangled != RENDER_LAYER)
-                    continue;
-                g_renderLayerHook = HyprlandAPI::createFunctionHook(handle, fn.address, reinterpret_cast<void*>(&hkRenderLayer));
-                break;
-            }
-            if (!g_renderLayerHook || !g_renderLayerHook->hook())
+            // right over the shell's surface (layers.cpp)
+            if (!Kiwi::Layers::available())
                 return false;
+            Kiwi::Layers::afterLayer([this](const PHLLS& layer, const PHLMONITOR& monitor, bool popups) { afterLayer(layer, monitor, popups); });
             // damage and frame callbacks belong outside the render itself
             m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) {
                 for (auto& [_, set] : m_sets)
@@ -466,7 +452,6 @@ namespace {
         }
 
         void exit() {
-            // Hyprland removes the hook itself, after this has returned
             m_preListener.reset();
             m_openedListener.reset();
             m_command.reset();
@@ -573,12 +558,6 @@ namespace {
 
     UP<CKiwiPreviews> g_kiwiPreviews;
 
-    void hkRenderLayer(Render::IHyprRenderer* self, PHLLS layer, PHLMONITOR monitor, const Time::steady_tp& time, bool popups, bool lockscreen) {
-        using FRenderLayer = void (*)(Render::IHyprRenderer*, PHLLS, PHLMONITOR, const Time::steady_tp&, bool, bool);
-        reinterpret_cast<FRenderLayer>(g_renderLayerHook->m_original)(self, layer, monitor, time, popups, lockscreen);
-        if (!lockscreen && g_kiwiPreviews)
-            g_kiwiPreviews->afterLayer(layer, monitor, popups);
-    }
 }
 
 namespace Kiwi::Previews {
