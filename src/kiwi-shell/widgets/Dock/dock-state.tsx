@@ -5,7 +5,7 @@ import { readFile, writeFileAsync } from "ags/file"
 import { conf } from "../config"
 import GLib from "gi://GLib"
 import Hyprland from "gi://AstalHyprland"
-import { mapVersion } from "../desktopEntries"
+import { mapVersion, canonicalEntry } from "../desktopEntries"
 import { entryForClient } from "../appIcon"
 import { clientSelector, focusWindow, genieTo, genieWatch, moveWindowToWorkspace, pluginsReady, raiseWindow, toggleSpecialWorkspace } from "../../hypr"
 import { LAYER } from "../services/theme"
@@ -189,11 +189,15 @@ function surfaceRect(icon: Gtk.Widget) {
     const slide = bar && parent ? bar.get_allocation().y - (parent.get_height() - bar.get_height()) : 0
 
     const staysHidden = !(dockShowing.get(root)?.() ?? true)
+    // The window is drawn under the dock, so what shows of it ends at the
+    // pill: aimed at the whole icon it drains away behind the pill and
+    // seems to sink below the icon. Aimed at the icon's upper half, it
+    // closes up where the icon is.
     return {
         x: bounds.get_x() + dx,
         y: bounds.get_y() + dy - (staysHidden ? 0 : Math.max(slide, 0)),
         width: bounds.get_width(),
-        height: bounds.get_height(),
+        height: staysHidden ? bounds.get_height() : Math.round(bounds.get_height() / 2),
     }
 }
 
@@ -258,7 +262,7 @@ hyprland.connect("notify::focused-client", () => {
 export const unpinnedList = createComputed(get => {
     get(mapVersion) // reactive dependency — re-runs when maps rebuild
     const clients = get(clientsBinding)
-    const pinned = new Set(get(list))
+    const pinned = new Set(get(list).map(canonicalEntry))
 
     const seen = new Set<string>()
     return clients.reduce((acc, client) => {

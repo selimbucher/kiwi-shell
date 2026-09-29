@@ -39,7 +39,30 @@ function execName(appInfo: GioUnix.DesktopAppInfo): string | null {
     return GENERIC_EXECUTABLES.has(base) ? null : base
 }
 
+/**
+ * The launcher an app's windows are matched to, for a launcher of that app.
+ * Some apps install two: Brave has brave-browser.desktop and a hidden alias,
+ * com.brave.Browser.desktop, with the same window class. Windows go to the
+ * first; a pin of the other must count as the same app, or the dock shows
+ * the app twice.
+ */
+// asked for every window each time the dock sorts them, so cached until the
+// launchers change
+const canonical = new Map<string, string>()
+
+export function canonicalEntry(id: string): string {
+    let found = canonical.get(id)
+    if (found === undefined) {
+        const wmClass = GioUnix.DesktopAppInfo.new(id)?.get_startup_wm_class()?.toLowerCase()
+        const stem = id.replace(/\.desktop$/, "").toLowerCase()
+        found = (wmClass && classToEntry.get(wmClass)) || classToEntry.get(stem) || id
+        canonical.set(id, found)
+    }
+    return found
+}
+
 export function buildClassMap() {
+    canonical.clear()
     classToEntry.clear()
     entryToClass.clear()
     execToEntry.clear()

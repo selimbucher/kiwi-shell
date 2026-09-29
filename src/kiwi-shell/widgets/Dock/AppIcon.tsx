@@ -4,7 +4,7 @@ import Pango from "gi://Pango"
 import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient, registerDockIcon, clientsBinding as windowsBinding } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
-import { mapVersion } from "../desktopEntries"
+import { mapVersion, canonicalEntry } from "../desktopEntries"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { closeWindow, clientSelector } from "../../hypr"
@@ -32,7 +32,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
         get(mapVersion) // reactive dependency — re-runs when maps rebuild
         const allClients = get(windowsBinding)
         return allClients.filter(client =>
-            isValidClient(client) && entryForClient(client) === entry)
+            isValidClient(client) && entryForClient(client) === canonicalEntry(entry))
     })
 
     // Past a handful the dots stop reading as a count and start reading as a
@@ -177,7 +177,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                 }}
                 $={(self) => {
                     iconWidget = self
-                    const unregister = registerDockIcon(entry, self)
+                    const unregister = registerDockIcon(canonicalEntry(entry), self)
                     // an icon removed mid-hover must not open or close
                     // the picker of an icon that's gone
                     self.connect("destroy", () => {
