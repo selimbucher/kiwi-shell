@@ -533,7 +533,10 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             $={(self) => {
                 selfRef = self
                 onCleanup(() => destroyWindow(self))
-                onCleanup(registerDockShowing(self, () => showDock()))
+                onCleanup(registerDockShowing(self, fresh => {
+                    if (fresh) measureCover()
+                    return showDock()
+                }))
                 // This runs once the window is already on screen, so what
                 // follows its map has to run now as well as on any later map.
                 const whenMapped = (fn: () => void) => {

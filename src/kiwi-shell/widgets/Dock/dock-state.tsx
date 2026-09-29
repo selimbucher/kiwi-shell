@@ -140,11 +140,13 @@ export function minimizeClient(client: Hyprland.Client) {
 // every dock has its own, one per monitor
 const dockIcons = new Map<string, Set<Gtk.Widget>>()
 
-// whether each dock (by its window) is up, or about to come up
-const dockShowing = new WeakMap<Gtk.Widget, () => boolean>()
+// whether each dock (by its window) is up, or about to come up; `fresh` asks
+// it to look again at what covers it first, rather than wait for the events
+// that would tell it
+const dockShowing = new WeakMap<Gtk.Widget, (fresh: boolean) => boolean>()
 
 /** How a dock tells the genie whether it is up. Returns the unregister. */
-export function registerDockShowing(dock: Gtk.Widget, showing: () => boolean) {
+export function registerDockShowing(dock: Gtk.Widget, showing: (fresh: boolean) => boolean) {
     dockShowing.set(dock, showing)
     return () => { dockShowing.delete(dock) }
 }
@@ -175,8 +177,12 @@ function iconFor(client: Hyprland.Client) {
 // the bar sits below where it rests, at the bottom of its container. A dock
 // that stays hidden (another window still covers it) is aimed at its icon
 // where it is, slid below the screen: the window pours out through the
-// bottom edge, into the dock out of sight, as on a Mac.
-function surfaceRect(icon: Gtk.Widget) {
+// bottom edge, into the dock out of sight, as on a Mac. A window minimized off
+// the dock uncovers it, and the dock comes up as the window goes, so for a
+// minimize the dock looks again at what covers it before saying whether it
+// will be up: the window has left by the time the plugin asks, but the events
+// that tell the dock may not have arrived.
+function surfaceRect(icon: Gtk.Widget, minimizing: boolean) {
     const root = icon.get_root() as (Gtk.Widget & Gtk.Native) | null
     if (!root || !icon.get_mapped()) return null
     const [ok, bounds] = icon.compute_bounds(root)
@@ -188,7 +194,7 @@ function surfaceRect(icon: Gtk.Widget) {
     const parent = bar?.get_parent()
     const slide = bar && parent ? bar.get_allocation().y - (parent.get_height() - bar.get_height()) : 0
 
-    const staysHidden = !(dockShowing.get(root)?.() ?? true)
+    const staysHidden = !(dockShowing.get(root)?.(minimizing) ?? true)
     // The window is drawn under the dock, so what shows of it ends at the
     // pill: aimed at the whole icon it drains away behind the pill and
     // seems to sink below the icon. Aimed at the icon's upper half, it
@@ -204,11 +210,11 @@ function surfaceRect(icon: Gtk.Widget) {
 
 hyprland.connect("event", (_h: unknown, event: string, args: string) => {
     if (event !== "kiwigenie") return
-    const address = args.split(",")[1] ?? ""
+    const [kind, address = ""] = args.split(",")
     const client = hyprland.get_client(address)
     // no dock, nothing to pour into: the window just goes, or just appears
     const icon = client && conf().dock !== "disabled" ? iconFor(client) : undefined
-    const rect = icon ? surfaceRect(icon) : null
+    const rect = icon ? surfaceRect(icon, kind === "minimize") : null
     genieTo(address, rect ? { namespace: LAYER.dock, icon: rect } : null)
 })
 

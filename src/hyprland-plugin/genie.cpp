@@ -75,6 +75,9 @@ namespace {
     // bend in towards it, then the top follows it down the funnel.
     constexpr float BEND_END   = 0.45F;
     constexpr float FALL_START = 0.2F;
+    // the last of it fades as it goes into the icon, so it doesn't end on a
+    // hard edge
+    constexpr float FADE_START = 0.8F;
 
     float smooth(float t) {
         t = std::clamp(t, 0.F, 1.F);
@@ -84,7 +87,7 @@ namespace {
     // where the shape is at a moment, from 0, the window as it is, to 1, gone
     // into the icon; positions are in the monitor's pixels, from its top-left
     struct SShape {
-        float bend = 0, top = 0, bottom = 0;
+        float bend = 0, top = 0, bottom = 0, alpha = 1;
     };
 
     SShape shapeAt(float progress, const CBox& window, const CBox& icon) {
@@ -94,6 +97,7 @@ namespace {
             .bend   = BEND,
             .top    = static_cast<float>(window.y + (icon.y - window.y) * FALL),
             .bottom = static_cast<float>(window.y + window.h + (icon.y + icon.h - window.y - window.h) * BEND),
+            .alpha  = 1.F - smooth((progress - FADE_START) / (1.F - FADE_START)),
         };
     }
 
@@ -125,6 +129,7 @@ uniform vec2 iconSize;
 uniform float bend;
 uniform float top;
 uniform float bottom;
+uniform float alpha;
 layout(location = 0) out vec4 fragColor;
 
 float smooth01(float t) {
@@ -148,7 +153,7 @@ void main() {
     vec2 source = windowPos + uv * windowSize;
     // a pixel's worth of soft edge, so the curved sides don't stair-step
     float edge = clamp(p.x - left + 0.5, 0.0, 1.0) * clamp(right - p.x + 0.5, 0.0, 1.0);
-    fragColor  = texture(tex, source / snapshotSize) * edge;
+    fragColor  = texture(tex, source / snapshotSize) * edge * alpha;
 }
 )#";
 
@@ -190,7 +195,7 @@ void main() {
 
     // where the shader's own inputs are, looked up once it is compiled
     struct SUniforms {
-        GLint quadPos = -1, quadSize = -1, snapshotSize = -1, windowPos = -1, windowSize = -1, iconPos = -1, iconSize = -1, bend = -1, top = -1, bottom = -1;
+        GLint quadPos = -1, quadSize = -1, snapshotSize = -1, windowPos = -1, windowSize = -1, iconPos = -1, iconSize = -1, bend = -1, top = -1, bottom = -1, alpha = -1;
 
         explicit SUniforms(GLuint program = 0) {
             if (!program)
@@ -206,6 +211,7 @@ void main() {
             bend         = AT("bend");
             top          = AT("top");
             bottom       = AT("bottom");
+            alpha        = AT("alpha");
         }
     };
 
@@ -241,6 +247,7 @@ void main() {
             glUniform1f(m_uniforms.bend, m_shape.bend);
             glUniform1f(m_uniforms.top, m_shape.top);
             glUniform1f(m_uniforms.bottom, m_shape.bottom);
+            glUniform1f(m_uniforms.alpha, m_shape.alpha);
 
             glBindVertexArray(SHADER->getUniformLocation(SHADER_SHADER_VAO));
             g_pHyprRenderer->m_renderData.damage.forEachRect([](const auto& RECT) {
@@ -411,7 +418,11 @@ void main() {
             if (INTO)
                 m_inside.emplace_back(window);
 
-            // moved again mid-flight: the last move wins
+            // moved back the way it came mid-flight: it turns round where it is
+            if (turnRound(window, workspace, INTO))
+                return;
+
+            // moved again mid-flight some other way: the last move wins
             if (auto* genie = genieOf(window)) {
                 show(*genie);
                 std::erase_if(m_genies, [&](const SGenie& other) { return other.window == window; });
@@ -449,6 +460,35 @@ void main() {
                 post("restore", window);
                 g_pHyprRenderer->damageMonitor(MONITOR);
             }
+        }
+
+        // A window minimized and restored again before its genie is done — or
+        // restored and minimized — runs back from where it had got to, rather
+        // than jumping to the start. The icon is the one it was going to. A
+        // window going back into the dock keeps the picture it came out as; one
+        // coming back out is pictured again where it lands (pictureRestored).
+        bool turnRound(const PHLWINDOW& window, const PHLWORKSPACE& workspace, bool into) {
+            auto* genie = genieOf(window);
+            if (!genie || !genie->icon || !genie->snapshot || genie->restore != into)
+                return false;
+            if (!into && (!workspace->isVisible() || window->m_monitor != genie->monitor))
+                return false;
+
+            const float PROGRESS = progressOf(*genie);
+            const auto  NOW      = Time::steadyNow();
+            genie->restore       = !into;
+            // progress is the time run as a share of DURATION, backwards for
+            // a restore
+            const float RUN = into ? PROGRESS : 1.F - PROGRESS;
+            genie->since    = NOW - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(DURATION) * RUN);
+
+            if (into) {
+                window->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
+                window->alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(0.F);
+            } else
+                genie->snapshot.reset();
+            damage(*genie);
+            return true;
         }
 
         // By the time Hyprland says a window moved, it is already on the
