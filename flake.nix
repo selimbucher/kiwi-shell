@@ -189,9 +189,15 @@
               mkdir -p $out/share
               cp -r src/kiwi-shell $out/share/
 
+              # the plugin, linked into the package: the bundle below is
+              # compressed, so a path in it isn't seen as a dependency, and
+              # the plugin would be garbage-collected from under the shell
+              mkdir -p $out/lib/kiwi-shell
+              ln -s ${kiwi-plugin}/lib/kiwi-shell/libkiwi.so $out/lib/kiwi-shell/libkiwi.so
+
               # Compilation
               ags bundle ${entry} $out/bin/.${pname}-core -d "SRC='$out/share/kiwi-shell'" \
-                -d "PLUGIN='${kiwi-plugin}/lib/kiwi-shell/libkiwi.so'"
+                -d "PLUGIN='$out/lib/kiwi-shell/libkiwi.so'"
 
               # Runtime Dependencies Wrapper
               wrapProgram $out/bin/.${pname}-core \

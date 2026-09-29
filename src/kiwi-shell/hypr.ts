@@ -360,11 +360,24 @@ export async function loadPlugins() {
     const known = new Set(Object.values(FEATURES).flat())
     if ([...loadedPlugins].some(name => known.has(name)))
         log.debug(`kiwi plugins already loaded: ${[...loadedPlugins].filter(name => known.has(name)).join(", ")}`)
-    else if (!path)
-        log.info("this build ships no kiwi plugin")
-    else if (await send(`plugin load ${path}`, "load the kiwi plugin")) {
-        loadedPlugins.add("kiwi")
-        log.info("kiwi plugin loaded")
+    else if (!path) {
+        log.warn("this build ships no kiwi plugin")
+        notify("Kiwi's compositor plugin isn't loaded",
+            "Previews are captured and the minimize animation is off. Install it with hyprpm, then log out and back in.",
+            { icon: "dialog-warning-symbolic" })
+    } else {
+        const reply = await request(`plugin load ${path}`).catch(e => String(e))
+        if (reply.trim() === "ok") {
+            loadedPlugins.add("kiwi")
+            log.info("kiwi plugin loaded")
+        } else {
+            // Kiwi carries on without it, but not silently: most of what
+            // the plugin does is only missed once it's gone
+            log.error(`load the kiwi plugin: ${reply.trim()}`)
+            notify("Kiwi's compositor plugin couldn't be loaded",
+                `Previews are captured and the minimize animation is off. ${reply.trim().slice(0, 200)}`,
+                { icon: "dialog-warning-symbolic" })
+        }
     }
 
     if (loadedPlugins.has("kiwi")) await checkPluginProtocol(path !== "")
