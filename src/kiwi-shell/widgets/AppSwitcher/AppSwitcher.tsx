@@ -10,7 +10,7 @@ import { themeClasses, LAYER } from "../services/theme"
 import { playSound } from "../sound"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
-import { entryForClient, AppIconImage } from "../appIcon"
+import { entryForClient, AppIconImage, iconFileForEntry } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, closeWindow, clientSelector, type BindOp } from "../../hypr"
@@ -362,12 +362,8 @@ export function WindowPreview({ client }: { client: any }) {
         <button class="window-preview" onclicked={activate}>
             <box orientation={Gtk.Orientation.VERTICAL} spacing={0}>
             <box class="preview-title-bar">
-                {/* thumbnails of same-app windows look alike, so the icon
-                    says which app at a glance; it sits here rather than on
-                    the picture, which the compositor may be drawing.
-                    maxWidthChars=1 lets the ellipsized label shrink below
+                {/* maxWidthChars=1 lets the ellipsized label shrink below
                     its natural width instead of clipping early */}
-                <AppIconImage entry={entryForClient(client)} pixelSize={16} cssClass="preview-title-icon" />
                 <label
                     class="preview-title"
                     label={titleBinding}
@@ -386,7 +382,18 @@ export function WindowPreview({ client }: { client: any }) {
                     class="window-preview-container"
                     $={(self: Gtk.Widget) => {
                         live.tiles.set(address, self)
-                        onCleanup(() => { if (live.tiles.get(address) === self) live.tiles.delete(address) })
+                        // thumbnails of same-app windows look alike: the app's
+                        // icon in the picture's corner says which app at a
+                        // glance. The compositor draws the picture, so it
+                        // draws the badge too (services/previews.ts)
+                        const badge = iconFileForEntry(entryForClient(client))
+                        if (badge) live.badges.set(address, badge)
+                        onCleanup(() => {
+                            if (live.tiles.get(address) === self) {
+                                live.tiles.delete(address)
+                                live.badges.delete(address)
+                            }
+                        })
                     }}
                     overflow={Gtk.Overflow.HIDDEN}
                     hscrollbarPolicy={Gtk.PolicyType.NEVER}

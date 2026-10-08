@@ -51,11 +51,6 @@ button.switcher-preview-close {
     }
 }
 
-// the title ends before the ✕, 3px short of it: the bar is glass in most
-// styles, so no fill laid over the text could match it
-.preview-tile:hover .preview-title-icon {
-    margin-right: 6px;
-}
 
 .preview-title {
     margin-right: 11px;
@@ -92,9 +87,6 @@ button.switcher-preview-close {
     border-color: var(--primary);
 }
 
-.preview-title-icon {
-    margin-right: 6px;
-}
 
 .preview-title {
     color: var(--k-fg-2);

@@ -143,6 +143,21 @@ export function giconForEntry(entry: string): Gio.Icon {
     return Gio.ThemedIcon.new_from_names(names)
 }
 
+/**
+ * The file behind the entry's icon at about `size` pixels (an svg or png
+ * from the icon theme, or the absolute Icon= path), for something outside
+ * GTK to draw — the compositor's preview badges. null when nothing is found.
+ */
+export function iconFileForEntry(entry: string, size = 64): string | null {
+    const display = Gdk.Display.get_default()
+    if (!display) return null
+    const theme = Gtk.IconTheme.get_for_display(display)
+    const paintable = theme.lookup_by_gicon(giconForEntry(entry), size, 1, Gtk.TextDirection.NONE, 0)
+    const path = paintable?.get_file()?.get_path() ?? null
+    if (!path) log.debug(`no icon file for entry ${entry}`)
+    return path
+}
+
 export function AppIconImage({ entry, pixelSize = 56, cssClass = "dock-app-icon" }: {
     entry: string
     pixelSize?: number | Binding<number>

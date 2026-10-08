@@ -14,7 +14,7 @@
 // back, and a client that talked to this plugin could only make windows
 // appear on the screen, which it can already see.
 //
-//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>] ...
+//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
 //     hyprctl kiwi-previews clear [<set>]
 //
 // Each part of the shell that shows previews names its own set, and sets
@@ -32,6 +32,12 @@
 // its corners rounded by <rounding>, and cut off at cx, cy, cw, ch when the
 // shell names such a rectangle — a workspace's miniature window at the edge
 // of its card, a picture whose top corners go under the title bar above it.
+// <badge> is an image file (percent-encoded: a path has spaces and commas),
+// the app's icon, drawn in the picture's bottom-right corner with a drop
+// shadow: thumbnails of same-app windows look alike, the badge says which
+// app at a glance. The shell cannot put it there itself, since the picture is
+// drawn over the shell's surface; it resolves the icon and the plugin draws
+// it. Loaded once per file and size.
 //
 // The tiles are drawn over the shell's surface, right after it (its popups
 // after those): the shell keeps nothing on top of a picture, only around it.
@@ -68,6 +74,8 @@
 #include <render/OpenGL.hpp>
 #include <render/Renderer.hpp>
 #include <render/pass/PassElement.hpp>
+#include <hyprgraphics/image/Image.hpp>
+#include <cairo/cairo.h>
 
 #include <algorithm>
 #include <format>
@@ -91,6 +99,7 @@ namespace {
         PHLWINDOWREF        window;
         CBox                rect; // logical, from the surface's top-left
         CBox                clip; // where the picture is cut off; the rect if the shell named none
+        std::string         badge; // the app icon's file, or empty
         CHyprSignalListener commit;
     };
 
@@ -99,7 +108,56 @@ namespace {
     struct SDrawTile {
         PHLWINDOWREF window;
         CBox         box, clip;
+        std::string  badge;
     };
+
+    // ─── The badge ──────────────────────────────────────────────────────────
+    // logical pixels, as the shell's CSS had them when it drew the badge itself
+    constexpr int BADGE_SIZE   = 40;
+    constexpr int BADGE_MARGIN = 8;
+    // the shadow is baked into the texture: cairo paints black through the
+    // icon's own alpha at a few offsets below it (0 1px 3px, roughly), so it
+    // follows the icon's shape as a CSS drop-shadow would. Padding around the
+    // icon holds it.
+    constexpr int BADGE_PAD = 4;
+
+    // textures by "<file>@<pixels>"; a file that failed to load stays null so
+    // it is not tried every frame
+    using BadgeTextures = std::map<std::string, SP<Render::ITexture>>;
+
+    SP<Render::ITexture> loadBadge(BadgeTextures& cache, const std::string& file, int px, double scale) {
+        const auto KEY = std::format("{}@{}", file, px);
+        if (const auto IT = cache.find(KEY); IT != cache.end())
+            return IT->second;
+
+        auto& slot = cache[KEY];
+        Hyprgraphics::CImage image(file, {(double)px, (double)px}); // the size only matters for an svg
+        // a file that will not load leaves the tile without a badge, as the
+        // rest of the plugin leaves the unexpected alone
+        if (!image.success() || !image.cairoSurface() || !image.cairoSurface()->cairo())
+            return nullptr;
+        const auto ICON = image.cairoSurface()->cairo();
+        const int  W = cairo_image_surface_get_width(ICON), H = cairo_image_surface_get_height(ICON);
+        if (W < 1 || H < 1)
+            return nullptr;
+
+        // a raster icon comes at its own size; the shadow scales with it
+        const int    PAD  = std::max(1, (int)std::round(BADGE_PAD * (double)W / (BADGE_SIZE * scale)));
+        const double STEP = PAD / 4.0;
+        const auto   OUT  = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, W + 2 * PAD, H + 2 * PAD);
+        const auto   CR   = cairo_create(OUT);
+        cairo_set_source_rgba(CR, 0, 0, 0, 0.11);
+        for (const auto& [dx, dy] : std::initializer_list<std::pair<double, double>>{{-1, 1}, {0, 1}, {1, 1}, {-1, 2}, {0, 2}, {1, 2}, {0, 3}})
+            cairo_mask_surface(CR, ICON, PAD + dx * STEP, PAD + dy * STEP);
+        cairo_set_source_surface(CR, ICON, PAD, PAD);
+        cairo_paint(CR);
+        cairo_destroy(CR);
+        cairo_surface_flush(OUT);
+
+        slot = g_pHyprRenderer->createTexture(OUT);
+        cairo_surface_destroy(OUT);
+        return slot;
+    }
 
     // the surface a set's tiles are placed on, where it is right now
     struct SAnchor {
@@ -110,7 +168,8 @@ namespace {
 
     class CPreviewPassElement : public IPassElement {
       public:
-        CPreviewPassElement(std::vector<SDrawTile>&& tiles, int rounding, float alpha) : m_tiles(std::move(tiles)), m_rounding(rounding), m_alpha(alpha) {}
+        CPreviewPassElement(std::vector<SDrawTile>&& tiles, int rounding, float alpha, BadgeTextures& badges) :
+            m_tiles(std::move(tiles)), m_rounding(rounding), m_alpha(alpha), m_badges(badges) {}
 
         std::vector<UP<IPassElement>> draw() override {
             const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
@@ -174,10 +233,26 @@ namespace {
                     },
                     nullptr);
 
+                if (!tile.badge.empty())
+                    drawBadge(tile, MONITOR->m_scale);
+
                 g_pHyprRenderer->m_renderData.clipBox = {};
             }
 
             return {};
+        }
+
+        // in the picture's bottom-right corner, still cut off by the clip
+        void drawBadge(const SDrawTile& tile, double scale) {
+            const int  PX      = std::round(BADGE_SIZE * scale);
+            const auto TEXTURE = loadBadge(m_badges, tile.badge, PX, scale);
+            if (!TEXTURE)
+                return;
+            const double PAD  = BADGE_PAD * scale;
+            const double EDGE = (BADGE_SIZE + BADGE_MARGIN) * scale;
+            CBox         box{tile.clip.x + tile.clip.w - EDGE - PAD, tile.clip.y + tile.clip.h - EDGE - PAD, PX + 2 * PAD, PX + 2 * PAD};
+            box.round();
+            g_pHyprOpenGL->renderTexture(TEXTURE, box, {.a = m_alpha, .allowDim = false});
         }
 
         bool needsLiveBlur() override {
@@ -217,16 +292,32 @@ namespace {
         std::vector<SDrawTile> m_tiles;
         int                    m_rounding = 0;
         float                  m_alpha    = 1.F;
+        BadgeTextures&         m_badges;
     };
 
     struct SCounters {
         size_t commits = 0, damages = 0, keepAlives = 0;
     };
 
+    // %XX as the shell's encodeURIComponent writes it
+    std::string unescape(std::string_view text) {
+        std::string out;
+        out.reserve(text.size());
+        for (size_t i = 0; i < text.size(); ++i) {
+            int byte = 0;
+            if (text[i] == '%' && i + 2 < text.size() && parse(text.substr(i + 1, 2), byte, 16)) {
+                out.push_back(static_cast<char>(byte));
+                i += 2;
+            } else
+                out.push_back(text[i]);
+        }
+        return out;
+    }
+
     // One part of the shell's previews: its tiles, and the surface they are on.
     class CTileSet {
       public:
-        CTileSet(SCounters& counters) : m_counters(counters) {}
+        CTileSet(SCounters& counters, BadgeTextures& badges) : m_counters(counters), m_badges(badges) {}
 
         ~CTileSet() {
             clear();
@@ -326,7 +417,7 @@ namespace {
                 if (tile.window.expired())
                     continue;
                 const auto ON_MONITOR = [&](const CBox& rect) { return rect.copy().translate(anchor->origin - monitor->m_position).scale(monitor->m_scale).round(); };
-                tiles.emplace_back(SDrawTile{.window = tile.window, .box = ON_MONITOR(tile.rect), .clip = ON_MONITOR(tile.clip)});
+                tiles.emplace_back(SDrawTile{.window = tile.window, .box = ON_MONITOR(tile.rect), .clip = ON_MONITOR(tile.clip), .badge = tile.badge});
             }
             return tiles;
         }
@@ -339,7 +430,7 @@ namespace {
             auto       tiles  = tilesOn(monitor, ANCHOR);
             if (tiles.empty())
                 return;
-            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), ANCHOR->alpha));
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), ANCHOR->alpha, m_badges));
         }
 
         // A window nobody can see is suspended and never drawn, so it would
@@ -384,6 +475,7 @@ namespace {
 
       private:
         SCounters&                          m_counters;
+        BadgeTextures&                      m_badges;
         std::vector<STile>                  m_tiles;
         // new tiles are held back until the shell's surface next commits;
         // the ones on screen stay until then
@@ -456,6 +548,7 @@ namespace {
             m_openedListener.reset();
             m_command.reset();
             m_sets.clear();
+            m_badges.clear();
         }
 
         // just after a layer, or its popups, has been added to the frame
@@ -469,6 +562,7 @@ namespace {
       private:
         std::map<std::string, UP<CTileSet>, std::less<>> m_sets;
         SCounters                                        m_counters;
+        BadgeTextures                                    m_badges;
         SP<SHyprCtlCommand>                              m_command;
         CHyprSignalListener                              m_preListener;
         CHyprSignalListener                              m_openedListener;
@@ -493,7 +587,7 @@ namespace {
                 return "ok";
             }
             if (WORDS.size() < 3)
-                return "usage: kiwi-previews <set> <namespace> <rounding> [live|still] [popup] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>] ...";
+                return "usage: kiwi-previews <set> <namespace> <rounding> [live|still] [popup] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...";
 
             int rounding = 0;
             if (!parse(WORDS[2], rounding))
@@ -514,14 +608,15 @@ namespace {
             std::vector<STile> tiles;
             for (const auto& word : WORDS | std::views::drop(first)) {
                 const auto FIELDS = split(word, ',');
-                if (FIELDS.size() != 5 && FIELDS.size() != 9)
-                    return "a tile is <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>]";
+                if (FIELDS.size() != 5 && FIELDS.size() != 9 && FIELDS.size() != 10)
+                    return "a tile is <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]]";
 
                 double numbers[8];
-                for (size_t i = 0; i + 1 < FIELDS.size(); ++i) {
+                for (size_t i = 0; i + 1 < std::min<size_t>(FIELDS.size(), 9); ++i) {
                     if (!parse(FIELDS[i + 1], numbers[i]))
                         return "a tile's rectangles must be numbers";
                 }
+                const std::string BADGE = FIELDS.size() == 10 ? unescape(FIELDS[9]) : "";
 
                 // closed, or closing, between the shell's list and this call
                 const auto WINDOW = windowFrom(FIELDS[0]);
@@ -533,7 +628,7 @@ namespace {
                 if (RECT.w < 1 || RECT.h < 1 || CLIP.w < 1 || CLIP.h < 1)
                     continue;
 
-                tiles.emplace_back(STile{.window = WINDOW, .rect = RECT, .clip = CLIP});
+                tiles.emplace_back(STile{.window = WINDOW, .rect = RECT, .clip = CLIP, .badge = BADGE});
                 // the window's own frames are what its tile follows
                 tiles.back().commit = WINDOW->wlSurface()->resource()->m_events.commit.listen([this, NAME, ref = PHLWINDOWREF{WINDOW}] {
                     ++m_counters.commits;
@@ -544,7 +639,7 @@ namespace {
 
             auto& set = m_sets[NAME];
             if (!set)
-                set = makeUnique<CTileSet>(m_counters);
+                set = makeUnique<CTileSet>(m_counters, m_badges);
             set->namespace_ = std::string{WORDS[1]};
             set->rounding   = rounding;
             set->live       = live;

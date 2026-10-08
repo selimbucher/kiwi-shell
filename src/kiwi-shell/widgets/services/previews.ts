@@ -41,6 +41,9 @@ export type Rect = {
 export type PreviewTile = Rect & {
     address: string
     clip?: Rect
+    // an image file the compositor draws in the picture's bottom-right corner:
+    // the app's icon, which the shell cannot put over a picture itself
+    badge?: string
 }
 
 // resolves whether the compositor took it: it answers errors as text too
@@ -91,7 +94,11 @@ export function showPreviews(
     const request = tiles.length === 0
         ? `kiwi-previews clear ${set}`
         : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""} `
-            + tiles.map(t => `${t.address},${numbers(t)}${t.clip ? `,${numbers(t.clip)}` : ""}`).join(" ")
+            + tiles.map(t => {
+                // a badge needs the clip in front of it; the tile's own rectangle will do
+                const clip = t.clip ?? (t.badge ? t : undefined)
+                return `${t.address},${numbers(t)}${clip ? `,${numbers(clip)}` : ""}${t.badge ? `,${encodeURIComponent(t.badge)}` : ""}`
+            }).join(" ")
     // the tiles only move when their surface is laid out again
     if (request === showing.get(set)) {
         taken?.(true)
@@ -217,6 +224,9 @@ type Options = {
  */
 export class LiveTiles {
     readonly tiles = new Map<string, Gtk.Widget>()
+    // the app icon's file per window address, for the compositor to draw in
+    // the picture's corner (previews.cpp); a switcher sets it with the tile
+    readonly badges = new Map<string, string>()
     // the surface the tiles are measured on: a window, or a popover
     window: (Gtk.Widget & Gtk.Native) | null = null
     pane: InstanceType<typeof PreviewPane> | null = null
@@ -276,9 +286,10 @@ export class LiveTiles {
             if (!rect) continue
             const clipWidget = clipOf?.(widget)
             const clip = clipWidget ? onSurface(clipWidget) ?? undefined : undefined
+            const badge = this.badges.get(address)
             tiles.push(squareTop
-                ? { address, ...rect, y: rect.y - radius, height: rect.height + radius, clip: clip ?? rect }
-                : { address, ...rect, clip })
+                ? { address, ...rect, y: rect.y - radius, height: rect.height + radius, clip: clip ?? rect, badge }
+                : { address, ...rect, clip, badge })
         }
         // a first layout can come before the tiles are on screen; showing the
         // pane on it would show them empty until the next
