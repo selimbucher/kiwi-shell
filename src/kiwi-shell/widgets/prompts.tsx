@@ -38,9 +38,17 @@ export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monito
                 // ahead of the entry, which has the focus and the key first
                 keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 keys.connect("key-pressed", (_controller, keyval: number) => {
-                    if (keyval !== Gdk.KEY_Escape) return Gdk.EVENT_PROPAGATE
-                    setShowPrompt(false)
-                    return Gdk.EVENT_STOP
+                    if (keyval === Gdk.KEY_Escape) {
+                        setShowPrompt(false)
+                        return Gdk.EVENT_STOP
+                    }
+                    // a choice prompt has no entry to take Enter: it means the primary
+                    if ((keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter) && kind() === "choice") {
+                        const primary = choice()?.choices.find(c => c.primary)
+                        if (primary) choose(primary)
+                        return Gdk.EVENT_STOP
+                    }
+                    return Gdk.EVENT_PROPAGATE
                 })
                 self.add_controller(keys)
                 onCleanup(() => destroyWindow(self))
@@ -48,12 +56,15 @@ export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monito
         >
             <box>
                 <WifiPrompt />
+                <ChoicePrompt />
             </box>
         </window>
     )
 }
 
 const [showPrompt, setShowPrompt] = createState(false)
+// which of the prompt bodies the window shows
+const [kind, setKind] = createState<"wifi" | "choice">("wifi")
 
 
 const [wifiSSID, setWifiSSID] = createState("")
@@ -64,7 +75,56 @@ export function openWifiPrompt(ssid: string, invalid = false) {
     pw.text = ""
     setpwInvalid(invalid)
     setWifiSSID(ssid)
+    setKind("wifi")
     setShowPrompt(true)
+}
+
+// A question with buttons for answers: the power menu's confirmations. One
+// choice may be primary (Enter picks it); Cancel and Escape are always there.
+export type Choice = { label: string; primary?: boolean; run: () => void }
+const [choice, setChoice] = createState<{ title: string; text: string; choices: Choice[] } | null>(null)
+
+export function openChoicePrompt(title: string, text: string, choices: Choice[]) {
+    setChoice({ title, text, choices })
+    setKind("choice")
+    setShowPrompt(true)
+}
+
+function choose(c: Choice) {
+    setShowPrompt(false)
+    c.run()
+}
+
+function ChoicePrompt() {
+    return (
+        <box
+            class="prompt-container prompt-choice"
+            visible={kind.as(k => k === "choice")}
+            valign={Gtk.Align.CENTER}
+            halign={Gtk.Align.CENTER}
+            hexpand
+            orientation={Gtk.Orientation.VERTICAL}
+        >
+            <box class="prompt-top" orientation={Gtk.Orientation.VERTICAL} hexpand>
+                <label class="prompt-header" xalign={0} label={choice.as(c => c?.title ?? "")} />
+                <label class="prompt-text" xalign={0} wrap maxWidthChars={38}
+                    label={choice.as(c => c?.text ?? "")} />
+            </box>
+            <box
+                class="prompt-actions"
+                orientation={Gtk.Orientation.HORIZONTAL}
+                halign={Gtk.Align.END}
+                spacing={8}
+            >
+                <button onClicked={() => setShowPrompt(false)}>Cancel</button>
+                <For each={choice.as(c => c?.choices ?? [])}>
+                    {(c: Choice) => (
+                        <button class={c.primary ? "primary" : ""} onClicked={() => choose(c)}>{c.label}</button>
+                    )}
+                </For>
+            </box>
+        </box>
+    )
 }
 
 function WifiPrompt() {
@@ -92,6 +152,7 @@ function WifiPrompt() {
     return (
         <box
             class="prompt-container"
+            visible={kind.as(k => k === "wifi")}
             valign={Gtk.Align.CENTER}
             halign={Gtk.Align.CENTER}
             hexpand

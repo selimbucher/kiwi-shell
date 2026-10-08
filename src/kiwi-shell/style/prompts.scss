@@ -50,6 +50,11 @@
     }
 }
 
+// no entry between text and buttons in a choice prompt
+.prompt-choice .prompt-actions {
+    margin-top: 18px;
+}
+
 .prompt-actions button {
     padding: 6px 16px;
     border-radius: 8px;
