@@ -125,6 +125,14 @@
         padding: 6px;
         border-radius: 12px;
     }
+    // while its pane waits for the compositor's tiles (services/previews.ts):
+    // nothing to see, but still a frame to commit
+    &.waiting contents {
+        background-color: rgba(0, 0, 0, 0.004);
+        background-image: none;
+        border-color: transparent;
+        box-shadow: none;
+    }
 }
 
 .dock-preview-item {

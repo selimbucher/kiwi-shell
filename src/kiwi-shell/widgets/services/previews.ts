@@ -167,13 +167,26 @@ export const PreviewPane = GObject.registerClass(
         wait() {
             if (this.waiting) return
             this.waiting = true
+            this.popover()?.add_css_class("waiting")
             this.queue_draw()
         }
 
         show() {
             if (!this.waiting) return
             this.waiting = false
+            this.popover()?.remove_css_class("waiting")
             this.queue_draw()
+        }
+
+        // A pane in a popover is framed by the popover's own contents box,
+        // which GTK draws whether or not the pane does: the dock's flyout
+        // came up as an empty box and filled in a few frames later. While
+        // the pane waits the popover is styled away too (dock.scss), down
+        // to a pixel that is nearly clear: GTK 4.20 draws a window whose
+        // snapshot is empty not at all, and the compositor is waiting for
+        // that very frame.
+        private popover(): Gtk.Widget | null {
+            return this.get_ancestor(Gtk.Popover.$gtype)
         }
 
         _init(props?: Partial<Gtk.Box.ConstructorProps>) {
@@ -223,7 +236,9 @@ type Options = {
  * shown without them.
  */
 export class LiveTiles {
-    readonly tiles = new Map<string, Gtk.Widget>()
+    // a part of the shell with one surface per monitor has a registry per
+    // surface and lends the open one's (the dock's flyout)
+    tiles = new Map<string, Gtk.Widget>()
     // the app icon's file per window address, for the compositor to draw in
     // the picture's corner (previews.cpp); a switcher sets it with the tile
     readonly badges = new Map<string, string>()
