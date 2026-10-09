@@ -21,27 +21,51 @@ function hasBluetoothAdapter(): boolean {
   }
 }
 
-let bluetooth: ReturnType<typeof AstalBluetooth.get_default> | null = null
-let adapter: AstalBluetooth.Adapter | undefined = undefined
+// bluez tears the Adapter1 object down and registers a fresh one on every
+// suspend/hibernate resume (the controller re-enumerates, firmware reloads,
+// "MGMT ver" reappears in dmesg). A cached Adapter is therefore a dead proxy
+// after the first resume: powered reads false forever, discovery/power calls go
+// nowhere, and the tab claims Bluetooth is off while the AirPods are playing.
+// Never hold the adapter — read it off the Astal singleton each time, and bind
+// to the singleton's is-powered, which Astal re-syncs as adapters come and go.
+const bluetooth = hasBluetoothAdapter() ? AstalBluetooth.get_default() : null
+if (bluetooth) registerBluetoothAgent()
 
-if (hasBluetoothAdapter()) {
-  bluetooth = AstalBluetooth.get_default()
-  adapter = bluetooth.adapter ?? undefined
-  registerBluetoothAgent()
+const liveAdapter = (): AstalBluetooth.Adapter | undefined =>
+  bluetooth?.adapter ?? undefined
+
+const [adapterState, setAdapterState] = createState(liveAdapter())
+
+function onAdapterPowered(adapter: AstalBluetooth.Adapter) {
+  if (adapter !== liveAdapter() || !adapter.powered) return
+  adapter.set_discoverable(true)
+  if (bluetoothTabOpen()) startBluetoothDiscovery()
 }
 
-adapter?.connect("notify::powered", () => {
-  if (bluetoothEnabledBinding()) {
-    adapter!.set_discoverable(true)
-    if (bluetoothTabOpen()) {
-      startBluetoothDiscovery()
-    }
-  }
-})
+function trackAdapter(adapter: AstalBluetooth.Adapter) {
+  adapter.connect("notify::powered", () => onAdapterPowered(adapter))
+}
 
-const bluetoothEnabledRaw = adapter ? createBinding(adapter, "powered") : null
-const discoveringRaw = adapter ? createBinding(adapter, "discovering") : null
+if (bluetooth) {
+  const current = liveAdapter()
+  if (current) trackAdapter(current)
+  bluetooth.connect("adapter-added", (_, adapter) => {
+    trackAdapter(adapter)
+    setAdapterState(liveAdapter())
+    // A resumed, already-powered adapter never fires notify::powered.
+    onAdapterPowered(adapter)
+  })
+  bluetooth.connect("adapter-removed", () => setAdapterState(liveAdapter()))
+}
+
+const bluetoothEnabledRaw = bluetooth ? createBinding(bluetooth, "is_powered") : null
 const devicesBinding = bluetooth ? createBinding(bluetooth, "devices") : null
+
+// discovering lives on the adapter, so it has to follow adapter replacement.
+const discoveringRaw = createComputed((get) => {
+  const adapter = get(adapterState)
+  return adapter ? get(createBinding(adapter, "discovering")) : false
+})
 
 // A device's address is stable while names resolve during discovery; keying on
 // it lets KeyedList keep existing rows untouched (For re-appends every child on
@@ -50,7 +74,7 @@ const deviceKey = (device: AstalBluetooth.Device) =>
   device.address ?? device.get_object_path?.() ?? String(device)
 
 const [btFrozen, setBtFrozen] = createState(false)
-const [btFrozenValue, setBtFrozenValue] = createState(adapter?.powered ?? false)
+const [btFrozenValue, setBtFrozenValue] = createState(bluetooth?.is_powered ?? false)
 
 const bluetoothEnabledBinding = createComputed((get) => {
   if (get(btFrozen)) return get(btFrozenValue)
@@ -104,13 +128,13 @@ const sectionCounts = createComputed((get) => {
 
 const otherEmptyLabel = createComputed((get) => {
   if (get(sectionCounts).other > 0) return ""
-  if (discoveringRaw && get(discoveringRaw)) return "Searching…"
+  if (get(discoveringRaw)) return "Searching…"
   return "No devices found"
 })
 
 export function startBluetoothDiscovery() {
   try {
-    adapter?.start_discovery()
+    liveAdapter()?.start_discovery()
   } catch (e) {
     // Already discovering, ignore
   }
@@ -118,7 +142,7 @@ export function startBluetoothDiscovery() {
 
 export function stopBluetoothDiscovery() {
   try {
-    adapter?.stop_discovery()
+    liveAdapter()?.stop_discovery()
   } catch (e) {
     // bluez throws "No discovery started" when nothing is scanning. This is
     // routine, not an error: pairDevice() stops discovery and then calls
@@ -139,11 +163,12 @@ export default function BluetoothTab({ visible }) {
         <box halign={Gtk.Align.START}>Bluetooth</box>
         <box hexpand={true} />
         <switch
-          sensitive={adapter !== undefined}
+          sensitive={adapterState((a) => a !== undefined)}
           active={bluetoothEnabledBinding}
           onStateSet={(self, state) => {
-            if (state !== adapter?.powered) {
-              adapter?.set_powered(state)
+            const adapter = liveAdapter()
+            if (adapter && state !== adapter.powered) {
+              adapter.set_powered(state)
             }
             setBtFrozen(true)
             setBtFrozenValue(state)
@@ -411,7 +436,7 @@ function pairDevice(device) {
 function forgetDevice(device) {
   try {
     log.debug("Removing device", device.name)
-    adapter?.remove_device(device)
+    liveAdapter()?.remove_device(device)
   } catch (error) {
     log.error("Failed to remove device:", error)
   }
