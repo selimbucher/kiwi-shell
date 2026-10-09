@@ -20,6 +20,11 @@ export const popupGdkMonitor: Accessor<Gdk.Monitor | undefined> = createComputed
     return monitors.find(m => m.get_connector() === focused?.name) ?? primary
 })
 
+// The main (first) monitor: where the switchers live, and the one display
+// whose dock stays up on its own.
+export const primaryGdkMonitor: Accessor<Gdk.Monitor | undefined> = createComputed(get =>
+    get(createBinding(app, "monitors"))[0])
+
 // Tear down a shell window when its monitor goes away. GTK 4.22's Wayland
 // session-management hook (gtk_application_impl_wayland_window_forget)
 // hands the window's GdkSurface to gdk_wayland_toplevel_remove_from_session

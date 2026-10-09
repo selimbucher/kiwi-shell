@@ -3,7 +3,7 @@ const log = logger("dock")
 import app from "ags/gtk4/app"
 import App from "ags/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { destroyWindow, remeasureOn } from "../monitors"
+import { destroyWindow, primaryGdkMonitor, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
 import { hyprland, clientsBinding, list, unpinnedList, setDockOverlap, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
@@ -359,6 +359,10 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         if (mode == "disabled") return false
         if (mode != "auto-hide") return true
         if (get(held) || get(menuOpen)) return true
+        // As on a Mac, the dock is at home on the main display and only
+        // comes up on another for the pointer at its bottom edge; what the
+        // windows there cover is beside the point.
+        if (get(primaryGdkMonitor) !== gdkmonitor) return false
         return !get(covered)
     })
 
