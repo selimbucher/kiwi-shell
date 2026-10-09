@@ -73,14 +73,21 @@ const discoveringRaw = createComputed((get) => {
 const deviceKey = (device: AstalBluetooth.Device) =>
   device.address ?? device.get_object_path?.() ?? String(device)
 
-const [btFrozen, setBtFrozen] = createState(false)
-const [btFrozenValue, setBtFrozenValue] = createState(bluetooth?.is_powered ?? false)
+const bluetoothEnabledBinding = createComputed((get) =>
+  bluetoothEnabledRaw ? get(bluetoothEnabledRaw) : false,
+)
 
-const bluetoothEnabledBinding = createComputed((get) => {
-  if (get(btFrozen)) return get(btFrozenValue)
-  if (!bluetoothEnabledRaw) return false
-  return get(bluetoothEnabledRaw)
-})
+// GTK4 emits state-set from set_active() too, not only for a click. Pushing
+// is-powered into the switch therefore runs the handler, which used to answer
+// with set_powered() and a two-second "frozen" state. Freezing was applied
+// before the frozen value was stored, so the switch snapped to the stale value
+// for one turn, that programmatic state-set saw a state that differed from the
+// adapter's and powered it the other way, and bluez's reply re-entered the
+// whole dance: the controller cycled on/off about seven times a second until
+// the shell was restarted, the tab's rows vanished with every "off", and any
+// right-click menu on them went with it. The flag marks the writes that come
+// from the adapter so the handler only ever acts on a click.
+let syncingSwitch = false
 
 // pair() blocks the main loop for as long as bluez takes (10s is normal for a
 // mouse that has gone back to sleep), so the row can only ever show "Pairing…"
@@ -164,15 +171,28 @@ export default function BluetoothTab({ visible }) {
         <box hexpand={true} />
         <switch
           sensitive={adapterState((a) => a !== undefined)}
-          active={bluetoothEnabledBinding}
+          $={(self) => {
+            const follow = () => {
+              syncingSwitch = true
+              try {
+                self.set_active(bluetoothEnabledBinding.get())
+              } finally {
+                syncingSwitch = false
+              }
+            }
+            follow()
+            bluetoothEnabledBinding.subscribe(follow)
+          }}
           onStateSet={(self, state) => {
+            if (syncingSwitch) return false
             const adapter = liveAdapter()
             if (adapter && state !== adapter.powered) {
+              // a synchronous bluez call: it returns once the controller has
+              // actually changed state, and the is-powered update that follows
+              // finds the switch already there
               adapter.set_powered(state)
             }
-            setBtFrozen(true)
-            setBtFrozenValue(state)
-            setTimeout(() => setBtFrozen(false), 2000)
+            return false
           }}
         />
       </box>
