@@ -266,8 +266,13 @@ const PREVIEW_HOVER_CLOSE_MS = 300
 // With kiwi-previews in the compositor the windows are drawn into the flyout
 // by the compositor itself (services/previews.ts), in the popup the dock has
 // open; without, they are captures. One flyout is open at a time, so they
-// share one set of tiles. Still: a window nobody can see keeps the last frame
-// it drew rather than being woken for a thumbnail.
+// share one set of tiles — but every dock (one per monitor) builds a flyout
+// for every app, with its own tile widgets, so each flyout keeps its own
+// registry and the open one lends it to the set. Keyed by address in one
+// shared map, the dock that registered last won, and on a second monitor
+// its unmapped tiles measured as nothing: the compositor was never asked
+// and the flyout came up with blank pictures. Still: a window nobody can
+// see keeps the last frame it drew rather than being woken for a thumbnail.
 const flyout = new LiveTiles({ set: "dock-flyout", namespace: LAYER.dock, popup: true, motion: "still", radius: 6 })
 let openFlyout: Gtk.Popover | null = null
 
@@ -277,6 +282,7 @@ function WindowPreviews(
 ) {
     let popover: Gtk.Popover
     const [open, setOpen] = createState(false)
+    const tiles = new Map<string, Gtk.Widget>()
 
     const items = (
         <box spacing={4}>
@@ -286,6 +292,7 @@ function WindowPreviews(
                         client={client}
                         pickerOpen={open}
                         popdown={() => popover.popdown()}
+                        tiles={tiles}
                     />
                 )}
             </For>
@@ -323,6 +330,7 @@ function WindowPreviews(
                         openFlyout = self
                         flyout.window = self
                         flyout.pane = pane
+                        flyout.tiles = tiles
                         flyout.shown()
                     } else if (openFlyout === self) {
                         openFlyout = null
@@ -369,10 +377,11 @@ const dockRawClientWidth = (client: Hyprland.Client) => {
         : dockRawWidth(client.get_width(), client.get_height())
 }
 
-function WindowPreviewItem({ client, pickerOpen, popdown }: {
+function WindowPreviewItem({ client, pickerOpen, popdown, tiles }: {
     client: Hyprland.Client,
     pickerOpen: ReturnType<typeof createState<boolean>>[0],
     popdown: () => void,
+    tiles: Map<string, Gtk.Widget>,
 }) {
     const address = client.get_address()
     const [texture, setTexture] = createState<Gdk.Texture | null>(null)
@@ -435,9 +444,9 @@ function WindowPreviewItem({ client, pickerOpen, popdown }: {
             <Gtk.ScrolledWindow
                 class="dock-preview-shot"
                 $={(self: Gtk.Widget) => {
-                    flyout.tiles.set(address, self)
+                    tiles.set(address, self)
                     self.connect("destroy", () => {
-                        if (flyout.tiles.get(address) === self) flyout.tiles.delete(address)
+                        if (tiles.get(address) === self) tiles.delete(address)
                     })
                 }}
                 overflow={Gtk.Overflow.HIDDEN}
