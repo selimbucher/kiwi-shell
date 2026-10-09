@@ -38,7 +38,8 @@ app.start({
         {(gdkmonitor, index) => (
           <This this={app}>
             <Bar gdkmonitor={gdkmonitor} toggleNc={toggleNc} />
-            <Dock gdkmonitor={gdkmonitor} />
+            {/* the dock is on the primary display only, as on a Mac */}
+            {index() === 0 && <Dock gdkmonitor={gdkmonitor} />}
             {/* popups follow popupGdkMonitor — one instance is enough */}
             {index() === 0 && <NotificationCenter gdkmonitor={gdkmonitor} />}
             {index() === 0 && <Desktop gdkmonitor={gdkmonitor} />}
