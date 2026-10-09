@@ -42,6 +42,7 @@
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
 #include <managers/EventManager.hpp>
+#include <managers/fullscreen/FullscreenController.hpp>
 #include <output/Monitor.hpp>
 #include <render/Framebuffer.hpp>
 #include <render/OpenGL.hpp>
@@ -64,6 +65,7 @@ namespace {
     using Kiwi::windowFrom;
     using Render::GL::g_pHyprOpenGL;
     using Desktop::View::CWindow;
+    using Desktop::View::WINDOW_ALPHA_FULLSCREEN;
     using Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE;
     using Desktop::View::WINDOW_ALPHA_MOVE_TO_WORKSPACE;
 
@@ -167,6 +169,7 @@ void main() {
         CBox                           from;     // the window, where it is on screen
         std::optional<CBox>            icon;     // until the shell says, the picture holds still
         Time::steady_tp                since;    // held since, then running since
+        std::vector<PHLWINDOWREF>      covered;  // what a fullscreen window hid; faded along with it
     };
 
     // how far along a running genie is, from 0 (the window) to 1 (the icon)
@@ -305,6 +308,9 @@ void main() {
             m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) {
                 m_rendering = monitor;
                 pictureRestored(monitor);
+                for (auto& genie : m_genies)
+                    if (genie.monitor == monitor)
+                        cover(genie);
             });
             // among the windows, under the dock and everything else the
             // shell shows: the window goes into the dock, behind its pill
@@ -446,7 +452,9 @@ void main() {
                     .snapshot = std::move(snapshot),
                     .from     = onMonitor(MONITOR, window->getFullWindowBoundingBox()),
                     .since    = Time::steadyNow(),
+                    .covered  = uncoveredBy(window, MONITOR),
                 });
+                cover(m_genies.back());
                 post("minimize", window);
                 damage(m_genies.back());
                 return;
@@ -531,6 +539,8 @@ void main() {
 
                 WINDOW->positionAnimation()->warp();
                 WINDOW->sizeAnimation()->warp();
+                genie.covered = coveredBy(WINDOW);
+                cover(genie);
                 WINDOW->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
                 genie.snapshot = g_pHyprRenderer->makeSnapshotFB(WINDOW);
                 genie.from     = onMonitor(monitor, WINDOW->getFullWindowBoundingBox());
@@ -543,11 +553,74 @@ void main() {
 
         // the real window back, for a restore; a minimized one is gone already
         void show(SGenie& genie) {
+            uncover(genie);
             const auto WINDOW = genie.window.lock();
             if (!genie.restore || !WINDOW)
                 return;
             WINDOW->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
             g_pHyprRenderer->damageWindow(WINDOW);
+        }
+
+        // A fullscreen window hides the windows under it, and Hyprland shows
+        // them the moment it leaves the workspace and hides them the moment it
+        // is back — before the genie has moved at all, so they popped in and
+        // out under the picture. Hyprland does this with a per-window alpha
+        // (WINDOW_ALPHA_FULLSCREEN) animated on its own clock; for the length
+        // of the genie that alpha follows the genie instead: the windows come
+        // up as the picture drains into the icon and go as it fills the screen.
+
+        // the windows a fullscreen window has just stopped covering: still
+        // hidden, or on their way back, on the screen it left
+        static std::vector<PHLWINDOWREF> uncoveredBy(const PHLWINDOW& window, const PHLMONITOR& monitor) {
+            std::vector<PHLWINDOWREF> covered;
+            for (const auto& w : Desktop::windowState()->windows()) {
+                if (w == window || !Desktop::View::validMapped(w) || w->m_pinned || !w->m_workspace)
+                    continue;
+                if (w->m_workspace->m_monitor != monitor || !w->m_workspace->isVisible())
+                    continue;
+                if (w->alphaValue(WINDOW_ALPHA_FULLSCREEN) >= 1.F && !w->alpha(WINDOW_ALPHA_FULLSCREEN)->isBeingAnimated())
+                    continue;
+                covered.emplace_back(w);
+            }
+            return covered;
+        }
+
+        // the windows a restored fullscreen window covers where it has landed
+        static std::vector<PHLWINDOWREF> coveredBy(const PHLWINDOW& window) {
+            std::vector<PHLWINDOWREF> covered;
+            if (!Fullscreen::controller()->isFullscreen(window))
+                return covered;
+            for (const auto& w : Desktop::windowState()->windows()) {
+                if (w == window || !Desktop::View::validMapped(w) || w->m_workspace != window->m_workspace)
+                    continue;
+                if (!w->isBlockedByFullscreen())
+                    continue;
+                covered.emplace_back(w);
+            }
+            return covered;
+        }
+
+        // the covered windows' alpha, where the genie is: 0 with the window on
+        // screen, 1 with it in the icon, so the same number both ways
+        static void cover(const SGenie& genie) {
+            if (genie.covered.empty())
+                return;
+            const float ALPHA = progressOf(genie);
+            for (const auto& ref : genie.covered)
+                if (const auto W = ref.lock())
+                    W->alpha(WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(ALPHA);
+        }
+
+        // back to what Hyprland would have them at
+        static void uncover(SGenie& genie) {
+            for (const auto& ref : genie.covered) {
+                const auto W = ref.lock();
+                if (!W)
+                    continue;
+                W->alpha(WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(W->isBlockedByFullscreen() ? 0.F : 1.F);
+                g_pHyprRenderer->damageWindow(W);
+            }
+            genie.covered.clear();
         }
 
         void damage(const SGenie& genie) {
