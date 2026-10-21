@@ -356,13 +356,23 @@
             else
               lib.types.str;
 
-          settingsOptions = builtins.mapAttrs (
+          # an option per setting, and for a group of them ("shortcuts") an
+          # option per setting in it
+          optionsFor = builtins.mapAttrs (
             _: val:
-            lib.mkOption {
-              type = lib.types.nullOr (inferType val);
-              default = val;
-            }
-          ) defaultConfig;
+            if builtins.isAttrs val then
+              lib.mkOption {
+                type = lib.types.submodule { options = optionsFor val; };
+                default = { };
+              }
+            else
+              lib.mkOption {
+                type = lib.types.nullOr (inferType val);
+                default = val;
+              }
+          );
+
+          settingsOptions = optionsFor defaultConfig;
         in
         {
           options.services.kiwi-shell = {
