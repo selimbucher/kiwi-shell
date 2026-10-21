@@ -415,7 +415,18 @@ void main() {
         }
 
         void moved(const PHLWINDOW& window, const PHLWORKSPACE& workspace) {
-            if (m_watched.empty() || !workspace)
+            if (!workspace)
+                return;
+
+            // Hyprland works a floating window's offset out only while the
+            // window's workspace slides, so one that slid out of sight with
+            // its workspace keeps that offset wherever it is moved: drawn off
+            // to the side of where it takes input, until a drag snaps it
+            // back. On screen it is worked out again for where it has landed.
+            if (workspace->isVisible())
+                window->onWorkspaceAnimUpdate();
+
+            if (m_watched.empty())
                 return;
 
             const bool INTO = workspace->m_name == m_watched;
@@ -503,7 +514,10 @@ void main() {
         // hidden workspace, and a snapshot is only taken of a window on one
         // being drawn. For the length of the picture the workspace is drawn
         // the way Hyprland draws one it is sliding in, held where it would
-        // be on screen, then put back as it was.
+        // be on screen, then put back as it was — and so are its windows'
+        // floating offsets, which Hyprland works out again from the
+        // workspace's each time it moves: left as worked out for a workspace
+        // out of sight, they would come back drawn to the side.
         static SP<Render::IFramebuffer> pictureLeaving(const PHLWINDOW& window) {
             const auto WORKSPACE = window->m_workspace;
             if (!WORKSPACE)
@@ -511,6 +525,11 @@ void main() {
             auto& offset = WORKSPACE->m_renderOffset;
             if (offset->isBeingAnimated())
                 return nullptr; // sliding somewhere already; not ours to hold
+
+            std::vector<std::pair<PHLWINDOWREF, Vector2D>> floating;
+            for (const auto& w : Desktop::windowState()->windows())
+                if (w->m_workspace == WORKSPACE)
+                    floating.emplace_back(w, w->m_floatingOffset);
 
             const bool     FORCED = WORKSPACE->m_forceRendering;
             const Vector2D OFFSET = offset->value();
@@ -523,6 +542,9 @@ void main() {
             *offset = OFFSET;
             offset->warp(false);
             WORKSPACE->m_forceRendering = FORCED;
+            for (const auto& [ref, value] : floating)
+                if (const auto W = ref.lock())
+                    W->m_floatingOffset = value;
             return snapshot;
         }
 
