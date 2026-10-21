@@ -126,14 +126,6 @@ export const toggleSpecialWorkspace = (name: string) =>
 
 export const exitSession = () => dispatch(`hl.dsp.exit()`, `exit`)
 
-// hyprexpo's overview, if the plugin is loaded; quietly nothing otherwise.
-// Under lua the plugin exposes no dispatcher, only its lua API.
-export async function toggleExpo(): Promise<boolean> {
-    if (await dialect() === "lua")
-        return evalLua(`if hl.plugin.hyprexpo then hl.plugin.hyprexpo.expo("toggle") end`, "expo toggle")
-    return dispatch("", "hyprexpo:expo toggle", true)
-}
-
 // ─── bind registration ────────────────────────────────────────────────────────
 // Every kiwi bind carries a "kiwi: ..." description — with dispatchers
 // reported as "__lua" under lua, descriptions are the only identity
@@ -253,7 +245,8 @@ export function registerBindSetup(name: string, run: () => Promise<void>, unbind
 
 // After a shortcut changes: drop every setup's old binds, then run them all
 // again. Unbinds go first and together, since setups share combos (a Super
-// tap and the Super+Tab confirm are both SUPER + SUPER_L releases).
+// tap and an app switcher on Super+Tab confirm on the same SUPER + SUPER_L
+// release).
 export function rebindAll() {
     enqueue("unbind", async () => {
         const ops = setups.flatMap(s => s.unbind?.() ?? [])
@@ -298,18 +291,20 @@ const FEATURES = {
     geometry: ["kiwi", "geometry-events"],
     previews: ["kiwi", "kiwi-previews"],
     genie: ["kiwi"],
+    desktops: ["kiwi"],
 } as const
 
 // What the shell and kiwi's plugin say to each other, numbered; the plugin
 // says its own with `hyprctl kiwi-version` (src/hyprland-plugin/kiwi.hpp).
 // One that says another number, or nothing, isn't used: its requests or
 // events differ, and what it would do is guesswork.
-const PLUGIN_PROTOCOL = 5
+const PLUGIN_PROTOCOL = 7
 
 const WITHOUT = {
     geometry: "the dock won't see windows moved by hand",
     previews: "the switchers capture their previews instead of showing them live",
     genie: "windows vanish into the dock and reappear instead of pouring in and out of it",
+    desktops: "empty desktops last only while the shell runs, and the workspace swipe skips them",
 }
 
 const loadedPlugins = new Set<string>()
@@ -338,6 +333,16 @@ export function genieTo(address: string, target: { namespace: string; icon: { x:
         ? `${target.namespace} ${[target.icon.x, target.icon.y, target.icon.width, target.icon.height].map(Math.round).join(",")}`
         : "none"
     void send(`kiwi-genie 0x${address} ${where}`, "place the genie", true)
+}
+
+/**
+ * Keep these workspaces as the monitors' desktops, empty or not
+ * (src/hyprland-plugin/desktops.cpp): the whole set, by monitor name.
+ */
+export function keepDesktops(byMonitor: ReadonlyMap<string, readonly number[]>): Promise<boolean> {
+    if (!hasFeature("desktops")) return Promise.resolve(false)
+    const words = [...byMonitor].filter(([, ids]) => ids.length > 0).map(([name, ids]) => `${name}:${ids.join(",")}`)
+    return send(`kiwi-desktops ${words.join(" ")}`.trim(), "keep desktops", true)
 }
 
 /** Whether the compositor can do this for the shell. Answers after loadPlugins(). */

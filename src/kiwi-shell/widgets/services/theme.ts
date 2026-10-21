@@ -41,6 +41,8 @@ export const LAYER = {
     dock: "kiwi-dock",
     cards: "kiwi-cards",
     switcher: "kiwi-switcher",
+    missionControl: "kiwi-mission-control",
+    missionControlClose: "kiwi-mission-control-close",
     scrim: "kiwi-scrim",
     plain: "kiwi-plain",
 } as const
@@ -75,7 +77,8 @@ export const themeClasses: Accessor<string> = createComputed(get =>
 
 const IGNORE_ALPHA = 0.05
 
-type Rule = { name: string, namespace: string, noAnim?: boolean }
+// solid: covers what is behind it, so it is never blurred
+type Rule = { name: string, namespace: string, noAnim?: boolean, solid?: boolean }
 
 const RULES: Rule[] = [
     { name: "kiwi-panels", namespace: LAYER.panel },
@@ -83,13 +86,15 @@ const RULES: Rule[] = [
     { name: "kiwi-dock", namespace: LAYER.dock },
     { name: "kiwi-cards", namespace: LAYER.cards },
     { name: "kiwi-scrim", namespace: LAYER.scrim },
+    { name: "kiwi-mission-control", namespace: LAYER.missionControl, noAnim: true, solid: true },
+    { name: "kiwi-mission-control-close", namespace: LAYER.missionControlClose, noAnim: true, solid: true },
 ]
 
 // Granite is solid and blurring it would only cost frames — except for
 // Spotlight and the dock, which are never more solid than Tinted Glass
 // (style/_theme.scss) and need the blur that goes with it.
 function rulesFor(style: ThemeStyle): Set<string> {
-    if (style !== "granite") return new Set(RULES.map(r => r.namespace))
+    if (style !== "granite") return new Set(RULES.filter(r => !r.solid).map(r => r.namespace))
     return new Set([LAYER.dock, LAYER.scrim])
 }
 

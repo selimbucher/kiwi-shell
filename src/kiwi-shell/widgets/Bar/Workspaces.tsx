@@ -2,7 +2,8 @@ import { Astal, Gtk } from "ags/gtk4"
 import Hyprland from "gi://AstalHyprland"
 import AstalWp from "gi://AstalWp"
 import { createBinding } from "gnim"
-import { toggleExpo, focusWorkspace } from "../../hypr"
+import { focusWorkspace } from "../../hypr"
+import { toggleMissionControl } from "../MissionControl/MissionControl"
 
 const wp = AstalWp.get_default()
 
@@ -46,8 +47,7 @@ export default function Workspaces() {
       onClicked={() => {
         if (!hypr.focusedWorkspace) return
         if (hypr.focusedWorkspace.id === id) {
-          // hyprexpo's overview if the plugin is loaded, nothing otherwise
-          toggleExpo()
+          toggleMissionControl()
         } else {
           focusWorkspace(id)
         }

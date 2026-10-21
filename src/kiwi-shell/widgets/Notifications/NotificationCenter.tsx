@@ -31,6 +31,10 @@ export function toggleNc() {
     else openCenter()
 }
 
+export function openNc() {
+    if (!centerOpen()) openCenter()
+}
+
 export function closeNc() {
     closeCenter()
 }

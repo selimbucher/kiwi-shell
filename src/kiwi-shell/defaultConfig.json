@@ -23,7 +23,7 @@
   "shortcuts": {
     "launcher": "Super",
     "app_switcher": "Alt+Tab",
-    "workspace_switcher": "Super+Tab",
+    "workspace_switcher": "Ctrl+Super+Up",
     "notification_center": ""
   }
 }

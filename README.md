@@ -115,7 +115,8 @@ kiwi
 - Application dock
 - Ability to minimize applications
 - App Switcher (Alt+Tab)
-- Workspace Switcher (Super+Tab)
+- Mission Control (Ctrl+Super+Up), desktops left and right (Ctrl+Super+Left/Right)
+- Trackpad: 3 fingers sideways for desktops, up/down for Mission Control; 4 fingers left/right for notifications
 - Launcher (Super)
 - Tray, System Menu and Power Menu
 - Accent Color automatically matching the wallpaper

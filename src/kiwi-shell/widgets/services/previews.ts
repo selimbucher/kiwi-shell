@@ -77,7 +77,12 @@ const numbers = (r: Rect) => [r.x, r.y, r.width, r.height].map(Math.round).join(
  *
  * "live" wakes a window nobody can see so its tile keeps up with it; "still"
  * leaves it asleep and shows the last frame it drew, which is all a tile the
- * size of a thumbnail is worth.
+ * size of a thumbnail is worth. `squareTop` rounds only the bottom corners.
+ * `fly` (Mission Control) has the tiles fly out of their windows as they
+ * appear, and back into them when the set is cleared (clearPreviews); the
+ * plugin then says `kiwipreviews>>flown,<set>`. No tiles is not a clear
+ * there: the set just shows nothing, its last window having gone to another
+ * desktop, and Mission Control stays.
  *
  * `taken` is called once the compositor has them, with whether it does. It
  * draws them from the shell's next frame on: the frame to show the pane in.
@@ -87,13 +92,13 @@ export function showPreviews(
     namespace: string,
     rounding: number,
     tiles: PreviewTile[],
-    options: { motion?: "live" | "still", popup?: boolean } = {},
+    options: { motion?: "live" | "still", popup?: boolean, squareTop?: boolean, fly?: boolean } = {},
     taken?: (ok: boolean) => void,
 ) {
     if (!livePreviews()) return
-    const request = tiles.length === 0
+    const request = tiles.length === 0 && !options.fly
         ? `kiwi-previews clear ${set}`
-        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""} `
+        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""}${options.squareTop ? " square-top" : ""}${options.fly ? " fly" : ""} `
             + tiles.map(t => {
                 // a badge needs the clip in front of it; the tile's own rectangle will do
                 const clip = t.clip ?? (t.badge ? t : undefined)
@@ -106,6 +111,30 @@ export function showPreviews(
     }
     showing.set(set, request)
     send(request, set, taken)
+}
+
+/**
+ * Have `fingers` up and down the trackpad fly the set's tiles out of their
+ * windows and home again, following the fingers; the plugin asks for the set
+ * with `kiwigesture>>open,<set>`. The reply is "ok", or why not (a gesture
+ * of the config's own on those fingers).
+ */
+export function flyOnGesture(set: string, fingers: number): Promise<string> {
+    return new Promise(resolve => {
+        hyprland.message_async(`kiwi-previews gesture ${set} ${fingers}`, (_source: unknown, result: any) => {
+            try {
+                resolve(hyprland.message_finish(result).trim())
+            } catch (e) {
+                resolve(String(e))
+            }
+        })
+    })
+}
+
+/** Draw the window's tile over the set's others. */
+export function raisePreview(set: string, address: string) {
+    if (!livePreviews() || !showing.has(set)) return
+    send(`kiwi-previews raise ${set} 0x${address.replace(/^0x/, "")}`)
 }
 
 export function clearPreviews(set: string) {
@@ -219,9 +248,13 @@ type Options = {
     radius: number
     // the widget a tile's picture is cut off at, if not the tile's own edges
     clipOf?: (tile: Gtk.Widget) => Gtk.Widget | null
-    // the tiles' top corners meet a title bar: they are rounded out of sight,
-    // above the tile, so only the bottom ones show
+    // the clip narrowed further, given the tile and its clip on the surface
+    // (Mission Control: a desktop's windows give way to the one dragged over it)
+    narrowClip?: (tile: Gtk.Widget, clip: Rect, onSurface: (widget: Gtk.Widget) => Rect | null) => Rect
+    // the tiles' top corners meet a title bar: only the bottom ones are rounded
     squareTop?: boolean
+    // the tiles fly out of their windows and back (showPreviews)
+    fly?: boolean
 }
 
 /**
@@ -249,11 +282,15 @@ export class LiveTiles {
     private generation = 0
     // false from showing until the switcher's first, empty frame is drawn
     private firstFrameDrawn = true
+    // between shown() and hidden(): a layout after hidden() sent the tiles
+    // again, which turned Mission Control's windows round on their way home
+    private active = false
 
     constructor(private readonly options: Options) {}
 
     shown() {
         if (!livePreviews()) return
+        this.active = true
         this.pane?.wait()
         const shown = this.generation
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, REVEAL_ANYWAY_MS, () => {
@@ -273,14 +310,28 @@ export class LiveTiles {
     }
 
     hidden() {
+        this.active = false
         clearPreviews(this.options.set)
         ++this.generation
+    }
+
+    /**
+     * A flying set's windows given back where they are, nothing flying home
+     * (Mission Control has zoomed into a desktop that shows them in place);
+     * `then` once the compositor has them back.
+     */
+    giveBack(then: () => void) {
+        const { set, namespace, radius, motion, popup, squareTop, fly } = this.options
+        this.tiles.clear()
+        ++this.generation
+        if (!livePreviews() || !fly) return then()
+        showPreviews(set, namespace, radius, [], { motion, popup, squareTop, fly }, () => then())
     }
 
     /** Measure the tiles and send them; after every layout. */
     measure() {
         const { window, pane } = this
-        if (!livePreviews() || !window || !pane) return
+        if (!livePreviews() || !this.active || !window || !pane) return
         // the compositor must see the empty frame before it hears of the tiles
         if (pane.waiting && !this.firstFrameDrawn) return
 
@@ -293,26 +344,27 @@ export class LiveTiles {
             return { x: bounds.get_x() + dx, y: bounds.get_y() + dy, width: bounds.get_width(), height: bounds.get_height() }
         }
 
-        const { radius, clipOf, squareTop } = this.options
+        const { radius, clipOf, narrowClip } = this.options
         const tiles: PreviewTile[] = []
         for (const [address, widget] of this.tiles) {
             if (!widget.get_mapped()) continue
             const rect = onSurface(widget)
             if (!rect) continue
             const clipWidget = clipOf?.(widget)
-            const clip = clipWidget ? onSurface(clipWidget) ?? undefined : undefined
+            let clip = clipWidget ? onSurface(clipWidget) ?? undefined : undefined
+            if (narrowClip) clip = narrowClip(widget, clip ?? rect, onSurface)
+            // narrowed to nothing: not drawn
+            if (clip && (clip.width < 1 || clip.height < 1)) continue
             const badge = this.badges.get(address)
-            tiles.push(squareTop
-                ? { address, ...rect, y: rect.y - radius, height: rect.height + radius, clip: clip ?? rect, badge }
-                : { address, ...rect, clip, badge })
+            tiles.push({ address, ...rect, clip, badge })
         }
         // a first layout can come before the tiles are on screen; showing the
         // pane on it would show them empty until the next
         if (pane.waiting && tiles.length === 0 && this.tiles.size > 0) return
 
         const measured = ++this.generation
-        const { set, namespace, motion, popup } = this.options
-        showPreviews(set, namespace, radius, tiles, { motion, popup }, () => {
+        const { set, namespace, motion, popup, squareTop, fly } = this.options
+        showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly }, () => {
             if (measured === this.generation) this.pane?.show()
         })
     }

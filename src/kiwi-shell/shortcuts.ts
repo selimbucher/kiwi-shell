@@ -6,13 +6,19 @@ const log = logger("shortcuts")
 // The shell's own shortcuts, configurable as "shortcuts": { "launcher": "Super", ... }.
 // A lone modifier ("Super") is a tap; anything else is modifiers + key. The
 // optional ones are unset ("") until the user sets them.
+// "workspace_switcher" is Mission Control; it kept the name it had when it
+// opened a workspace switcher, so existing configs keep their keys.
 export type OptionalShortcutName = "notification_center"
-export type ShortcutName = "launcher" | "app_switcher" | "workspace_switcher" | OptionalShortcutName
+export type ShortcutName =
+    | "launcher" | "app_switcher" | "workspace_switcher" | "desktop_left" | "desktop_right"
+    | OptionalShortcutName
 
 export const DEFAULT_SHORTCUTS: Record<ShortcutName, string> = {
     launcher: "Super",
     app_switcher: "Alt+Tab",
-    workspace_switcher: "Super+Tab",
+    workspace_switcher: "Ctrl+Super+Up",
+    desktop_left: "Ctrl+Super+Left",
+    desktop_right: "Ctrl+Super+Right",
     notification_center: "",
 }
 
@@ -70,15 +76,15 @@ export const combo = (s: Shortcut, ...extraMods: string[]) =>
 export const heldModifierKey = (s: Shortcut) =>
     MODIFIERS[s.mods[0].toLowerCase()].key
 
-// Switchers are held: exactly one modifier, whose release confirms, and no
-// Shift, which the workspace switcher adds for going backwards. Only the
-// launcher can be a tap; anything else needs a modifier, or a key of its own
-// (F keys, XF86 media keys).
+// The app switcher is held: exactly one modifier, whose release confirms,
+// and no Shift, which it adds for going backwards. Only the launcher can be
+// a tap; anything else needs a modifier, or a key of its own (F keys, XF86
+// media keys).
 function valid(name: ShortcutName, s: Shortcut | null): s is Shortcut {
     if (!s) return false
     if (name === "launcher") return true
-    if (name === "notification_center") return !s.tap && (s.mods.length > 0 || /^(F\d+|XF86)/i.test(s.key))
-    return !s.tap && s.mods.length === 1 && s.mods[0] !== "SHIFT"
+    if (name === "app_switcher") return !s.tap && s.mods.length === 1 && s.mods[0] !== "SHIFT"
+    return !s.tap && (s.mods.length > 0 || /^(F\d+|XF86)/i.test(s.key))
 }
 
 function configuredShortcut(name: ShortcutName): Shortcut | null {
@@ -111,16 +117,20 @@ export function optionalShortcut(name: OptionalShortcutName): Shortcut | null {
 const DESCRIPTIONS: Record<ShortcutName, string[]> = {
     launcher: ["kiwi: launcher"],
     app_switcher: ["kiwi: apps open", "kiwi: apps submap enter", "kiwi: apps confirm", "kiwi: apps submap reset"],
-    workspace_switcher: [
-        "kiwi: workspaces next", "kiwi: workspaces prev", "kiwi: workspaces switch", "kiwi: workspaces close",
-    ],
+    workspace_switcher: ["kiwi: mission control"],
+    desktop_left: ["kiwi: desktop left"],
+    desktop_right: ["kiwi: desktop right"],
     notification_center: ["kiwi: notification center"],
 }
 
-// binds a kiwi from before the global shortcuts left (they ran kiwictl); the
+// binds an older kiwi left: from before the global shortcuts (they ran
+// kiwictl), and the workspace switcher's from before Mission Control. The
 // setups keep a bind with the current description in place, so these would
-// otherwise stay until the next config reload
-const RETIRED = ["kiwi: launcher toggle", "kiwi: workspaces confirm", "kiwi: workspaces escape"]
+// otherwise stay until the next config reload.
+const RETIRED = [
+    "kiwi: launcher toggle", "kiwi: workspaces confirm", "kiwi: workspaces escape",
+    "kiwi: workspaces next", "kiwi: workspaces prev", "kiwi: workspaces switch", "kiwi: workspaces close",
+]
 
 function wantedCombos(name: ShortcutName): string[] {
     if (name === "notification_center") {
@@ -128,10 +138,8 @@ function wantedCombos(name: ShortcutName): string[] {
         return s ? [combo(s)] : []
     }
     const s = shortcut(name)
-    const release = s.tap ? combo(s) : `${s.mods[0]} + ${heldModifierKey(s)}`
-    if (name === "launcher") return [combo(s)]
-    if (name === "app_switcher") return [combo(s), release]
-    return [combo(s), combo(s, "SHIFT"), release, `${s.mods[0]} + escape`]
+    if (name === "app_switcher") return [combo(s), `${s.mods[0]} + ${heldModifierKey(s)}`]
+    return [combo(s)]
 }
 
 enqueueBindJob("leftover shortcut binds", async () => {

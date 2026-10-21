@@ -1,0 +1,192 @@
+// ─── Mission Control ─────────────────────────────────────────────────────────
+// Over the wallpaper rather than on a pane, so it is white on dark the way
+// macOS draws it, whatever the panel style.
+
+// a pixel that is nearly clear: while the panes wait for their pictures the
+// window still draws something, and GTK 4.20 doesn't draw a window whose
+// snapshot is empty — the compositor would wait for a frame that never comes
+window.MissionControl {
+    background-color: rgba(0, 0, 0, 0.004);
+}
+
+// The wallpaper as it is: macOS doesn't darken it. Between two desktops
+// sliding past each other, dark.
+.mc-backdrop {
+    background-color: #0c0c0d;
+}
+
+// ─── The bar ─────────────────────────────────────────────────────────────────
+
+// a band of its own across the top, lighter than the wallpaper below it, as
+// on macOS: a strip folded, open as tall as the desktops' pictures
+.mc-band {
+    background-color: rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 -1px rgba(255, 255, 255, 0.08);
+}
+
+// a desktop's name: a pill in the folded bar, the caption under its picture
+// in the open one (NAME_PAD in the widget)
+.mc-name {
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 4px 14px;
+    border-radius: 9999px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    transition: background-color 200ms ease-in-out;
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.12);
+    }
+
+    &.current {
+        color: #ffffff;
+        background-color: rgba(255, 255, 255, 0.2);
+    }
+
+    &.open, &.open:hover {
+        background-color: transparent;
+    }
+
+    &.open.current {
+        font-weight: 600;
+    }
+}
+
+// behind the wallpaper until it has loaded; the ring is a shadow so it takes
+// no room and is drawn outside the picture, where no window goes over it
+.mc-thumb-canvas {
+    border-radius: 6px;
+    background-color: rgba(0, 0, 0, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+
+    &:hover {
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.45), 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+
+    // macOS rings the current desktop in the accent colour (blue by default)
+    &.current {
+        box-shadow: 0 0 0 3px var(--primary), 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+
+    // a window being dragged over it would go there
+    &.drop {
+        box-shadow: 0 0 0 3px var(--primary), 0 2px 8px rgba(0, 0, 0, 0.35);
+    }
+}
+
+// the new desktop + would add, peeking in at the bar's end: + on a disc
+.mc-peek-sign {
+    min-width: 30px;
+    min-height: 30px;
+    border-radius: 9999px;
+    color: #ffffff;
+    background-color: rgba(0, 0, 0, 0.35);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+
+    image {
+        margin: 7px;
+    }
+}
+
+// GTK buttons, so the GTK theme styles them too: border, radius, shadows and
+// a hover fill are all set here, in every state (as appSwitcher.scss does)
+@mixin flat-button {
+    background: none;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    outline: none;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+
+    &:hover, &:active {
+        background-image: none;
+        box-shadow: none;
+    }
+}
+
+// The × on a desktop's corner (MissionControl.tsx, CloseButton): a light grey
+// disc with a dark grey cross, as macOS draws it, on a surface of its own
+// that is nothing but the room its shadow needs (CLOSE_PAD)
+window.MissionControlClose {
+    background: none;
+}
+
+button.mc-close {
+    @include flat-button;
+    min-width: 22px;
+    min-height: 22px;
+    border-radius: 9999px;
+    color: rgb(96, 96, 98);
+    background-color: rgb(225, 225, 227);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+
+    &:hover {
+        background-color: rgb(238, 238, 240);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+
+    &:active {
+        background-color: rgb(205, 205, 207);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+}
+
+// macOS draws + as a bare glyph at the bar's right end; it only gets a
+// shape of its own while it is pointed at, or a window is held over it
+button.mc-add {
+    @include flat-button;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.9);
+    background-color: transparent;
+    -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+
+    &:hover {
+        background-color: rgba(255, 255, 255, 0.14);
+    }
+
+    &:active {
+        background-color: rgba(255, 255, 255, 0.08);
+    }
+
+    // a window being dragged over it would get a desktop of its own
+    &.drop {
+        background-color: rgba(255, 255, 255, 0.22);
+        box-shadow: inset 0 0 0 2px var(--primary);
+    }
+}
+
+// ─── The windows ─────────────────────────────────────────────────────────────
+
+// the picture sits inside the border and the gap (FRAME in the widget): as
+// macOS outlines a window, close round it and thick
+.mc-window {
+    padding: 1px;
+    border: 4px solid transparent;
+    border-radius: 15px;
+
+    &.selected {
+        border-color: var(--primary);
+    }
+}
+
+// under the window's picture: a shadow around it, and its corners for the
+// shell's own captures
+.mc-picture {
+    border-radius: 10px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+}
+
+.mc-icon {
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.5));
+}
+
+.mc-title {
+    color: #ffffff;
+    font-size: 12px;
+    padding: 3px 10px;
+    border-radius: 9999px;
+    background-color: rgba(28, 28, 30, 0.86);
+}

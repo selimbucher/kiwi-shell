@@ -45,7 +45,7 @@ const results: Accessor<Result[]> = createComputed(get => {
 // shadows non-transparent binds whenever another bind (key, mouse or scroll)
 // fires while the mod is held — shadowKeybinds() in KeybindManager.cpp — so
 // this only triggers on a clean tap. A switcher's confirm on the same key is
-// a transparent bindrt: it cannot be shadowed, keeps firing after Super+Tab,
+// a transparent bindrt: it cannot be shadowed, keeps firing after its Tab,
 // and is no-op guarded shell-side. Any other shortcut is a plain press bind.
 // Reloads wipe dynamic binds; registerBindSetup re-runs this after each.
 // The combo is only unbound when the shortcut changes (rebindAll), since

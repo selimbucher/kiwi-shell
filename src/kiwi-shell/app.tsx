@@ -3,7 +3,7 @@ import style from "./style.scss"
 import Bar from "./widgets/Bar/Bar"
 import IndicatorBar from "./widgets/IndicatorBar/IndicatorBar"
 import AppSwitcher from "./widgets/AppSwitcher/AppSwitcher"
-import WorkspaceSwitcher from "./widgets/WorkspaceSwitcher/WorkspaceSwitcher"
+import MissionControl from "./widgets/MissionControl/MissionControl"
 import Dock from "./widgets/Dock/Dock"
 import Desktop from "./widgets/Desktop/Desktop"
 import Launcher from "./widgets/Launcher/Launcher"
@@ -18,6 +18,7 @@ import { logger } from "./log"
 import steamDesktopPatcher from "./widgets/services/steamDesktopPatcher";
 import nightShiftService from "./widgets/services/nightShiftSchedule"
 import { loadPlugins } from "./hypr"
+import "./widgets/services/gestures"
 
 logger("kiwi").info("kiwi-shell starting")
 
@@ -44,7 +45,7 @@ app.start({
             {index() === 0 && <Desktop gdkmonitor={gdkmonitor} />}
             {index() === 0 && <IndicatorBar gdkmonitor={gdkmonitor} />}
             {index() === 0 && <AppSwitcher gdkmonitor={gdkmonitor} />}
-            {index() === 0 && <WorkspaceSwitcher gdkmonitor={gdkmonitor} />}
+            {index() === 0 && <MissionControl gdkmonitor={gdkmonitor} />}
             {index() === 0 && <Launcher gdkmonitor={gdkmonitor} />}
             {index() === 0 && <Prompt gdkmonitor={gdkmonitor} />}
           </This>

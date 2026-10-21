@@ -14,8 +14,11 @@
 // back, and a client that talked to this plugin could only make windows
 // appear on the screen, which it can already see.
 //
-//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
+//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
 //     hyprctl kiwi-previews clear [<set>]
+//     hyprctl kiwi-previews raise <set> <address>
+//     hyprctl kiwi-previews gesture <set> <fingers>
+//     hyprctl kiwi-previews swipe begin up|down | update <travel> <ms> | end [cancel]
 //
 // Each part of the shell that shows previews names its own set, and sets
 // come and go independently: the dock's flyout closing does not clear a
@@ -32,6 +35,29 @@
 // its corners rounded by <rounding>, and cut off at cx, cy, cw, ch when the
 // shell names such a rectangle — a workspace's miniature window at the edge
 // of its card, a picture whose top corners go under the title bar above it.
+// square-top leaves the top corners square, for a picture that hangs from a
+// title bar: the rounding is drawn above the picture, where the clip cuts it
+// off. (The shell used to get that by sending a tile reaching up behind the
+// title bar, but a window fitted into that taller tile came out wider than
+// the picture and lost its sides.)
+// fly is Mission Control's: the tiles leave their windows as the set appears,
+// from where each window is on screen to its tile, and go back into them when
+// the set is cleared, after which a `kiwipreviews>>flown,<set>` event says
+// the shell can take its surface down. Meanwhile the windows themselves fade
+// out early in the flight, and back in late on the way home, under their
+// pictures — the title bars and shadows the pictures lack go with them — and
+// the layer the tiles are on fades in and out with the flight, its other
+// sets with it. Should the layer go away first, the flight ends there.
+// raise puts a window's tile on top of the others: the window clicked in
+// Mission Control flies home over the rest, as it is about to be.
+//
+// gesture has that many fingers up the trackpad fly a set's tiles out of
+// their windows, and down fly them home, following the fingers the whole way
+// as macOS's Mission Control does; let go past half way (or flicked) the
+// flight goes on by itself, short of it it goes back. Out of nothing, the
+// plugin asks the shell for the set with `kiwigesture>>open,<set>` and holds
+// the tiles where the fingers are once they come. Hyprland clears gestures
+// on every config reload; this one is added again after each.
 // <badge> is an image file (percent-encoded: a path has spaces and commas),
 // the app's icon, drawn in the picture's bottom-right corner with a drop
 // shadow: thumbnails of same-app windows look alike, the badge says which
@@ -68,6 +94,10 @@
 #include <desktop/view/Window.hpp>
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
+#include <managers/EventManager.hpp>
+#include <managers/eventLoop/EventLoopManager.hpp>
+#include <managers/input/trackpad/TrackpadGestures.hpp>
+#include <managers/input/trackpad/gestures/ITrackpadGesture.hpp>
 #include <output/Monitor.hpp>
 #include <state/MonitorState.hpp>
 #include <protocols/core/Compositor.hpp>
@@ -78,6 +108,10 @@
 #include <cairo/cairo.h>
 
 #include <algorithm>
+#include <functional>
+#include <optional>
+#include <chrono>
+#include <cmath>
 #include <format>
 #include <map>
 #include <ranges>
@@ -110,6 +144,55 @@ namespace {
         CBox         box, clip;
         std::string  badge;
     };
+
+    // ─── Flying ─────────────────────────────────────────────────────────────
+    // macOS's Mission Control, measured off screen recordings (a window
+    // tracked frame by frame, four openings and closings): out and home alike
+    // on cubic-bezier(0.35, 0, 0.65, 1) over 240 ms, within 1%. Slow off the
+    // mark, steady through the middle, settling at the end.
+    constexpr auto  FLY_DURATION = std::chrono::milliseconds{240};
+    constexpr float FLY_X1 = 0.35F, FLY_Y1 = 0.F, FLY_X2 = 0.65F, FLY_Y2 = 1.F;
+    // the windows are gone by this share of the way out, and back from this
+    // share of the way home
+    constexpr float FLY_HIDDEN_BY = 0.35F;
+
+    float bezier(float a, float b, float u) {
+        return 3.F * (1.F - u) * (1.F - u) * u * a + 3.F * (1.F - u) * u * u * b + u * u * u;
+    }
+
+    // the curve's u where `along(u)` reaches `value`, both rising from 0 to 1
+    template <typename F>
+    float solve(F along, float value) {
+        float lo = 0.F, hi = 1.F;
+        for (int i = 0; i < 24; ++i) {
+            const float MID = (lo + hi) / 2.F;
+            (along(MID) < value ? lo : hi) = MID;
+        }
+        return (lo + hi) / 2.F;
+    }
+
+    // how far along at time `t` (both 0..1)
+    float flyCurve(float t) {
+        const float U = solve([](float u) { return bezier(FLY_X1, FLY_X2, u); }, std::clamp(t, 0.F, 1.F));
+        return bezier(FLY_Y1, FLY_Y2, U);
+    }
+
+    // the time at which it is `y` of the way
+    float flyCurveInverse(float y) {
+        const float U = solve([](float u) { return bezier(FLY_Y1, FLY_Y2, u); }, std::clamp(y, 0.F, 1.F));
+        return bezier(FLY_X1, FLY_X2, U);
+    }
+
+    // a full swipe, from the windows to the tiles, in the trackpad's units
+    constexpr float GESTURE_DISTANCE = 300.F;
+    // let go faster than this (units per ms) and the flight goes that way
+    constexpr float GESTURE_FLICK = 0.5F;
+    // and held still this long, it was no flick
+    constexpr auto GESTURE_REST = std::chrono::milliseconds{80};
+
+    CBox between(const CBox& from, const CBox& to, float t) {
+        return CBox{from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, from.w + (to.w - from.w) * t, from.h + (to.h - from.h) * t};
+    }
 
     // ─── The badge ──────────────────────────────────────────────────────────
     // logical pixels, as the shell's CSS had them when it drew the badge itself
@@ -168,8 +251,8 @@ namespace {
 
     class CPreviewPassElement : public IPassElement {
       public:
-        CPreviewPassElement(std::vector<SDrawTile>&& tiles, int rounding, float alpha, BadgeTextures& badges) :
-            m_tiles(std::move(tiles)), m_rounding(rounding), m_alpha(alpha), m_badges(badges) {}
+        CPreviewPassElement(std::vector<SDrawTile>&& tiles, int rounding, bool squareTop, float alpha, BadgeTextures& badges) :
+            m_tiles(std::move(tiles)), m_rounding(rounding), m_squareTop(squareTop), m_alpha(alpha), m_badges(badges) {}
 
         std::vector<UP<IPassElement>> draw() override {
             const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
@@ -217,9 +300,15 @@ namespace {
                         // corners, so it is drawn at the tile's size, the part
                         // of it outside the tile left out by its texture
                         // coordinates: rounding applies to the box drawn.
-                        const CBox SHOWN = box.intersection(tile.box);
+                        // Square top corners are rounded out of sight, above
+                        // the clip.
+                        CBox SHOWN = box.intersection(tile.box);
                         if (SHOWN.empty())
                             return;
+                        if (m_squareTop) {
+                            SHOWN.y -= m_rounding;
+                            SHOWN.h += m_rounding;
+                        }
                         g_pHyprOpenGL->renderTexture(surface->m_current.texture, SHOWN,
                                                      {
                                                          .surface                     = surface,
@@ -290,8 +379,9 @@ namespace {
 
       private:
         std::vector<SDrawTile> m_tiles;
-        int                    m_rounding = 0;
-        float                  m_alpha    = 1.F;
+        int                    m_rounding  = 0;
+        bool                   m_squareTop = false;
+        float                  m_alpha     = 1.F;
         BadgeTextures&         m_badges;
     };
 
@@ -323,12 +413,15 @@ namespace {
             clear();
         }
 
-        std::string namespace_;
-        bool        popup    = false;
-        int         rounding = 0;
-        bool        live     = false;
+        std::string name, namespace_;
+        bool        popup     = false;
+        int         rounding  = 0;
+        bool        live      = false;
+        bool        squareTop = false;
+        bool        fly       = false;
 
         void apply(std::vector<STile>&& tiles) {
+            m_done = false;
             suspendWoken();
             m_armListeners.clear();
             m_armSurfaces.clear();
@@ -339,6 +432,11 @@ namespace {
             } else if (!m_tiles.empty()) {
                 damageAll();
                 m_tiles.clear();
+                // A flying set left with no tiles (its last window gone to
+                // another desktop) has nothing to fly home: its windows are
+                // just given back. Only a clear sends tiles home.
+                if (fly)
+                    hideWindows();
             }
         }
 
@@ -348,6 +446,8 @@ namespace {
             m_armListeners.clear();
             m_armSurfaces.clear();
             suspendWoken();
+            showWindows();
+            m_flying = false;
             if (m_tiles.empty())
                 return;
             damageAll();
@@ -356,6 +456,114 @@ namespace {
 
         size_t size() const {
             return m_tiles.size();
+        }
+
+        // Cleared: a flying set flies home first, and is done once there.
+        void close() {
+            if (!fly || m_tiles.empty() || !m_flying) {
+                m_held = false;
+                clear();
+                m_done = true;
+                return;
+            }
+            m_armed = false;
+            m_pending.clear();
+            if (m_closing)
+                return;
+            const float SHOWN = shown();
+            m_closing         = true;
+            m_since           = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - SHOWN));
+            m_held            = false;
+            // nothing else may be drawing: the way home starts with a frame
+            damageMonitors();
+        }
+
+        void damageMonitors() {
+            for (const auto& monitor : State::monitorState()->monitors())
+                if (monitor && anchorOn(monitor))
+                    g_pHyprRenderer->damageMonitor(monitor);
+        }
+
+        // out of their windows and staying out: open
+        bool isOut() const {
+            return m_flying && !m_closing && !m_tiles.empty();
+        }
+
+        bool hasTiles() const {
+            return !m_tiles.empty();
+        }
+
+        bool isClosing() const {
+            return m_closing;
+        }
+
+        bool isHeld() const {
+            return m_held;
+        }
+
+        // A gesture's hand on the flight: held at `progress` until let go.
+        void hold(float progress) {
+            if (m_tiles.empty())
+                return;
+            if (!m_flying) {
+                m_flying = true;
+                hideWindows();
+            }
+            m_held    = true;
+            m_closing = false;
+            m_heldAt  = std::clamp(progress, 0.F, 1.F);
+            damageMonitors();
+        }
+
+        // let go: on out, or home
+        void letGo(bool out) {
+            if (!m_held)
+                return;
+            m_held = false;
+            if (out) {
+                m_closing = false;
+                m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(m_heldAt));
+            } else {
+                m_closing = true;
+                m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - m_heldAt));
+            }
+            damageMonitors();
+        }
+
+        // the window's tile drawn over the others
+        bool raise(const PHLWINDOWREF& window) {
+            const auto IT = std::ranges::find_if(m_tiles, [&](const STile& tile) { return tile.window == window; });
+            if (IT == m_tiles.end())
+                return false;
+            std::rotate(IT, IT + 1, m_tiles.end());
+            damageAll();
+            return true;
+        }
+
+        // Once a frame is drawn: a flight still under way asks for the next.
+        // Damage asked for while the frame is being drawn goes into that
+        // frame, and with nothing else on screen moving there would be no
+        // next one — the flight stood still until the pointer moved.
+        void afterFrame(const PHLMONITOR& monitor) {
+            if (!m_flying || !monitor || !anchorOn(monitor))
+                return;
+            if (m_closing || std::chrono::duration<float>(Time::steadyNow() - m_since) < std::chrono::duration<float>(FLY_DURATION) + std::chrono::milliseconds{50})
+                g_pHyprRenderer->damageMonitor(monitor);
+        }
+
+        bool done() const {
+            return m_done;
+        }
+
+        // how far out of their windows a flying set's tiles are: 0 in them,
+        // 1 in place
+        float shown() const {
+            if (!m_flying)
+                return 1.F;
+            if (m_held)
+                return m_heldAt;
+            const float T = std::clamp(std::chrono::duration<float>(Time::steadyNow() - m_since).count() / std::chrono::duration<float>(FLY_DURATION).count(), 0.F, 1.F);
+            return m_closing ? 1.F - flyCurve(T) : flyCurve(T);
         }
 
         // The shell's next frame is the one it shows its pane in. A surface
@@ -379,6 +587,8 @@ namespace {
                     damageAll(); // where the old tiles were
                     m_tiles = std::move(m_pending);
                     m_pending.clear();
+                    if (fly)
+                        flyOut();
                     damageAll();
                 }));
             }
@@ -390,7 +600,11 @@ namespace {
             if (!LAYER)
                 return std::nullopt;
             if (!popup)
-                return SAnchor{.origin = LAYER->m_geometry.pos(), .surface = LAYER->wlSurface() ? LAYER->wlSurface()->resource() : nullptr};
+                return SAnchor{
+                    .origin  = LAYER->m_geometry.pos(),
+                    .alpha   = LAYER->alpha()[Desktop::View::LS_ALPHA_FADE]->value(),
+                    .surface = LAYER->wlSurface() ? LAYER->wlSurface()->resource() : nullptr,
+                };
             if (!LAYER->m_popupHead)
                 return std::nullopt;
 
@@ -413,11 +627,21 @@ namespace {
             std::vector<SDrawTile> tiles;
             if (!anchor)
                 return tiles;
+            const float SHOWN = shown();
             for (const auto& tile : m_tiles) {
-                if (tile.window.expired())
+                const auto WINDOW = tile.window.lock();
+                if (!WINDOW)
                     continue;
                 const auto ON_MONITOR = [&](const CBox& rect) { return rect.copy().translate(anchor->origin - monitor->m_position).scale(monitor->m_scale).round(); };
-                tiles.emplace_back(SDrawTile{.window = tile.window, .box = ON_MONITOR(tile.rect), .clip = ON_MONITOR(tile.clip), .badge = tile.badge});
+                auto       box        = ON_MONITOR(tile.rect);
+                auto       clip       = ON_MONITOR(tile.clip);
+                if (SHOWN < 1.F) {
+                    // on the way between the window and its tile
+                    const auto FROM = WINDOW->geometricBox(IGeometric::GEOMETRIC_CURRENT).translate(-monitor->m_position).scale(monitor->m_scale);
+                    box             = between(FROM, box, SHOWN).round();
+                    clip            = box;
+                }
+                tiles.emplace_back(SDrawTile{.window = tile.window, .box = box, .clip = clip, .badge = tile.badge});
             }
             return tiles;
         }
@@ -430,7 +654,9 @@ namespace {
             auto       tiles  = tilesOn(monitor, ANCHOR);
             if (tiles.empty())
                 return;
-            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), ANCHOR->alpha, m_badges));
+            // the windows in flight are the windows: whole all the way
+            const float ALPHA = fly ? 1.F : ANCHOR->alpha;
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), squareTop, ALPHA, m_badges));
         }
 
         // A window nobody can see is suspended and never drawn, so it would
@@ -443,6 +669,8 @@ namespace {
         void keepAlive(const PHLMONITOR& monitor) {
             // a popup mapped after the request is picked up here
             listenForCommit();
+            if (m_flying)
+                flight(monitor);
             if (m_tiles.empty() || !live)
                 return;
 
@@ -452,7 +680,9 @@ namespace {
                 // visibleOnMonitor is only an overlap: a window on another
                 // workspace still sits where it was. This asks whether the
                 // frame being drawn will contain it.
-                if (!WINDOW || !WINDOW->m_isMapped || g_pHyprRenderer->shouldRenderWindow(WINDOW, monitor))
+                // Nor will it a window this set has faded out for its flight:
+                // its picture would stand still all through Mission Control.
+                if (!WINDOW || !WINDOW->m_isMapped || (g_pHyprRenderer->shouldRenderWindow(WINDOW, monitor) && !isHidden(tile.window)))
                     continue;
 
                 ++m_counters.keepAlives;
@@ -485,6 +715,104 @@ namespace {
         std::vector<WP<CWLSurfaceResource>> m_armSurfaces;
         std::vector<PHLWINDOWREF>           m_woken; // suspended again once their tiles are gone
 
+        // a flying set's flight, and the windows it has faded out with
+        // the alpha each had before
+        bool            m_flying = false, m_closing = false, m_done = false;
+        bool            m_held   = false; // by a gesture, at m_heldAt
+        float           m_heldAt = 0.F;
+        Time::steady_tp m_since;
+        float           m_applied       = -1.F; // the flight's point last applied to the windows
+        bool            m_hiddenChanged = false;
+        struct SHidden {
+            PHLWINDOWREF window;
+            float        alpha = 1.F;
+        };
+        std::vector<SHidden> m_hidden;
+
+        // tiles in place, or newly so: out of their windows from wherever
+        // the flight is, coming back included
+        void flyOut() {
+            if (m_held) {
+                hideWindows();
+                return;
+            }
+            const float SHOWN = m_flying ? shown() : 0.F;
+            m_flying          = true;
+            m_closing         = false;
+            m_since           = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(SHOWN));
+            hideWindows();
+        }
+
+        // the tiles' windows faded with the flight, any others given back
+        void hideWindows() {
+            std::erase_if(m_hidden, [this](const SHidden& hidden) {
+                const auto WINDOW = hidden.window.lock();
+                if (WINDOW && std::ranges::any_of(m_tiles, [&](const STile& tile) { return tile.window == hidden.window; }))
+                    return false;
+                if (WINDOW)
+                    WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(hidden.alpha);
+                return true;
+            });
+            for (const auto& tile : m_tiles) {
+                const auto WINDOW = tile.window.lock();
+                if (WINDOW && std::ranges::none_of(m_hidden, [&](const SHidden& hidden) { return hidden.window == tile.window; }))
+                    m_hidden.emplace_back(SHidden{.window = tile.window, .alpha = WINDOW->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN)});
+            }
+            m_hiddenChanged = true;
+        }
+
+        bool isHidden(const PHLWINDOWREF& window) const {
+            return std::ranges::any_of(m_hidden, [&](const SHidden& hidden) { return hidden.window == window; });
+        }
+
+        void showWindows() {
+            for (const auto& hidden : m_hidden) {
+                if (const auto WINDOW = hidden.window.lock())
+                    WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(hidden.alpha);
+            }
+            m_hidden.clear();
+        }
+
+        // each frame of a flight, before it is drawn
+        void flight(const PHLMONITOR& monitor) {
+            const auto LAYER = Kiwi::layerOn(monitor, namespace_);
+            const bool ANYWHERE =
+                std::ranges::any_of(State::monitorState()->monitors(), [this](const PHLMONITOR& m) { return m && Kiwi::layerOn(m, namespace_); });
+            const float SHOWN = shown();
+            if (!ANYWHERE || (m_closing && SHOWN <= 0.F)) {
+                landed();
+                return;
+            }
+            // a warp damages what it changes even when nothing does: only
+            // while the flight moves, or Mission Control would redraw the
+            // screen every frame for as long as it is open
+            if (SHOWN != m_applied || m_hiddenChanged) {
+                m_applied       = SHOWN;
+                m_hiddenChanged = false;
+                const float LEFT = 1.F - std::clamp(SHOWN / FLY_HIDDEN_BY, 0.F, 1.F);
+                for (const auto& hidden : m_hidden) {
+                    if (const auto WINDOW = hidden.window.lock())
+                        WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(hidden.alpha * LEFT);
+                }
+            }
+            if (LAYER && LAYER->alpha()[Desktop::View::LS_ALPHA_FADE]->value() != SHOWN)
+                LAYER->alpha()[Desktop::View::LS_ALPHA_FADE]->setValueAndWarp(SHOWN);
+        }
+
+        // home, or the surface they were on is gone
+        void landed() {
+            const bool WAS_CLOSING = m_closing;
+            m_flying               = false;
+            m_closing              = false;
+            m_held                 = false;
+            showWindows();
+            if (!WAS_CLOSING)
+                return;
+            clear();
+            m_done = true;
+            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwipreviews", .data = std::format("flown,{}", name)});
+        }
+
         // Hyprland suspends a window whose workspace is not on screen, and
         // picks the state again on every workspace and monitor change, so
         // this holds only until the next one — after which the window is on
@@ -513,6 +841,37 @@ namespace {
         }
     };
 
+    // Fingers on the trackpad, as Hyprland hands them over: the travel is up
+    // the trackpad, in its units.
+    class CFlyGesture : public ITrackpadGesture {
+      public:
+        struct SHandlers {
+            std::function<void(bool up, float travel, uint32_t ms)> begin;
+            std::function<void(float travel, uint32_t ms)>          update;
+            std::function<void(bool cancelled)>                     end;
+        };
+
+        explicit CFlyGesture(SHandlers handlers) : m_handlers(std::move(handlers)) {}
+
+        void begin(const STrackpadGestureBegin& e) override {
+            ITrackpadGesture::begin(e);
+            if (e.swipe)
+                m_handlers.begin(e.direction == TRACKPAD_GESTURE_DIR_UP, -e.swipe->delta.y * m_scale, e.swipe->timeMs);
+        }
+
+        void update(const STrackpadGestureUpdate& e) override {
+            if (e.swipe)
+                m_handlers.update(-e.swipe->delta.y * m_scale, e.swipe->timeMs);
+        }
+
+        void end(const STrackpadGestureEnd& e) override {
+            m_handlers.end(e.swipe && e.swipe->cancelled);
+        }
+
+      private:
+        SHandlers m_handlers;
+    };
+
     class CKiwiPreviews {
       public:
         bool init(HANDLE handle) {
@@ -533,18 +892,38 @@ namespace {
             Kiwi::Layers::afterLayer([this](const PHLLS& layer, const PHLMONITOR& monitor, bool popups) { afterLayer(layer, monitor, popups); });
             // damage and frame callbacks belong outside the render itself
             m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) {
+                m_rendering = monitor;
+                swipeOnto();
                 for (auto& [_, set] : m_sets)
                     set->keepAlive(monitor);
+                std::erase_if(m_sets, [](const auto& entry) { return entry.second->done(); });
+            });
+            // damage from here on is the next frame's (as the genie has it)
+            m_stageListener = Event::bus()->m_events.render.stage.listen([this](eRenderStage stage) {
+                if (stage != RENDER_POST)
+                    return;
+                const auto MONITOR = m_rendering.lock();
+                for (auto& [_, set] : m_sets)
+                    set->afterFrame(MONITOR);
             });
             m_openedListener = Event::bus()->m_events.layer.opened.listen([this](PHLLS) {
                 for (auto& [_, set] : m_sets)
                     set->listenForCommit();
             });
+            // a reload has cleared the gestures, the config's own back by now
+            m_reloadListener = Event::bus()->m_events.config.reloaded.listen([this] {
+                m_gestureAdded = false;
+                g_pEventLoopManager->doLater([this] { addGesture(); });
+            });
             return true;
         }
 
         void exit() {
+            // Hyprland would call into a plugin that is gone
+            removeGesture();
+            m_reloadListener.reset();
             m_preListener.reset();
+            m_stageListener.reset();
             m_openedListener.reset();
             m_command.reset();
             m_sets.clear();
@@ -555,8 +934,12 @@ namespace {
         void afterLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool popups) {
             if (!layer || !monitor)
                 return;
-            for (auto& [_, set] : m_sets)
-                set->afterLayer(layer, monitor, popups);
+            // flying tiles last: a window dragged over Mission Control's bar
+            // goes over the desktops' pictures there
+            for (const bool FLY : {false, true})
+                for (auto& [_, set] : m_sets)
+                    if (set->fly == FLY)
+                        set->afterLayer(layer, monitor, popups);
         }
 
       private:
@@ -565,7 +948,121 @@ namespace {
         BadgeTextures                                    m_badges;
         SP<SHyprCtlCommand>                              m_command;
         CHyprSignalListener                              m_preListener;
+        CHyprSignalListener                              m_stageListener;
         CHyprSignalListener                              m_openedListener;
+        CHyprSignalListener                              m_reloadListener;
+        PHLMONITORREF                                    m_rendering;
+
+        // ─── The gesture ──────────────────────────────────────────────────────
+        // the set it flies and on how many fingers, and the swipe under way
+        std::string m_gestureSet;
+        size_t      m_gestureFingers = 0;
+        bool        m_gestureAdded   = false;
+        struct {
+            bool                active = false, opening = false;
+            float               progress = 0.F, velocity = 0.F;
+            uint32_t            lastMs   = 0;
+            Time::steady_tp     lastAt;
+            // let go before the tiles came: on out, or home
+            std::optional<bool> decided;
+            Time::steady_tp     decidedAt;
+        } m_swipe;
+
+        std::string addGesture() {
+            if (m_gestureFingers == 0)
+                return "ok";
+            removeGesture();
+            auto result = g_pTrackpadGestures->addGesture(makeUnique<CFlyGesture>(CFlyGesture::SHandlers{
+                                                              .begin  = [this](bool up, float travel, uint32_t ms) { swipeBegin(up, travel, ms); },
+                                                              .update = [this](float travel, uint32_t ms) { swipeUpdate(travel, ms); },
+                                                              .end    = [this](bool cancelled) { swipeEnd(cancelled); },
+                                                          }),
+                                                          m_gestureFingers, TRACKPAD_GESTURE_DIR_VERTICAL, 0, 1.F, false);
+            if (!result)
+                return result.error();
+            m_gestureAdded = true;
+            return "ok";
+        }
+
+        // only ever ours: one the config has on the same fingers stays
+        void removeGesture() {
+            if (m_gestureAdded)
+                (void)g_pTrackpadGestures->removeGesture(m_gestureFingers, TRACKPAD_GESTURE_DIR_VERTICAL, 0, 1.F, false);
+            m_gestureAdded = false;
+        }
+
+        CTileSet* gestureSet() {
+            const auto IT = m_sets.find(m_gestureSet);
+            return IT == m_sets.end() ? nullptr : IT->second.get();
+        }
+
+        void swipeBegin(bool up, float travel, uint32_t ms) {
+            m_swipe         = {};
+            const auto SET  = gestureSet();
+            if (SET && SET->isClosing())
+                return; // on its way home already
+            const bool OPEN = SET && SET->isOut();
+            if (up && !OPEN) {
+                m_swipe.opening = true;
+                g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("open,{}", m_gestureSet)});
+            } else if (!up && OPEN) {
+                m_swipe.progress = SET->shown();
+                SET->hold(m_swipe.progress);
+            } else
+                return;
+            m_swipe.active = true;
+            m_swipe.lastMs = ms;
+            swipeUpdate(travel, ms);
+        }
+
+        void swipeUpdate(float travel, uint32_t ms) {
+            if (!m_swipe.active)
+                return;
+            m_swipe.progress = std::clamp(m_swipe.progress + travel / GESTURE_DISTANCE, 0.F, 1.F);
+            const float DT   = std::max(1.F, static_cast<float>(ms - m_swipe.lastMs));
+            m_swipe.velocity = 0.6F * m_swipe.velocity + 0.4F * (travel / DT);
+            m_swipe.lastMs   = ms;
+            m_swipe.lastAt   = Time::steadyNow();
+            if (const auto SET = gestureSet(); SET && SET->hasTiles())
+                SET->hold(m_swipe.progress);
+        }
+
+        void swipeEnd(bool cancelled) {
+            if (!m_swipe.active)
+                return;
+            m_swipe.active = false;
+            // fingers that came to rest before letting go flicked nothing
+            if (Time::steadyNow() - m_swipe.lastAt > GESTURE_REST)
+                m_swipe.velocity = 0.F;
+            bool out = m_swipe.velocity > GESTURE_FLICK ? true : m_swipe.velocity < -GESTURE_FLICK ? false : m_swipe.progress > 0.5F;
+            if (cancelled)
+                out = !m_swipe.opening;
+            if (const auto SET = gestureSet(); SET && SET->hasTiles() && SET->isHeld())
+                SET->letGo(out);
+            else {
+                m_swipe.decided   = out;
+                m_swipe.decidedAt = Time::steadyNow();
+            }
+        }
+
+        // The tiles the swipe opened come a few frames into it: they are
+        // put where the fingers are by now, or, the fingers already gone,
+        // where the swipe would have left them.
+        void swipeOnto() {
+            const auto SET = gestureSet();
+            if (!SET || !SET->hasTiles() || SET->isHeld())
+                return;
+            if (m_swipe.active && m_swipe.opening)
+                SET->hold(m_swipe.progress);
+            else if (m_swipe.decided) {
+                // a swipe given up on long ago isn't this opening's
+                if (Time::steadyNow() - m_swipe.decidedAt < std::chrono::seconds{1}) {
+                    SET->hold(m_swipe.progress);
+                    SET->letGo(*m_swipe.decided);
+                }
+                m_swipe.decided.reset();
+            }
+        }
 
         // "<set> <namespace> <rounding> [live|still] [popup] <tile> ...",
         // "clear [<set>]" or "status"
@@ -575,31 +1072,72 @@ namespace {
             if (!WORDS.empty() && WORDS[0] == "status") {
                 std::string sets;
                 for (const auto& [name, set] : m_sets)
-                    sets += std::format(" {}: {} tiles on {}{} ({})", name, set->size(), set->namespace_, set->popup ? " popup" : "", set->live ? "live" : "still");
+                    sets += std::format(" {}: {} tiles on {}{} ({}{}{})", name, set->size(), set->namespace_, set->popup ? " popup" : "", set->live ? "live" : "still",
+                                        set->squareTop ? ", square top" : "", set->fly ? ", flying" : "");
                 return std::format("sets:{}; commits {}, damages {}, keepalives {}\n", sets.empty() ? " none" : sets, m_counters.commits, m_counters.damages,
                                    m_counters.keepAlives);
             }
-            if (WORDS.empty() || WORDS[0] == "clear") {
-                if (WORDS.size() > 1)
-                    m_sets.erase(std::string{WORDS[1]});
+            if (WORDS.size() == 3 && WORDS[0] == "gesture") {
+                size_t fingers = 0;
+                if (!parse(WORDS[2], fingers))
+                    return "fingers must be a number";
+                removeGesture();
+                m_gestureSet     = std::string{WORDS[1]};
+                m_gestureFingers = fingers;
+                return addGesture();
+            }
+            if (WORDS.size() == 3 && WORDS[0] == "raise") {
+                const auto IT     = m_sets.find(WORDS[1]);
+                const auto WINDOW = windowFrom(WORDS[2]);
+                if (IT == m_sets.end() || !WINDOW || !IT->second->raise(WINDOW))
+                    return "no such tile";
+                return "ok";
+            }
+            // the gesture's swipe without a trackpad, step by step: for tests,
+            // and for playing the same swipe back as often as needed
+            if (WORDS.size() >= 2 && WORDS[0] == "swipe") {
+                float    travel = 0.F;
+                uint32_t ms     = 0;
+                if (WORDS[1] == "begin" && WORDS.size() == 3 && (WORDS[2] == "up" || WORDS[2] == "down"))
+                    swipeBegin(WORDS[2] == "up", 0.F, 0);
+                else if (WORDS[1] == "update" && WORDS.size() == 4 && parse(WORDS[2], travel) && parse(WORDS[3], ms))
+                    swipeUpdate(travel, ms);
+                else if (WORDS[1] == "end")
+                    swipeEnd(WORDS.size() == 3 && WORDS[2] == "cancel");
                 else
+                    return "usage: kiwi-previews swipe begin up|down | update <travel> <ms> | end [cancel]";
+                return "ok";
+            }
+            if (WORDS.empty() || WORDS[0] == "clear") {
+                if (WORDS.size() > 1) {
+                    // a flying set goes when it has flown home
+                    if (const auto IT = m_sets.find(WORDS[1]); IT != m_sets.end()) {
+                        IT->second->close();
+                        if (IT->second->done())
+                            m_sets.erase(IT);
+                    }
+                } else
                     m_sets.clear();
                 return "ok";
             }
             if (WORDS.size() < 3)
-                return "usage: kiwi-previews <set> <namespace> <rounding> [live|still] [popup] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...";
+                return "usage: kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...";
 
             int rounding = 0;
             if (!parse(WORDS[2], rounding))
                 return "rounding must be a number";
 
             size_t first = 3;
-            bool   live = false, popup = false;
+            bool   live = false, popup = false, squareTop = false, fly = false;
             for (; first < WORDS.size(); ++first) {
                 if (WORDS[first] == "live")
                     live = true;
                 else if (WORDS[first] == "popup")
                     popup = true;
+                else if (WORDS[first] == "square-top")
+                    squareTop = true;
+                else if (WORDS[first] == "fly")
+                    fly = true;
                 else if (WORDS[first] != "still")
                     break;
             }
@@ -644,6 +1182,9 @@ namespace {
             set->rounding   = rounding;
             set->live       = live;
             set->popup      = popup;
+            set->squareTop  = squareTop;
+            set->fly        = fly;
+            set->name       = NAME;
 
             const auto COUNT = tiles.size();
             set->apply(std::move(tiles));
