@@ -5,6 +5,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, createBinding, onCleanup } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
+import GLib from "gi://GLib"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { playSound } from "../sound"
@@ -222,94 +223,129 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
 // ─── Where the tiles are ──────────────────────────────────────────────────────
 // With kiwi-previews in the compositor the windows are drawn over the tiles
 // (services/previews.ts), measured after every layout from the widget that
-// holds the picture. Its top corners meet the title bar, so only the bottom
-// ones are rounded.
+// holds the picture.
 
-const live = new LiveTiles({ set: "app-switcher", namespace: LAYER.switcher, motion: "live", radius: 6, squareTop: true })
+// TEMPORARY: the two looks being compared, KIWI_ALTTAB=b for the second
+const TITLE_BELOW = GLib.getenv("KIWI_ALTTAB") === "b"
+
+// a window's title bar above its picture: only the bottom corners are rounded
+const live = new LiveTiles({
+    set: "app-switcher", namespace: LAYER.switcher, motion: "live",
+    radius: TITLE_BELOW ? 10 : 6, squareTop: !TITLE_BELOW,
+})
 
 // Uniform height, width hugs the window's aspect ratio — the tile IS the
 // preview (narrow windows get narrow tiles, same as Windows Alt-Tab).
 // Outside the clamps the tile can't hug: those windows are cover-zoomed to
 // fill it instead of floating in letterbox space.
-const PREVIEW_HEIGHT = 170
-const MIN_TILE_WIDTH = 140
-const MAX_TILE_WIDTH = 720
+//
+// The previews are as tall as a quarter of the display at most (layOut).
+const HEIGHT_SHARE = 0.25
+const MIN_HEIGHT = 140
+const MAX_HEIGHT = 280
+const TILE_GAP = 12
+const MIN_TILE_ASPECT = 0.82
+const MAX_TILE_ASPECT = 4.2
 
 // a clamped tile zooms its frame to cover both the minimum width and the height
-reservePreviewSize(MIN_TILE_WIDTH, PREVIEW_HEIGHT)
+reservePreviewSize(Math.round(MAX_HEIGHT * MIN_TILE_ASPECT), MAX_HEIGHT)
 
-function rawAspectWidth(w: number, h: number): number {
-    return h > 0 ? Math.round(PREVIEW_HEIGHT * w / h) : 280
+function rawAspectWidth(w: number, h: number, height: number): number {
+    return h > 0 ? Math.round(height * w / h) : Math.round(height * 1.6)
 }
 
-const clampTile = (w: number) =>
-    Math.min(MAX_TILE_WIDTH, Math.max(MIN_TILE_WIDTH, w))
-
-function aspectWidth(w: number, h: number): number {
-    return clampTile(rawAspectWidth(w, h))
-}
+const clampTile = (w: number, height: number) =>
+    Math.min(Math.round(height * MAX_TILE_ASPECT), Math.max(Math.round(height * MIN_TILE_ASPECT), w))
 
 // tile width from the compositor's freshest size poll — capture pixel
 // sizes are NOT used: a window hanging off a workspace edge yields a
 // clipped capture, and sizing from it would warp the tile. Astal client
 // geometry (stale after resizes) is only the fallback.
-function rawPreviewWidth(client: any): number {
+function rawPreviewWidth(client: any, height: number): number {
     // a minimized window's frame can predate its move to the scratchpad
     // workspace, whose layout may have resized it — size from the frame
     // on display instead
     if (isMinimized(client)) {
         const cached = getCachedTexture(client.get_address())
-        if (cached) return rawAspectWidth(cached.get_width(), cached.get_height())
+        if (cached) return rawAspectWidth(cached.get_width(), cached.get_height(), height)
     }
     const fresh = freshClientSize(client.get_address())
     return fresh
-        ? rawAspectWidth(fresh[0], fresh[1])
-        : rawAspectWidth(client.get_width(), client.get_height())
+        ? rawAspectWidth(fresh[0], fresh[1], height)
+        : rawAspectWidth(client.get_width(), client.get_height(), height)
 }
 
-function previewWidth(client: any): number {
-    return clampTile(rawPreviewWidth(client))
+function previewWidth(client: any, height: number): number {
+    return clampTile(rawPreviewWidth(client, height), height)
+}
+
+// The windows in centred rows across `budget`. One row as long as the
+// previews can still be ONE_ROW_SHARE of `tallest` tall, as macOS's switcher
+// is a single row; past that, the fewest rows of even length at the tallest
+// height that fits.
+const ONE_ROW_SHARE = 0.8
+
+function layOut(clients: any[], budget: number, tallest: number) {
+    const widths = (height: number) => clients.map(client => previewWidth(client, height) + TILE_GAP)
+    const fits = (rows: number, height: number) => {
+        const all = widths(height)
+        const total = all.reduce((a, b) => a + b, 0)
+        return Math.max(...all) <= budget && total <= budget * rows - (rows - 1) * Math.max(...all)
+    }
+    // even rows: each takes windows until it has its share of the total width
+    const split = (rows: number, height: number) => {
+        const all = widths(height)
+        const share = all.reduce((a, b) => a + b, 0) / rows
+        const out: any[][] = [[]]
+        let width = 0
+        clients.forEach((client, i) => {
+            if (out.length < rows && out[out.length - 1].length > 0 && width + all[i] / 2 > share * out.length) out.push([])
+            out[out.length - 1].push(client)
+            width += all[i]
+        })
+        return out
+    }
+    const tallestFitting = (rows: number, lowest: number) => {
+        for (let height = tallest; height >= lowest; height -= 2)
+            if (fits(rows, height)) return height
+        return null
+    }
+    if (clients.length === 0) return { height: tallest, rows: [] as any[][] }
+    const one = tallestFitting(1, Math.round(tallest * ONE_ROW_SHARE))
+    if (one) return { height: one, rows: [clients] }
+    for (let rows = 2; rows < clients.length; rows++) {
+        const height = tallestFitting(rows, MIN_HEIGHT)
+        if (height) return { height, rows: split(rows, height) }
+    }
+    return { height: MIN_HEIGHT, rows: clients.map(c => [c]) }
 }
 
 function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // previews wrap into centered rows instead of shrinking. Chunked by
     // hand: card widths are known upfront, and GtkFlowBox is a grid in
     // disguise — it stretches cards to uniform column widths.
-    const rows = createComputed(get => {
+    const layout = createComputed(get => {
         const monitor = get(popupGdkMonitor) ?? gdkmonitor
+        const { width, height } = monitor.get_geometry()
         // rows wrap well before the screen edge so the panel never reads
         // as a full-width band
-        const budget = monitor.get_geometry().width * 0.85
-        const chunks: any[][] = []
-        let row: any[] = []
-        let width = 0
-        for (const client of get(displayedClients)) {
-            const w = previewWidth(client)
-            if (row.length > 0 && width + w > budget) {
-                chunks.push(row)
-                row = []
-                width = 0
-            }
-            row.push(client)
-            width += w
-        }
-        if (row.length > 0) chunks.push(row)
-        return chunks
+        const tallest = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.round(height * HEIGHT_SHARE)))
+        return layOut(get(displayedClients), width * 0.88, tallest)
     })
 
     const pane = (
         <box
-            class="app-switch-container"
+            class={TITLE_BELOW ? "app-switch-container title-below" : "app-switch-container"}
             orientation={Gtk.Orientation.VERTICAL}
-            spacing={4}
+            spacing={TILE_GAP}
             // hug the rows — FILL (the default) would stretch the
             // panel to the full window width, erasing the edge gap
             halign={Gtk.Align.CENTER}
         >
-            <For each={rows}>
-                {(row) => (
-                    <box spacing={4} halign={Gtk.Align.CENTER}>
-                        {row.map(client => <WindowPreview client={client} />)}
+            <For each={layout(l => l.rows.map(row => ({ row, height: l.height })))}>
+                {({ row, height }) => (
+                    <box spacing={TILE_GAP} halign={Gtk.Align.CENTER}>
+                        {row.map(client => <WindowPreview client={client} height={height} />)}
                     </box>
                 )}
             </For>
@@ -331,7 +367,7 @@ function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     return menu
 }
 
-export function WindowPreview({ client }: { client: any }) {
+export function WindowPreview({ client, height }: { client: any, height: number }) {
     if (!client) return null
 
     const address = client.get_address()
@@ -358,21 +394,22 @@ export function WindowPreview({ client }: { client: any }) {
     // the tile is a real button (click to switch, Windows style); the ✕
     // floats in a sibling overlay layer above it, so the two never fight
     // over clicks — no nested buttons, no gesture filtering
+    // maxWidthChars=1 lets the ellipsized label shrink below its natural
+    // width instead of clipping early
+    const title = (
+        <label
+            class="preview-title"
+            label={titleBinding}
+            ellipsize={Pango.EllipsizeMode.END}
+            maxWidthChars={1}
+            hexpand
+            xalign={TITLE_BELOW ? 0.5 : 0}
+        />
+    )
     const tile = (
         <button class="window-preview" onclicked={activate}>
             <box orientation={Gtk.Orientation.VERTICAL} spacing={0}>
-            <box class="preview-title-bar">
-                {/* maxWidthChars=1 lets the ellipsized label shrink below
-                    its natural width instead of clipping early */}
-                <label
-                    class="preview-title"
-                    label={titleBinding}
-                    ellipsize={Pango.EllipsizeMode.END}
-                    maxWidthChars={1}
-                    hexpand
-                    xalign={0}
-                />
-            </box>
+            {TITLE_BELOW ? <box /> : <box class="preview-title-bar">{title}</box>}
 
             <overlay>
                 {/* a Picture's natural width is the full screenshot size, so
@@ -398,11 +435,11 @@ export function WindowPreview({ client }: { client: any }) {
                     overflow={Gtk.Overflow.HIDDEN}
                     hscrollbarPolicy={Gtk.PolicyType.NEVER}
                     vscrollbarPolicy={Gtk.PolicyType.NEVER}
-                    heightRequest={PREVIEW_HEIGHT}
+                    heightRequest={height}
                     // texture() is only the re-evaluation trigger (captures
                     // land alongside size changes); the size itself always
                     // comes from compositor geometry
-                    widthRequest={texture(() => previewWidth(client))}
+                    widthRequest={texture(() => previewWidth(client, height))}
                 >
                     <Gtk.Picture
                         canShrink={true}
@@ -411,13 +448,13 @@ export function WindowPreview({ client }: { client: any }) {
                         // clamp kicked in the tile can't match the aspect —
                         // zoom-crop to fill instead of letterboxing
                         contentFit={texture(t => {
-                            const raw = rawPreviewWidth(client)
-                            if (raw !== clampTile(raw)) return Gtk.ContentFit.COVER
+                            const raw = rawPreviewWidth(client, height)
+                            if (raw !== clampTile(raw, height)) return Gtk.ContentFit.COVER
                             // a frame captured before a retile no longer
                             // matches the window's aspect — fill and crop
                             // until the settle-recapture replaces it,
                             // instead of flashing a letterbox
-                            if (t && Math.abs(rawAspectWidth(t.get_width(), t.get_height()) - raw) > 8)
+                            if (t && Math.abs(rawAspectWidth(t.get_width(), t.get_height(), height) - raw) > 8)
                                 return Gtk.ContentFit.COVER
                             return Gtk.ContentFit.CONTAIN
                         })}
@@ -436,6 +473,7 @@ export function WindowPreview({ client }: { client: any }) {
                     <AppIconImage entry={entryForClient(client)} pixelSize={64} cssClass="switcher-badge-icon" />
                 </box>
             </overlay>
+            {TITLE_BELOW ? <box class="preview-title-below">{title}</box> : <box />}
             </box>
         </button>
     ) as Gtk.Button
@@ -451,15 +489,17 @@ export function WindowPreview({ client }: { client: any }) {
     return (
         <overlay class="preview-tile">
             {tile}
-            {/* hover-revealed, floating over the end of the title bar so it
-                reserves no layout space there */}
+            {/* hover-revealed, floating over the end of the title so it
+                reserves no layout space there — not over the picture, which
+                the compositor draws over the shell */}
             <button
                 $type="overlay"
                 class="switcher-preview-close"
                 halign={Gtk.Align.END}
-                valign={Gtk.Align.START}
+                valign={TITLE_BELOW ? Gtk.Align.END : Gtk.Align.START}
                 marginTop={10}
-                marginEnd={6}
+                marginBottom={TITLE_BELOW ? 9 : 0}
+                marginEnd={TITLE_BELOW ? 8 : 6}
                 onclicked={() => closeClientFromSwitcher(client)}
             >
                 <Gtk.Image iconName="window-close-symbolic" pixelSize={12} />

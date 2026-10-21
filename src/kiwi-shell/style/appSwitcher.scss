@@ -2,8 +2,8 @@
 
 .app-switch-container {
     @include panel;
-    padding: 24px;
-    border-radius: 8px;
+    padding: 18px;
+    border-radius: 22px;
 }
 
 // joined with the screenshot below into one window-like block
@@ -83,8 +83,29 @@ button.switcher-preview-close {
 
 .selected {
     background-color: var(--k-fill-subtle);
-    border-radius: 8px;
+    border-radius: 13px;
     border-color: var(--primary);
+}
+
+// the title under the picture, as macOS names the app under its icon
+.preview-title-below {
+    padding: 6px 4px 1px;
+}
+
+.title-below {
+    .preview-title {
+        font-size: 12px;
+        color: var(--k-fg-3);
+    }
+
+    .selected .preview-title {
+        color: var(--k-fg);
+        font-weight: 600;
+    }
+
+    .window-preview-container {
+        border-radius: 10px;
+    }
 }
 
 
@@ -92,35 +113,4 @@ button.switcher-preview-close {
     color: var(--k-fg-2);
     font-size: 11px;
     padding: 2px 3px;
-}
-
-// ─── Workspace switcher ──────────────────────────────────────────────────────
-
-.ws-number {
-    font-weight: bold;
-    font-size: 12px;
-    color: var(--k-fg);
-    margin-right: 6px;
-}
-
-// behind the wallpaper until it has loaded
-.ws-canvas {
-    background-color: var(--k-well);
-    border-radius: 0 0 6px 6px;
-}
-
-// the background only shows behind the icon, until a capture exists
-.ws-mini-window {
-    background-color: rgba(190, 190, 190, 0.22);
-    border-radius: 4px;
-}
-
-.ws-mini-icon {
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
-}
-
-// over the wallpaper, so it needs the shadow to read on light photos
-.ws-plus {
-    color: rgba(255, 255, 255, 0.9);
-    -gtk-icon-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
 }
