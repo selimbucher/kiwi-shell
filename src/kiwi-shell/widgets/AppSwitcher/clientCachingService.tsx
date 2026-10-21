@@ -72,13 +72,24 @@ function drainQueue() {
 // ─── Core capture ──────────────────────────────────────────────────────────────
 // Internal — enqueues a live capture and updates the cache on success. A
 // failed capture resolves to the last good frame, if there is one.
+
+// A window without a monitor (its only monitor unplugged, or dropping off the
+// bus) has nothing to be captured from, and Hyprland 0.56.2 crashes on the
+// request: it reads the window's monitor as it sets the capture up. Fixed
+// after 0.56.2 (hyprwm/Hyprland#16451); until a release has it, such a window
+// isn't asked for.
+function onMonitor(address: string): boolean {
+    const monitor = hyprland.get_client(address)?.get_monitor()
+    return !!monitor && hyprland.get_monitors().some(m => m.get_id() === monitor.get_id())
+}
+
 function captureNow(address: string): Promise<Gdk.Texture | null> {
     return new Promise((resolve) => {
         captureQueue.push(() => {
             // closed while queued: Hyprland never answers a capture of a
             // window that is gone, which would stall the queue until the
-            // C-side timeout
-            if (!hyprland.get_client(address)) {
+            // C-side timeout; and none for a window without a monitor
+            if (!hyprland.get_client(address) || !onMonitor(address)) {
                 resolve(cache.get(address)?.texture ?? null)
                 Promise.resolve().then(drainQueue)
                 return
