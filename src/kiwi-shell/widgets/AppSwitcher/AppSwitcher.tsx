@@ -14,7 +14,7 @@ import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/
 import { entryForClient, AppIconImage, iconFileForEntry } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
-import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, closeWindow, clientSelector, type BindOp } from "../../hypr"
+import { applyBinds, registerBindSetup, closeWindow, clientSelector, type BindOp } from "../../hypr"
 import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 
@@ -38,11 +38,10 @@ hyprland.connect("notify::focused-client", () => {
 
 // ─── App switcher keybinds (shortcuts.app_switcher, default Alt+Tab) ─────────
 // Registered on startup and after every config reload (reloads wipe dynamic
-// binds). A foreign root bind on the shortcut or on its modifier's release
-// means the user has their own alt-tab — leave the keyboard alone. The
-// modifier release binds must live in the root submap: a bind matches the
-// submap active at key PRESS, and the modifier goes down before the submap
-// is entered (isVisible no-ops the stray fires).
+// binds); a bind of the Hyprland config on these keys is gone by then
+// (shortcuts.ts). The modifier release binds must live in the root submap: a
+// bind matches the submap active at key PRESS, and the modifier goes down
+// before the submap is entered (isVisible no-ops the stray fires).
 
 let registered: Shortcut | null = null
 
@@ -73,20 +72,6 @@ async function registerAltTabBinds() {
     const s = shortcut("app_switcher")
     const entry = combo(s)
     const release = `${s.mods[0]} + ${heldModifierKey(s)}`
-    try {
-        const binds = await currentBinds()
-        const foreign = binds.find((b: any) =>
-            (b.key === s.key || b.key === heldModifierKey(s)) &&
-            b.modmask === s.modmask && b.submap === "" && !isKiwiBind(b))
-        if (foreign) {
-            log.warn("foreign app switcher bind found, leaving keybinds alone:",
-                describeBind(foreign))
-            return
-        }
-    } catch (e) {
-        log.error("failed to query binds, skipping app switcher setup:", e)
-        return
-    }
 
     // applied atomically and in order. Submap definitions append on
     // redefinition, hence the unbinds inside it first.

@@ -4,6 +4,7 @@ import Bar from "./widgets/Bar/Bar"
 import IndicatorBar from "./widgets/IndicatorBar/IndicatorBar"
 import AppSwitcher from "./widgets/AppSwitcher/AppSwitcher"
 import MissionControl from "./widgets/MissionControl/MissionControl"
+import WorkspaceSwitcher from "./widgets/WorkspaceSwitcher/WorkspaceSwitcher"
 import Dock from "./widgets/Dock/Dock"
 import Desktop from "./widgets/Desktop/Desktop"
 import Launcher from "./widgets/Launcher/Launcher"
@@ -46,6 +47,7 @@ app.start({
             {index() === 0 && <IndicatorBar gdkmonitor={gdkmonitor} />}
             {index() === 0 && <AppSwitcher gdkmonitor={gdkmonitor} />}
             {index() === 0 && <MissionControl gdkmonitor={gdkmonitor} />}
+            {index() === 0 && <WorkspaceSwitcher gdkmonitor={gdkmonitor} />}
             {index() === 0 && <Launcher gdkmonitor={gdkmonitor} />}
             {index() === 0 && <Prompt gdkmonitor={gdkmonitor} />}
           </This>

@@ -8,7 +8,7 @@ import Pango from "gi://Pango"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, dialect, type BindOp } from "../../hypr"
+import { applyBinds, currentBinds, registerBindSetup, dialect, type BindOp } from "../../hypr"
 import { shortcut, combo, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { search, GROUP_LABEL, type Result } from "./providers"
@@ -66,17 +66,9 @@ async function registerLauncherBind() {
     const s = shortcut("launcher")
     let haveToggle = false
     try {
+        // a bind of the Hyprland config on these keys is gone by now
+        // (shortcuts.ts): kiwi's shortcuts take their keys
         const binds = await currentBinds()
-        // any foreign bind on the same combo (for a tap, press or release —
-        // both collide with tap semantics) means the user has their own setup
-        const foreign = binds.find((b: any) =>
-            b.key === s.key && b.modmask === s.modmask &&
-            b.submap === "" && !isKiwiBind(b))
-        if (foreign) {
-            log.warn("foreign bind on the launcher shortcut found, leaving keybinds alone:",
-                describeBind(foreign))
-            return
-        }
         haveToggle = binds.some((b: any) =>
             b.description === "kiwi: launcher" && b.key === s.key && b.modmask === s.modmask)
     } catch (e) {

@@ -10,7 +10,7 @@ import { themeClasses, LAYER } from "../services/theme"
 import { AnimatedColumn } from "./AnimatedColumn"
 import { CARD_WIDTH, rowFactory } from "./NotificationCard"
 import { centerOpen, closeCenter, layout, openCenter, setBannerHover } from "./store"
-import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind } from "../../hypr"
+import { applyBinds, currentBinds, registerBindSetup } from "../../hypr"
 import { optionalShortcut, combo, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { logger } from "../../log"
@@ -40,8 +40,7 @@ export function closeNc() {
 }
 
 // ─── Keybind ──────────────────────────────────────────────────────────────────
-// Unset unless the user sets shortcuts.notification_center. Left alone when
-// their Hyprland config already binds the same keys.
+// Unset unless the user sets shortcuts.notification_center.
 
 const TOGGLE = globalShortcut("notification-center", "Notification Center: open or close", "press", toggleNc)
 let registered: Shortcut | null = null
@@ -53,12 +52,6 @@ async function registerNotificationCenterBind() {
     if (!s) return
     try {
         const binds = await currentBinds()
-        const foreign = binds.find((b: any) =>
-            b.key === s.key && b.modmask === s.modmask && b.submap === "" && !isKiwiBind(b))
-        if (foreign) {
-            log.warn("foreign bind on the notification center shortcut found, leaving it alone:", describeBind(foreign))
-            return
-        }
         if (binds.some((b: any) => b.description === "kiwi: notification center" && b.key === s.key && b.modmask === s.modmask)) {
             registered = s
             return

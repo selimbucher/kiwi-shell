@@ -15,8 +15,8 @@ import { livePreviews, LiveTiles, PreviewPane, raisePreview, type Rect } from ".
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { focusClient } from "../Dock/dock-state"
-import { applyBinds, currentBinds, registerBindSetup, isKiwiBind, describeBind, moveWindowToWorkspace, type BindOp } from "../../hypr"
-import { shortcut, combo, type Shortcut, type ShortcutName } from "../../shortcuts"
+import { applyBinds, currentBinds, registerBindSetup, moveWindowToWorkspace, type BindOp } from "../../hypr"
+import { shortcut, combo, type Shortcut, type ShortcutName, type OptionalShortcutName } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { spread, type Box, type Slot } from "./spread"
 import {
@@ -272,7 +272,7 @@ hyprland.connect("client-removed", refreshSoon)
 hyprland.connect("notify::focused-workspace", refreshSoon)
 
 // ─── Shortcuts ────────────────────────────────────────────────────────────────
-// Mission Control's own (shortcuts.workspace_switcher, Ctrl+Super+Up, macOS's
+// Mission Control's own (shortcuts.mission_control, Ctrl+Super+Up, macOS's
 // Control+Up) opens and closes it; the desktop ones (Ctrl+Super+Left/Right,
 // macOS's Control+Left/Right) go to the desktop next to this one, also while
 // Mission Control is open, which then shows that desktop's windows.
@@ -286,8 +286,8 @@ const TOGGLE = globalShortcut("mission-control", "Mission Control: open or close
 const LEFT = globalShortcut("desktop-left", "Go to the desktop on the left", "press", () => void step(-1))
 const RIGHT = globalShortcut("desktop-right", "Go to the desktop on the right", "press", () => void step(1))
 
-const BINDS: { name: Exclude<ShortcutName, "notification_center">; action: ReturnType<typeof globalShortcut>; description: string }[] = [
-    { name: "workspace_switcher", action: TOGGLE, description: "kiwi: mission control" },
+const BINDS: { name: Exclude<ShortcutName, OptionalShortcutName>; action: ReturnType<typeof globalShortcut>; description: string }[] = [
+    { name: "mission_control", action: TOGGLE, description: "kiwi: mission control" },
     { name: "desktop_left", action: LEFT, description: "kiwi: desktop left" },
     { name: "desktop_right", action: RIGHT, description: "kiwi: desktop right" },
 ]
@@ -304,14 +304,10 @@ async function registerBinds() {
     }
     const ops: BindOp[] = []
     const wanted: Shortcut[] = []
+    // a bind of the Hyprland config on these keys is gone by now (shortcuts.ts)
     for (const { name, action, description } of BINDS) {
         const s = shortcut(name)
         const on = (b: any) => b.submap === "" && b.key === s.key && b.modmask === s.modmask
-        const foreign = binds.find(b => on(b) && !isKiwiBind(b))
-        if (foreign) {
-            log.warn(`foreign bind on ${combo(s)}, leaving it alone:`, describeBind(foreign))
-            continue
-        }
         wanted.push(s)
         if (binds.some(b => on(b) && b.description === description)) continue
         ops.push({ unbind: combo(s) }, { bind: combo(s), action, description })
