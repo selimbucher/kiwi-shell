@@ -146,40 +146,85 @@ export function wallpaperDetail(path: string): string {
 
 const thumbnails = new Map<string, Promise<Gdk.Texture | null>>()
 
-// Decodes at thumbnail size (covering width x height at scale 2) off the main
-// loop: the wallpapers themselves are often 5-8K, 100 MB+ as a full texture.
+// How much of the file goes to the decoder per turn of the main loop. The
+// decoder works as the bytes come in, so a photo costs the shell a few
+// milliseconds a turn: decoding a 4K wallpaper in one go, then scaling it,
+// held everything up for half a second the first time Mission Control opened.
+const CHUNK = 16 * 1024
+
+// Scaling the decoded image is one go on the main loop too, cheap for a small
+// image only (pixels); past that the GPU scales the picture as it draws it,
+// unless the image would take this many times the room the size asked for does.
+const CHEAP_SCALE = 1_000_000
+const ROOM_FACTOR = 4
+
+// The size to decode a `width` x `height` image at, to cover `want` x
+// `wantHeight`. A JPEG decodes at 1/2, 1/4 or 1/8 of its size at a fraction
+// of the cost, so it comes at the smallest of those that still covers.
+function decodeSize(format: string, width: number, height: number, wantWidth: number, wantHeight: number) {
+    const factor = Math.min(1, Math.max(wantWidth / width, wantHeight / height))
+    const cover = { width: Math.round(width * factor), height: Math.round(height * factor) }
+    let native = { width, height }
+    if (format === "jpeg") {
+        for (const n of [8, 4, 2]) {
+            const w = Math.ceil(width / n), h = Math.ceil(height / n)
+            if (w >= wantWidth && h >= wantHeight) {
+                native = { width: w, height: h }
+                break
+            }
+        }
+    }
+    const pixels = (s: { width: number, height: number }) => s.width * s.height
+    return pixels(native) <= CHEAP_SCALE || pixels(native) > ROOM_FACTOR * pixels(cover) ? cover : native
+}
+
+// Decodes to cover width x height at scale 2, a little at a time (CHUNK):
+// the wallpapers themselves are often 5-8K, 100 MB+ as a full texture.
 export function loadThumbnail(path: string, width: number, height: number): Promise<Gdk.Texture | null> {
     const key = `${path}|${width}x${height}`
     const cached = thumbnails.get(key)
     if (cached) return cached
 
     const promise = new Promise<Gdk.Texture | null>(resolve => {
-        try {
-            const [, imageWidth, imageHeight] = GdkPixbuf.Pixbuf.get_file_info(path)
-            if (!imageWidth || !imageHeight) return resolve(null)
-            const factor = Math.min(1, Math.max((width * 2) / imageWidth, (height * 2) / imageHeight))
-            const stream = Gio.File.new_for_path(path).read(null)
-            GdkPixbuf.Pixbuf.new_from_stream_at_scale_async(
-                stream,
-                Math.round(imageWidth * factor),
-                Math.round(imageHeight * factor),
-                true,
-                null,
-                (_source, result) => {
-                    try {
-                        const pixbuf = GdkPixbuf.Pixbuf.new_from_stream_finish(result)
-                        resolve(pixbuf ? Gdk.Texture.new_for_pixbuf(pixbuf) : null)
-                    } catch (error) {
-                        log.debug(`Failed to load ${path}:`, error)
-                        resolve(null)
-                    } finally {
-                        stream.close(null)
-                    }
-                },
-            )
-        } catch (error) {
+        const fail = (error: unknown) => {
             log.debug(`Failed to load ${path}:`, error)
             resolve(null)
+        }
+        try {
+            const [format, imageWidth, imageHeight] = GdkPixbuf.Pixbuf.get_file_info(path)
+            if (!format || !imageWidth || !imageHeight) return resolve(null)
+            const size = decodeSize(format.get_name(), imageWidth, imageHeight, width * 2, height * 2)
+            const loader = new GdkPixbuf.PixbufLoader()
+            if (size.width !== imageWidth || size.height !== imageHeight) loader.set_size(size.width, size.height)
+
+            Gio.File.new_for_path(path).read_async(GLib.PRIORITY_DEFAULT_IDLE, null, (file, result) => {
+                let stream: Gio.FileInputStream
+                try {
+                    stream = file!.read_finish(result)
+                } catch (error) {
+                    return fail(error)
+                }
+                const next = () => stream.read_bytes_async(CHUNK, GLib.PRIORITY_DEFAULT_IDLE, null, (_s, result) => {
+                    try {
+                        const bytes = stream.read_bytes_finish(result)
+                        if (bytes.get_size() > 0) {
+                            loader.write_bytes(bytes)
+                            return next()
+                        }
+                        stream.close(null)
+                        loader.close()
+                        const pixbuf = loader.get_pixbuf()
+                        resolve(pixbuf ? Gdk.Texture.new_for_pixbuf(pixbuf) : null)
+                    } catch (error) {
+                        stream.close(null)
+                        try { loader.close() } catch { /* already failed */ }
+                        fail(error)
+                    }
+                })
+                next()
+            })
+        } catch (error) {
+            fail(error)
         }
     })
     thumbnails.set(key, promise)
