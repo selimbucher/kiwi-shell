@@ -289,22 +289,24 @@ namespace {
                         CBox box{OFFSET + offset * FACTOR, surface->m_current.size * FACTOR};
                         box.round();
 
-                        // anything inside the window is drawn square, and cut
-                        // off by the clip
-                        if (surface != SURFACE->resource()) {
+                        // The window itself carries the tile's rounded
+                        // corners, and so does a surface inside it that
+                        // reaches one of them: Firefox and Thunderbird draw
+                        // all they show in one that covers the window, as
+                        // Hyprland rounds every surface of a window. Anything
+                        // else inside is drawn square, and cut off by the clip.
+                        CBox SHOWN = box.intersection(tile.box);
+                        if (SHOWN.empty())
+                            return;
+                        if (surface != SURFACE->resource() && !reachesCorner(SHOWN, tile.box)) {
                             g_pHyprOpenGL->renderTexture(surface->m_current.texture, box, {.surface = surface, .a = m_alpha});
                             return;
                         }
 
-                        // The window itself is what carries the tile's rounded
-                        // corners, so it is drawn at the tile's size, the part
-                        // of it outside the tile left out by its texture
-                        // coordinates: rounding applies to the box drawn.
-                        // Square top corners are rounded out of sight, above
-                        // the clip.
-                        CBox SHOWN = box.intersection(tile.box);
-                        if (SHOWN.empty())
-                            return;
+                        // Drawn at the tile's size, the part outside the tile
+                        // left out by its texture coordinates: rounding
+                        // applies to the box drawn. Square top corners are
+                        // rounded out of sight, above the clip.
                         if (m_squareTop) {
                             SHOWN.y -= m_rounding;
                             SHOWN.h += m_rounding;
@@ -329,6 +331,16 @@ namespace {
             }
 
             return {};
+        }
+
+        // whether a box shown in a tile takes up one of the tile's corners
+        static bool reachesCorner(const CBox& shown, const CBox& tile) {
+            constexpr double SLACK = 1.0; // pixels, for rounding
+            const bool       LEFT   = shown.x <= tile.x + SLACK;
+            const bool       TOP    = shown.y <= tile.y + SLACK;
+            const bool       RIGHT  = shown.x + shown.w >= tile.x + tile.w - SLACK;
+            const bool       BOTTOM = shown.y + shown.h >= tile.y + tile.h - SLACK;
+            return (LEFT || RIGHT) && (TOP || BOTTOM);
         }
 
         // in the picture's bottom-right corner, still cut off by the clip
