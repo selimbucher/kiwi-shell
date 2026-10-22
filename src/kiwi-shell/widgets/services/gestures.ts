@@ -48,13 +48,19 @@ const MC_CLOSE = globalShortcut("gesture-mission-control-close", "Gesture: close
 const NC_OPEN = globalShortcut("gesture-notifications-open", "Gesture: open Notification Center", "press", openNc)
 const NC_CLOSE = globalShortcut("gesture-notifications-close", "Gesture: close Notification Center", "press", closeNc)
 
-type Trigger = { fingers: number; direction: "up" | "down" | "left" | "right"; action: { global: string } }
+type Trigger = {
+    fingers: number
+    direction: "up" | "down" | "left" | "right"
+    action: { global: string }
+    // the fingers coming back the same way, without lifting, undo it
+    back?: { global: string }
+}
 
 const TRIGGERS: Trigger[] = [
     { fingers: 3, direction: "up", action: MC_OPEN },
     { fingers: 3, direction: "down", action: MC_CLOSE },
-    { fingers: 4, direction: "left", action: NC_OPEN },
-    { fingers: 4, direction: "right", action: NC_CLOSE },
+    { fingers: 4, direction: "left", action: NC_OPEN, back: NC_CLOSE },
+    { fingers: 4, direction: "right", action: NC_CLOSE, back: NC_OPEN },
 ]
 
 // the swipe through the desktops: one per swipe, none made, eager like a Mac's
@@ -62,26 +68,44 @@ const SWIPE = {
     workspace_swipe_create_new: false,
     workspace_swipe_forever: false,
     workspace_swipe_use_r: false,
-    workspace_swipe_distance: 400,
-    // a short quick swipe is enough, as on a Mac
+    // As a Mac's: a short quick swipe is enough, and a slow one goes on
+    // once the fingers are a good way across, and back again short of that.
+    // libinput accelerates a swipe as it does the pointer, so a full swipe
+    // is a long way in its units.
+    workspace_swipe_distance: 600,
     workspace_swipe_min_speed_to_force: 12,
-    workspace_swipe_cancel_ratio: 0.2,
+    workspace_swipe_cancel_ratio: 0.3,
 }
 
 // Fires once the fingers have gone TRAVEL that way, while they still move:
 // Hyprland hands a gesture over at the first few units, and a hand resting on
-// the trackpad would set it off.
+// the trackpad would set it off. With a way back, the fingers going TRAVEL
+// back from the furthest they got undo it, and forward again redo it, as
+// often as they turn, all in the one swipe: Notification Center swiped open
+// and shut again without lifting them, as on a Mac.
 function triggerLua(t: Trigger): string {
     const axis = t.direction === "up" || t.direction === "down" ? "y" : "x"
     const sign = t.direction === "up" || t.direction === "left" ? -1 : 1
-    return once(`${t.fingers} ${t.direction}`, `local travel, fired = 0, false
+    const back = t.back ? `hl.dispatch(hl.dsp.global(${luaStr(t.back.global)}))` : ""
+    return once(`${t.fingers} ${t.direction}`, `local travel, done, turn = 0, false, 0
   hl.gesture({ fingers = ${t.fingers}, direction = ${luaStr(t.direction)}, action = {
-    start = function() travel, fired = 0, false end,
+    start = function() travel, done, turn = 0, false, 0 end,
     update = function(e)
       travel = travel + ((e.delta and e.delta.${axis}) or 0) * ${sign}
-      if not fired and travel > ${TRAVEL} then
-        fired = true
-        hl.dispatch(hl.dsp.global(${luaStr(t.action.global)}))
+      if not done then
+        if travel > turn + ${TRAVEL} then
+          done, turn = true, travel
+          hl.dispatch(hl.dsp.global(${luaStr(t.action.global)}))
+        else
+          turn = math.min(turn, travel)
+        end
+      elseif ${t.back ? "true" : "false"} then
+        if travel < turn - ${TRAVEL} then
+          done, turn = false, travel
+          ${back}
+        else
+          turn = math.max(turn, travel)
+        end
       end
     end,
   } })`)
