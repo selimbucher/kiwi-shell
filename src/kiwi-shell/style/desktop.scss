@@ -37,11 +37,14 @@
     }
 }
 
-// marquee drawn while drag-selecting over empty desktop space, in the accent
+// marquee drawn while drag-selecting over empty desktop space: as Finder's
+// on the desktop, a light veil with a light edge and square corners, and a
+// faint dark line round it so it shows on a light wallpaper too
 .rubberband {
-    background-color: color-mix(in srgb, var(--primary) 20%, transparent);
-    border: 1px solid color-mix(in srgb, var(--primary) 85%, transparent);
-    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.75);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2);
+    border-radius: 2px;
 }
 
 // must actually paint something (see Desktop.tsx) — 1% black on one pixel
