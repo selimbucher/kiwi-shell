@@ -35,7 +35,9 @@ export function refreshWallpaper() {
     execAsync("awww query")
         .then(output => {
             const path = parseQuery(output)
-            if (path && path !== wallpaperPath.get()) storeWallpaperPath(path)
+            if (!path || path === wallpaperPath.get()) return
+            log.debug(`the wallpaper is now ${path}`)
+            storeWallpaperPath(path)
         })
         .catch(() => {})
 }
@@ -65,6 +67,54 @@ function findWallpaper(attempt = 0) {
 }
 
 findWallpaper()
+
+// Whoever changes the wallpaper (kiwi-settings, a terminal, the shell
+// itself), awww writes what each display now shows to
+// ~/.cache/awww/<version>/<display>. Watching those files is how the shell
+// hears of it, Mission Control's wallpaper included; one query per change,
+// however many displays it touched.
+const AWWW_CACHE = `${GLib.get_user_cache_dir()}/awww`
+const watching = new Map<string, Gio.FileMonitor>()
+let refreshSoon = 0
+
+function changed() {
+    if (refreshSoon) return
+    refreshSoon = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 150, () => {
+        refreshSoon = 0
+        refreshWallpaper()
+        return GLib.SOURCE_REMOVE
+    })
+}
+
+function watch(path: string, onChange: (file: Gio.File, event: Gio.FileMonitorEvent) => void) {
+    if (watching.has(path)) return
+    try {
+        const monitor = Gio.File.new_for_path(path).monitor_directory(Gio.FileMonitorFlags.NONE, null)
+        monitor.connect("changed", (_m, file, _other, event) => onChange(file, event))
+        watching.set(path, monitor)
+    } catch (e) {
+        log.debug(`not watching ${path}:`, e as Error)
+    }
+}
+
+// a version folder for each awww there has been; a new awww makes a new one
+function watchVersion(path: string) {
+    watch(path, (_file, event) => {
+        if (event === Gio.FileMonitorEvent.CHANGES_DONE_HINT || event === Gio.FileMonitorEvent.CREATED) changed()
+    })
+}
+
+GLib.mkdir_with_parents(AWWW_CACHE, 0o700)
+watch(AWWW_CACHE, (file, event) => {
+    if (event === Gio.FileMonitorEvent.CREATED && GLib.file_test(file.get_path()!, GLib.FileTest.IS_DIR)) watchVersion(file.get_path()!)
+})
+try {
+    const dir = GLib.Dir.open(AWWW_CACHE, 0)
+    let name: string | null
+    while ((name = dir.read_name()) !== null)
+        if (GLib.file_test(`${AWWW_CACHE}/${name}`, GLib.FileTest.IS_DIR)) watchVersion(`${AWWW_CACHE}/${name}`)
+    dir.close()
+} catch {}
 
 export function setWallpaper(path: string) {
     if (conf().auto_color) {
