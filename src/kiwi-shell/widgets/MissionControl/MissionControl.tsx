@@ -206,6 +206,9 @@ function landed(heard: boolean) {
 hyprland.connect("event", (_h: unknown, event: string, args: string) => {
     if (event === "kiwigesture" && args === `open,${WINDOWS_SET}`) {
         if (!isOpen.get()) openMissionControl()
+    } else if (event === "kiwigesture" && args === `close,${WINDOWS_SET}`) {
+        // fingers down with no windows on show, so nothing to follow them
+        closeMissionControl()
     } else if (event === "kiwigesture" && args === `held,${WINDOWS_SET}`) {
         fingersHold = true
         setSelected(null)
@@ -776,8 +779,9 @@ class Scene {
         this.stage.put(this.backdrop, 0, 0)
         this.bar.put(this.band, 0, 0)
         for (const [index, desktop] of v.desktops.entries()) this.addItem(desktop, index).x.jump(rowX(v.monitor, v.desktops.length, this.size, index))
-        this.plus = this.makePlus()
+        // the new desktop first, so that + is drawn over it
         this.peekBox = this.makePeek()
+        this.plus = this.makePlus()
         this.addPage(v.monitor.active, v.slots, new Map())
         this.camera.jump(this.indexOf(v.monitor.active))
         this.opening.jump(expanded.get() ? 1 : 0)
@@ -1111,9 +1115,14 @@ class Scene {
         return lerp(-this.size.height - BAR_TOP, BAR_TOP, this.opening.value)
     }
 
+    // + as a disc that stays where it is: pointed at, it only brightens, and
+    // the new desktop it would add slides in under it. The whole end of the
+    // bar takes the pointer, the disc being what shows of it.
     private makePlus(): Gtk.Button {
         const plus = new Gtk.Button({ cssClasses: ["mc-add", "mc-target"], focusable: false })
-        plus.set_child(new Gtk.Image({ iconName: "list-add-symbolic", pixelSize: 22 }))
+        const disc = new Gtk.Box({ cssClasses: ["mc-add-disc"], halign: Gtk.Align.CENTER, valign: Gtk.Align.CENTER })
+        disc.append(new Gtk.Image({ iconName: "list-add-symbolic", pixelSize: 16 }))
+        plus.set_child(disc)
         plus.set_size_request(PEEK_SHOWN, this.size.height)
         plus.connect("clicked", () => {
             if (closing.get()) return
@@ -1130,14 +1139,9 @@ class Scene {
         return plus
     }
 
-    // the new desktop + would add: the wallpaper, and + on it
+    // the new desktop + would add: its wallpaper, under + at the bar's end
     private makePeek(): Gtk.Widget {
-        const sign = new Gtk.Box({ cssClasses: ["mc-peek-sign"], halign: Gtk.Align.START, valign: Gtk.Align.CENTER })
-        sign.append(new Gtk.Image({ iconName: "list-add-symbolic", pixelSize: 16 }))
-        // in the middle of the part that shows
-        sign.set_margin_start(Math.round(PEEK_SHOWN / 2 - 15))
         const overlay = new Gtk.Overlay({ child: this.peekWallpaper })
-        overlay.add_overlay(sign)
         const peek = new Gtk.ScrolledWindow({
             cssClasses: ["mc-thumb-canvas", "mc-peek"],
             overflow: Gtk.Overflow.HIDDEN,
@@ -1497,9 +1501,10 @@ class Scene {
             folded += widths[i] + NAME_SPACING
         })
 
-        // + at the bar's end, and the new desktop peeking in behind it
+        // + at the bar's end, staying there, and the new desktop peeking in
+        // under it
         this.bar.move(this.plus, W - PEEK_SHOWN, top)
-        this.plus.set_opacity(open * (1 - this.peek.value))
+        this.plus.set_opacity(open)
         this.plus.set_can_target(open > 0.5)
         this.bar.move(this.peekBox, Math.round(W - PEEK_SHOWN * this.peek.value), top)
         this.peekBox.set_visible(this.peek.value > 0)

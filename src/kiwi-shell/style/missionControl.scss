@@ -17,10 +17,11 @@ window.MissionControl {
 
 // ─── The bar ─────────────────────────────────────────────────────────────────
 
-// a band of its own across the top, lighter than the wallpaper below it, as
-// on macOS: a strip folded, open as tall as the desktops' pictures
+// a band of its own across the top, set off from the wallpaper below it, as
+// on macOS: a strip folded, open as tall as the desktops' pictures. A touch
+// darker rather than lighter, so the white names read on a light wallpaper.
 .mc-band {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(0, 0, 0, 0.06);
     box-shadow: inset 0 -1px rgba(255, 255, 255, 0.08);
 }
 
@@ -32,7 +33,8 @@ window.MissionControl {
     font-weight: 500;
     padding: 4px 14px;
     border-radius: 9999px;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    // a soft glow round the letters as well, for a light wallpaper
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 10px rgba(0, 0, 0, 0.35);
     transition: background-color 200ms ease-in-out;
 
     &:hover {
@@ -72,20 +74,6 @@ window.MissionControl {
     // a window being dragged over it would go there
     &.drop {
         box-shadow: 0 0 0 3px var(--primary), 0 2px 8px rgba(0, 0, 0, 0.35);
-    }
-}
-
-// the new desktop + would add, peeking in at the bar's end: + on a disc
-.mc-peek-sign {
-    min-width: 30px;
-    min-height: 30px;
-    border-radius: 9999px;
-    color: #ffffff;
-    background-color: rgba(0, 0, 0, 0.35);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
-
-    image {
-        margin: 7px;
     }
 }
 
@@ -134,27 +122,45 @@ button.mc-close {
     }
 }
 
-// macOS draws + as a bare glyph at the bar's right end; it only gets a
-// shape of its own while it is pointed at, or a window is held over it
+// + is a disc at the bar's right end, always the same disc in the same place:
+// pointed at, it brightens, and the new desktop slides in under it. (macOS
+// draws a bare glyph that takes a shape only while pointed at.) The button is
+// the whole end of the bar, and draws nothing of its own.
 button.mc-add {
     @include flat-button;
-    border-radius: 8px;
-    color: rgba(255, 255, 255, 0.9);
     background-color: transparent;
-    -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 
-    &:hover {
+    &:hover, &:active, &.drop {
+        background-color: transparent;
+    }
+
+    .mc-add-disc {
+        min-width: 30px;
+        min-height: 30px;
+        border-radius: 9999px;
+        color: #ffffff;
+        background-color: rgba(0, 0, 0, 0.35);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3), 0 1px 3px rgba(0, 0, 0, 0.3);
+        transition: background-color 150ms ease-out;
+
+        image {
+            margin: 7px;
+            -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+        }
+    }
+
+    &:hover .mc-add-disc {
+        background-color: rgba(255, 255, 255, 0.24);
+    }
+
+    &:active .mc-add-disc {
         background-color: rgba(255, 255, 255, 0.14);
     }
 
-    &:active {
-        background-color: rgba(255, 255, 255, 0.08);
-    }
-
     // a window being dragged over it would get a desktop of its own
-    &.drop {
-        background-color: rgba(255, 255, 255, 0.22);
-        box-shadow: inset 0 0 0 2px var(--primary);
+    &.drop .mc-add-disc {
+        background-color: rgba(255, 255, 255, 0.24);
+        box-shadow: inset 0 0 0 2px var(--primary), 0 1px 3px rgba(0, 0, 0, 0.3);
     }
 }
 

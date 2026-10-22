@@ -58,7 +58,9 @@
 // plugin asks the shell for the set with `kiwigesture>>open,<set>` and holds
 // the tiles where the fingers are once they come. `kiwigesture>>held,<set>`
 // says the fingers have the set, `kiwigesture>>let,<set>,out|home` where it
-// goes once they let go. While the fingers hold the flight the windows stay
+// goes once they let go. Down with the set up but nothing in it (Mission
+// Control on an empty desktop), `kiwigesture>>close,<set>` asks the shell to
+// close it, there being nothing to follow the fingers. While the fingers hold the flight the windows stay
 // hidden, wherever the pictures are: shown under pictures that are still on
 // their way, they were two of each. Hyprland clears gestures
 // on every config reload; this one is added again after each.
@@ -513,6 +515,11 @@ namespace {
 
         bool hasTiles() const {
             return !m_tiles.empty();
+        }
+
+        // Mission Control up with no windows to show: on an empty desktop
+        bool isOutEmpty() const {
+            return fly && m_tiles.empty() && !m_closing && !m_done;
         }
 
         bool isClosing() const {
@@ -1041,6 +1048,10 @@ namespace {
             } else if (!up && OPEN) {
                 m_swipe.progress = SET->shown();
                 SET->hold(m_swipe.progress);
+            } else if (!up && SET && SET->isOutEmpty()) {
+                // nothing to take home under the fingers: the shell just closes it
+                g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("close,{}", m_gestureSet)});
+                return;
             } else
                 return;
             m_swipe.active = true;

@@ -29,6 +29,9 @@ Desktops, Mission Control, their gestures and the island, as of October
 - Pressing a desktop's picture doesn't darken it. macOS darkens it to about
   half until the button comes up.
 - Holding Option doesn't show every desktop's ×.
+- + is a disc that stays where it is; pointed at, it brightens and the new
+  desktop slides in under it. macOS draws a bare + that takes a shape only
+  while pointed at.
 - The title of the window under the pointer is a dark pill under the
   window. macOS centres a light pill with dark text on the window itself.
 - Windows in flight, and in the desktops' pictures, are drawn without their
