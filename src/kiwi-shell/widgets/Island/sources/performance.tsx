@@ -34,7 +34,9 @@ const log = logger("island")
 const CHECK_SECONDS = 30
 // the CPU counts as busy at this share of all its cores…
 const BUSY = 0.8
-// …and an app as holding a core at this share of one, two looks in a row
+// …and an app as holding a core when one of its processes takes this share of
+// one, two looks in a row: one process, not all of an app's added up, which a
+// browser with a few lightly busy tabs reaches without anything wrong
 const HOLDING = 0.95
 // Memory is short below 5% available, or below 20% while apps wait for it,
 // and fine again above 10% with none waiting. Waiting alone isn't memory
@@ -117,8 +119,11 @@ function sumBy(items: { pid: number; comm: string; value: number }[]): Group[] {
     return [...groups.values()].sort((a, b) => b.value - a.value)
 }
 
-/** CPU time between two looks, as shares of one core, by app; busiest first. */
-function cpuBetween(before: Map<number, Proc>, after: Map<number, Proc>, seconds: number): Group[] {
+/**
+ * CPU time between two looks, as shares of one core: by app, busiest first,
+ * and the single busiest process, as its app.
+ */
+function cpuBetween(before: Map<number, Proc>, after: Map<number, Proc>, seconds: number): { apps: Group[]; busiest: Group | null } {
     const items: { pid: number; comm: string; value: number }[] = []
     for (const [pid, proc] of after) {
         const earlier = before.get(pid)
@@ -126,7 +131,8 @@ function cpuBetween(before: Map<number, Proc>, after: Map<number, Proc>, seconds
         const value = (proc.ticks - earlier.ticks) / TICKS_PER_SECOND / seconds
         if (value >= 0.02) items.push({ pid, comm: proc.comm, value })
     }
-    return sumBy(items)
+    const top = items.reduce<typeof items[number] | null>((a, b) => !a || b.value > a.value ? b : a, null)
+    return { apps: sumBy(items), busiest: top ? { ...groupOf(top.pid, top.comm), value: top.value } : null }
 }
 
 /** Resident memory in bytes, by app; biggest first. */
@@ -191,8 +197,9 @@ const [cpu, setCpu] = createState<CpuState | null>(null)
 const [memory, setMemory] = createState<MemoryState | null>(null)
 const [heat, setHeat] = createState<HeatState | null>(null)
 
-// the busiest apps between the last two looks
+// the busiest apps between the last two looks, and the busiest process
 let lastTop: Group[] = []
+let lastBusiest: Group | null = null
 
 function look() {
     const now = GLib.get_monotonic_time()
@@ -207,16 +214,22 @@ function look() {
     // apps are only looked at while at least a core's worth is busy
     const working = load * cores >= 0.9
     const procs = working ? processes() : null
-    lastTop = procs && snapshot ? cpuBetween(snapshot, procs, seconds) : []
+    const between = procs && snapshot ? cpuBetween(snapshot, procs, seconds) : null
+    lastTop = between?.apps ?? []
+    lastBusiest = between?.busiest ?? null
     snapshot = procs
 
     busyLooks = load >= BUSY ? busyLooks + 1 : 0
-    holdingLooks = (lastTop[0]?.value ?? 0) >= HOLDING ? holdingLooks + 1 : 0
+    holdingLooks = (lastBusiest?.value ?? 0) >= HOLDING ? holdingLooks + 1 : 0
     const busy = busyLooks >= 2 || (cpu()?.kind === "busy" && load >= BUSY * 0.75)
     const holding = holdingLooks >= 2
     const since = cpu()?.since ?? now
     if (busy) setCpu({ kind: "busy", load, top: lastTop, since })
-    else if (holding) setCpu({ kind: "holding", load: lastTop[0].value, top: lastTop, since })
+    else if (holding && lastBusiest) {
+        // the app holding it first, at what its one process takes
+        const holder = lastBusiest
+        setCpu({ kind: "holding", load: holder.value, top: [holder, ...lastTop.filter(g => g.key !== holder.key)], since })
+    }
     else if (cpu()) setCpu(null)
 
     const degrees = readTemperature()
