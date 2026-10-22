@@ -1,7 +1,7 @@
 # Where kiwi-shell differs from macOS
 
-Desktops, Mission Control and their gestures, as of October 2026. Remove a
-line once kiwi matches macOS there.
+Desktops, Mission Control, their gestures and the island, as of October
+2026. Remove a line once kiwi matches macOS there.
 
 ## Gestures
 
@@ -40,10 +40,36 @@ line once kiwi matches macOS there.
 
 ## Desktops
 
-- The bar shows numbered workspace dots. macOS has nothing in the menu bar
-  for desktops.
+- The island in the bar can show the display's desktops, one mark each in
+  Mission Control's order. macOS has nothing in the menu bar for desktops.
 - Super+1–0 in the default Hyprland config go to workspace ids, not to the
   nth desktop of the display.
+
+## Island
+
+The middle of the bar is iPhone's Dynamic Island, in iOS's rules (Apple's
+Human Interface Guidelines, Live Activities). macOS has no island: it shows
+Now Playing, the privacy indicators and, since Tahoe, the iPhone's Live
+Activities as menu bar items.
+
+- At rest it shows the desktops, the date or the weather. The date opens a
+  calendar, as the classic desktops' clocks do; macOS keeps a calendar in
+  Notification Center.
+- With several activities, the first keeps its two halves either side of the
+  middle and the next two are bubbles beside the island. iOS makes the first
+  one minimal too, to save a phone's width.
+- Alerts (a charger plugged in, a Bluetooth device connected, Do Not Disturb)
+  show either side of the middle for a few seconds. iOS grows the island into
+  them; macOS shows none of them and chimes for the charger.
+- Memory running out, a hot CPU and a CPU busy for minutes are activities.
+  A Mac shows these only in Activity Monitor and the battery menu's "Apps
+  Using Significant Energy".
+- The camera dot sees only apps that use the camera through PipeWire, as
+  GNOME and KDE do. macOS sees every app.
+- The weather is Open-Meteo's, for a city set in the settings. macOS's comes
+  from Apple Weather, for where the Mac is.
+- The motion is springs chosen by eye (the island's size: response 0.5 s,
+  bounce 0.25), not measured off an iPhone.
 
 ## App switcher
 

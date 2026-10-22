@@ -2,6 +2,7 @@ import app from "ags/gtk4/app"
 import style from "./style.scss"
 import Bar from "./widgets/Bar/Bar"
 import IndicatorBar from "./widgets/IndicatorBar/IndicatorBar"
+import { IslandCard } from "./widgets/Island/Island"
 import AppSwitcher from "./widgets/AppSwitcher/AppSwitcher"
 import MissionControl from "./widgets/MissionControl/MissionControl"
 import WorkspaceSwitcher from "./widgets/WorkspaceSwitcher/WorkspaceSwitcher"
@@ -45,6 +46,7 @@ app.start({
             {index() === 0 && <NotificationCenter gdkmonitor={gdkmonitor} />}
             {index() === 0 && <Desktop gdkmonitor={gdkmonitor} />}
             {index() === 0 && <IndicatorBar gdkmonitor={gdkmonitor} />}
+            {index() === 0 && <IslandCard />}
             {index() === 0 && <AppSwitcher gdkmonitor={gdkmonitor} />}
             {index() === 0 && <MissionControl gdkmonitor={gdkmonitor} />}
             {index() === 0 && <WorkspaceSwitcher gdkmonitor={gdkmonitor} />}

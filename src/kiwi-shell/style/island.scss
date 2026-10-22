@@ -1,0 +1,471 @@
+@use 'theme' as *;
+
+// ─── The island (widgets/Island) ─────────────────────────────────────────────
+// A bar pill like the others, or iOS's: black, with a faint key line. Apple's
+// system colours for what it tells: orange for the microphone and a busy CPU,
+// green for the camera and the charger, purple for the screen, red for heat,
+// yellow for memory.
+
+$orange: #ff9f0a;
+$green: #30d158;
+$purple: #bf5af2;
+$red: #ff453a;
+$yellow: #ffd60a;
+
+$height: 34px; // the bar's other pills, border included
+
+@mixin flat-button {
+    background: none;
+    border: none;
+    box-shadow: none;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border-radius: 0;
+}
+
+@mixin island-pane {
+    @include panel;
+}
+
+// iOS's: opaque black, a key line so it doesn't vanish into a dark wallpaper
+@mixin island-black {
+    background-color: #000000;
+    background-image: none;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: none;
+}
+
+window.IslandBar {
+    background: transparent;
+
+    // the bar's margin, which window.Bar gives its direct child: here that's
+    // the overlay holding the row and the keepalive pixel
+    .island-row {
+        min-height: $height;
+        margin: 4px;
+        margin-bottom: var(--bar-margin);
+    }
+
+    .island-keepalive {
+        background-color: rgba(0, 0, 0, 0.004);
+    }
+
+    .island, .island-bubble {
+        @include island-pane;
+    }
+
+    .island {
+        border-radius: 17px;
+        min-height: $height - 2px;
+        padding: 0 10px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
+    .island-bubble {
+        @include flat-button;
+        @include island-pane;
+        border-radius: 99px;
+        min-width: $height - 2px;
+        min-height: $height - 2px;
+    }
+
+    &.island-black {
+        .island, .island-bubble {
+            @include island-black;
+        }
+    }
+
+    button.island-part {
+        @include flat-button;
+        &:hover {
+            background: none;
+        }
+    }
+
+    // the gap to the centre is the part's own, so a click there opens it too
+    .island-side.leading > * {
+        padding-right: 8px;
+    }
+    .island-side.trailing > * {
+        padding-left: 8px;
+    }
+
+}
+
+// ─── The desktops ─────────────────────────────────────────────────────────────
+
+.island-desktops button.desktop {
+    @include flat-button;
+    min-width: 14px;
+    padding: 0 3px;
+    // a mark grows into the current one and back, as the island grows
+    transition: min-width 260ms cubic-bezier(0.25, 0.1, 0.25, 1);
+
+    .tile {
+        transition: min-width 260ms cubic-bezier(0.25, 0.1, 0.25, 1), background-color 200ms ease-out;
+        min-width: 0;
+        min-height: 6px;
+        margin: 13px 0;
+        background-color: var(--k-quiet);
+        border-radius: 13px;
+    }
+
+    &.filled .tile {
+        min-width: 20px;
+        background-color: var(--k-quiet-strong);
+    }
+
+    &:hover .tile {
+        background-color: var(--k-quiet-hover);
+    }
+
+    &.current {
+        min-width: 20px;
+        .tile {
+            background-color: var(--primary);
+        }
+    }
+
+    &.urgent .tile {
+        background-color: $red;
+    }
+}
+
+// ─── The date and the weather ─────────────────────────────────────────────────
+
+.island-date, .island-weather {
+    > button {
+        @include flat-button;
+        padding: 0 4px;
+        font-weight: 600;
+    }
+}
+
+.island-calendar, .island-weather-popover {
+    box-shadow: none;
+    margin-top: 6px;
+
+    contents {
+        @include menu;
+        border-radius: 17px;
+        padding: 12px;
+    }
+}
+
+.island-calendar {
+    .today {
+        font-weight: 700;
+        font-size: 13px;
+        margin: 2px 4px 8px;
+        color: var(--k-fg);
+    }
+
+    calendar {
+        background: none;
+        border: none;
+        color: var(--k-fg-2);
+
+        > header {
+            background: none;
+            border: none;
+            button {
+                @include flat-button;
+                padding: 2px 6px;
+                border-radius: 8px;
+                &:hover {
+                    background-color: var(--k-fill);
+                }
+            }
+        }
+
+        > grid {
+            > label.day-name {
+                color: var(--k-fg-4);
+                font-size: 11px;
+            }
+            > label.day-number {
+                padding: 4px 7px;
+                border-radius: 99px;
+                &.other-month {
+                    color: var(--k-fg-4);
+                }
+                &:selected {
+                    background-color: var(--primary);
+                    color: #000000;
+                }
+            }
+        }
+    }
+}
+
+.island-weather-popover {
+    .island-weather-card {
+        min-width: 280px;
+        padding: 4px 6px;
+
+        .place {
+            font-weight: 700;
+            font-size: 13px;
+        }
+        .now {
+            font-size: 40px;
+            font-weight: 300;
+        }
+        .sky, .range {
+            color: var(--k-fg-2);
+            font-weight: 600;
+        }
+        .hours {
+            margin: 12px 0 6px;
+            padding: 10px 0;
+            border-top: 1px solid var(--k-divider);
+            border-bottom: 1px solid var(--k-divider);
+
+            .when {
+                color: var(--k-fg-3);
+                font-size: 11px;
+            }
+            image {
+                margin: 6px 0;
+            }
+            .degrees {
+                font-weight: 600;
+            }
+        }
+        .day {
+            min-height: 28px;
+
+            .when {
+                font-weight: 600;
+            }
+            image {
+                margin: 0 10px;
+            }
+            .low {
+                color: var(--k-fg-3);
+                margin-right: 8px;
+            }
+            .high {
+                margin-left: 8px;
+            }
+            .scale {
+                min-width: 100px;
+                min-height: 4px;
+                border-radius: 99px;
+                background-color: var(--k-trough);
+            }
+            .span {
+                min-height: 4px;
+                border-radius: 99px;
+                background-image: linear-gradient(to right, #8fd3ff, #ffd36b);
+            }
+        }
+    }
+
+    .island-weather-empty {
+        margin: 8px;
+        color: var(--k-fg-2);
+    }
+}
+
+// ─── Activities, compact and minimal ──────────────────────────────────────────
+
+.island-cover {
+    border-radius: 6px;
+}
+
+.island-bubble .island-cover {
+    border-radius: 99px;
+}
+
+.island-bars {
+    .bar {
+        min-width: 3px;
+        margin: 0 1px;
+        border-radius: 2px;
+        background-color: var(--primary);
+    }
+
+    // each bar at its own pace, so together they never repeat in step
+    &.playing .bar {
+        animation: island-wave 560ms ease-in-out infinite alternate;
+        &:nth-child(2) { animation-duration: 430ms; animation-delay: -200ms; }
+        &:nth-child(3) { animation-duration: 690ms; animation-delay: -350ms; }
+        &:nth-child(4) { animation-duration: 500ms; animation-delay: -120ms; }
+    }
+}
+
+@keyframes island-wave {
+    from { transform: scale(1, 0.35); }
+    to { transform: scale(1, 1); }
+}
+
+.island-symbol, .island-value {
+    &.busy { color: $orange; }
+    &.hot { color: $red; }
+    &.full { color: $yellow; }
+}
+
+.island-value {
+    font-weight: 700;
+    font-feature-settings: "tnum";
+}
+
+.island-privacy {
+    .dot {
+        min-width: 7px;
+        min-height: 7px;
+        border-radius: 99px;
+        margin-left: 5px;
+    }
+}
+
+.island-body > .island-part.privacy {
+    margin-left: 4px;
+}
+
+.dot {
+    &.mic { background-color: $orange; }
+    &.camera { background-color: $green; }
+    &.screen { background-color: $purple; }
+}
+
+// ─── Alerts ───────────────────────────────────────────────────────────────────
+
+.island-alert.leading .symbol {
+    margin-right: 6px;
+}
+
+.island-alert.trailing {
+    color: var(--k-fg-2);
+    font-feature-settings: "tnum";
+}
+
+// ─── The open card ────────────────────────────────────────────────────────────
+
+window.IslandCardWindow {
+    background: transparent;
+
+    // the card's pane, laid out at the shape's size as it grows out of the
+    // island (widgets/Island/shape.ts, CardMorph: CARD_RADIUS)
+    .island-card-pane {
+        @include island-pane;
+        border-radius: 26px;
+    }
+
+    &.island-black .island-card-pane {
+        @include island-black;
+    }
+
+    .island-card {
+        padding: 16px 18px;
+        min-width: 340px;
+        font-size: 12px;
+    }
+
+    .island-media {
+        .head {
+            margin-bottom: 12px;
+        }
+        button.cover-button {
+            @include flat-button;
+        }
+        .island-cover {
+            border-radius: 10px;
+        }
+        .titles {
+            margin: 0 12px;
+        }
+        .title {
+            font-weight: 700;
+            font-size: 14px;
+        }
+        .artist {
+            color: var(--k-fg-3);
+            font-weight: 600;
+        }
+        .progress {
+            .time {
+                color: var(--k-fg-3);
+                font-size: 11px;
+                font-feature-settings: "tnum";
+            }
+            slider {
+                margin: 0 8px;
+            }
+        }
+        .controls {
+            margin-top: 6px;
+            button {
+                @include flat-button;
+                padding: 6px 14px;
+                border-radius: 99px;
+                &:hover {
+                    background-color: var(--k-fill);
+                }
+            }
+        }
+    }
+
+    .island-performance {
+        .head {
+            margin-bottom: 10px;
+            .symbol {
+                margin-right: 12px;
+            }
+            .title {
+                font-weight: 700;
+                font-size: 14px;
+            }
+            .detail {
+                color: var(--k-fg-3);
+                font-weight: 600;
+            }
+        }
+        &.busy .head .symbol { color: $orange; }
+        &.hot .head .symbol { color: $red; }
+        &.full .head .symbol { color: $yellow; }
+
+        .top .app {
+            min-height: 26px;
+            image {
+                margin-right: 10px;
+            }
+            .name {
+                font-weight: 600;
+            }
+            .value {
+                color: var(--k-fg-2);
+                font-feature-settings: "tnum";
+            }
+        }
+    }
+
+    .island-privacy-card {
+        min-width: 280px;
+        .use {
+            min-height: 34px;
+            .dot {
+                min-width: 9px;
+                min-height: 9px;
+                border-radius: 99px;
+                margin-right: 12px;
+            }
+            .kind {
+                font-weight: 700;
+            }
+            .apps {
+                color: var(--k-fg-3);
+                font-weight: 600;
+            }
+        }
+    }
+}
+
+// the clear window under an open card, which takes the click outside it: a
+// window with nothing to draw is never drawn, and takes no click either
+window.island-backdrop {
+    background: rgba(0, 0, 0, 0.01);
+}

@@ -8,7 +8,7 @@ import Network from "gi://AstalNetwork"
 
 import SystemMenu, { systemMenuOpen, closeSystemMenu } from "./SystemMenu/SystemMenu"
 import { closeNc } from "../Notifications/NotificationCenter"
-import Workspaces from "./Workspaces"
+import Island from "../Island/Island"
 import PowerMenu from "./PowerMenu"
 import Tray, { hasTrayItems } from "./Tray"
 import { conf } from "../config"
@@ -72,24 +72,7 @@ export default function Bar({
             <Tray />
         </window>,
 
-        <window
-            namespace={LAYER.panel}
-            css={windowCss}
-            visible
-            name="ags-bar-workspaces"
-            class={windowClass}
-            gdkmonitor={gdkmonitor}
-            exclusivity={Astal.Exclusivity.EXCLUSIVE}
-            anchor={TOP}
-            application={app}
-            layer={Astal.Layer.TOP}
-            $={(self) => {
-                onCleanup(() => destroyWindow(self))
-                remeasureOn(self, () => `${conf().bar_margin}`)
-            }}
-        >
-            <Workspaces />
-        </window>,
+        <Island gdkmonitor={gdkmonitor} />,
 
         <window
             namespace={LAYER.panel}
@@ -120,7 +103,8 @@ export default function Bar({
                 })
                 self.add_controller(click)
                 onCleanup(() => destroyWindow(self))
-                remeasureOn(self, () => `${conf().bar_margin}`)
+                // the time alone takes less room than the date and time
+                remeasureOn(self, () => `${conf().bar_margin}|${conf().island?.center === "date"}`)
             }}
         >
             <MenuButtons
@@ -135,8 +119,10 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
     toggleNc: () => void
     onToggleNcReady: (w: Gtk.Widget) => void
 }) {
-    // formatted in-process — no `date` spawn every second
-    const time = minuteNow(t => t.format("%a %b %d  %H:%M") ?? "")
+    // formatted in-process — no `date` spawn every second. With the date in
+    // the island, only the time.
+    const time = createComputed(get => get(minuteNow).format(
+        get(conf).island?.center === "date" ? "%H:%M" : "%a %b %d  %H:%M") ?? "")
 
     return (
         <box class="MenuButtons">
@@ -149,7 +135,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
                 <SystemMenu />
             </menubutton>
             <button class="toggle-nc" onclicked={toggleNc} $={(self) => onToggleNcReady(self)}>
-                <label class="time" label={time} />
+                <label class={conf(c => c.island?.center === "date" ? "time only" : "time")} label={time} />
             </button>
             <menubutton class={"powermenu-toggle"}>
                 <Gtk.Image

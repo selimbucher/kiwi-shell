@@ -220,7 +220,7 @@ const CPU_HWMON: Record<string, RegExp[]> = {
 // and last the ACPI zone, which on some machines is the only one there is.
 const ZONE_RANK = [/^x86_pkg_temp$/, /cpu|soc|pkg|core/i, /^acpitz$/]
 
-function detectCpuTempFile(): string | null {
+export function detectCpuTempFile(): string | null {
     for (const h of listDir("/sys/class/hwmon").sort()) {
         const base = `/sys/class/hwmon/${h}`
         const prefer = CPU_HWMON[readText(`${base}/name`) ?? ""]

@@ -51,6 +51,11 @@ window.Bar {
     }
     .time {
       padding: 0 6px;
+      // the time alone, its date in the island: as far from the icons as
+      // from the power button, which the longer date and time hid
+      &.only {
+        padding-left: 0;
+      }
     }
   }
 }

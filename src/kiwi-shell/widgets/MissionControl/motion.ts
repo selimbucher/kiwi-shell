@@ -83,20 +83,32 @@ export class Tween {
     }
 }
 
+export type SpringParams = {
+    stiffness: number
+    damping: number
+    // close enough to stop, in the value's own unit
+    rest?: number
+}
+
+// the desktops' slide (desktops.ts, DESKTOP_SPRING)
+export const DESKTOP_SPRING: SpringParams = { stiffness: 144, damping: 21.6 }
+
 /**
- * The desktops' slide (desktops.ts, DESKTOP_SPRING): mass 1, stiffness 144,
- * damping 21.6 — ω 12/s, damping ratio 0.9. Integrated rather than solved,
- * so a new target mid-slide carries on from the speed it has.
+ * A spring of mass 1: the desktops' slide by default (stiffness 144, damping
+ * 21.6 — ω 12/s, damping ratio 0.9). Integrated rather than solved, so a new
+ * target mid-way carries on from the speed it has.
  */
 export class Spring {
     value: number
     target: number
     private velocity = 0
     private last = -1
+    private readonly params: SpringParams
     running = false
 
-    constructor(value = 0) {
+    constructor(value = 0, params: SpringParams = DESKTOP_SPRING) {
         this.value = this.target = value
+        this.params = params
     }
 
     jump(value: number) {
@@ -125,12 +137,13 @@ export class Spring {
         this.last = now
         while (left > 0) {
             const dt = Math.min(left, 1 / 240)
-            const force = -144 * (this.value - this.target) - 21.6 * this.velocity
+            const force = -this.params.stiffness * (this.value - this.target) - this.params.damping * this.velocity
             this.velocity += force * dt
             this.value += this.velocity * dt
             left -= dt
         }
-        if (Math.abs(this.value - this.target) < 5e-4 && Math.abs(this.velocity) < 5e-3) {
+        const rest = this.params.rest ?? 5e-4
+        if (Math.abs(this.value - this.target) < rest && Math.abs(this.velocity) < rest * 10) {
             this.value = this.target
             this.velocity = 0
             this.running = false

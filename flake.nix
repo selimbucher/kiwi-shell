@@ -161,6 +161,8 @@
           extraPackages = astalPackages ++ [
             pkgs.libadwaita
             pkgs.libsoup_3
+            # TLS for libsoup (the island's weather fetches over https)
+            pkgs.glib-networking
             astal-latest.packages.${system}.quarrel
             app-capture
             hyprland-shortcuts

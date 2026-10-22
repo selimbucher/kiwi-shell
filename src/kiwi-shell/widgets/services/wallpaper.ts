@@ -230,7 +230,9 @@ function decodeSize(format: string, width: number, height: number, wantWidth: nu
 
 // Decodes to cover width x height at scale 2, a little at a time (CHUNK):
 // the wallpapers themselves are often 5-8K, 100 MB+ as a full texture.
-export function loadThumbnail(path: string, width: number, height: number): Promise<Gdk.Texture | null> {
+// `keep`: kept for the session, as the few wallpapers are; music covers,
+// one per track, are not
+export function loadThumbnail(path: string, width: number, height: number, keep = true): Promise<Gdk.Texture | null> {
     const key = `${path}|${width}x${height}`
     const cached = thumbnails.get(key)
     if (cached) return cached
@@ -277,6 +279,6 @@ export function loadThumbnail(path: string, width: number, height: number): Prom
             fail(error)
         }
     })
-    thumbnails.set(key, promise)
+    if (keep) thumbnails.set(key, promise)
     return promise
 }

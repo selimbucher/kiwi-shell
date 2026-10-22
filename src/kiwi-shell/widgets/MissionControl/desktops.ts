@@ -127,6 +127,15 @@ function reconcile() {
     }
 }
 
+// what wants to know when a display's row changes: the bar's desktops
+const watchers = new Set<() => void>()
+
+/** Call `changed` whenever a display's desktops change; returns the stop. */
+export function watchDesktops(changed: () => void): () => void {
+    watchers.add(changed)
+    return () => void watchers.delete(changed)
+}
+
 let lastKept = ""
 function sync() {
     reconcile()
@@ -135,6 +144,7 @@ function sync() {
     if (kept === lastKept) return
     lastKept = kept
     void keepDesktops(desktops)
+    for (const changed of watchers) changed()
 }
 
 let syncSource = 0

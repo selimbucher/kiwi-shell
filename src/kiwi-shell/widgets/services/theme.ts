@@ -33,6 +33,8 @@ export const THEME_STYLES: ThemeStyle[] = ["granite", "acrylic", "tinted", "clea
 //           as long as a modifier is held, and a fade only delays them
 //   scrim   the launcher's full-screen window, Spotlight's panel in it —
 //           blurred in Granite too
+//   island  the island's open card: a pane like panel's, without the
+//           compositor's fade, since the card grows out of the island itself
 //   plain   never blurred: the desktop, whose icons would otherwise blur the
 //           wallpaper behind their own shadows, and the invisible surfaces
 //           that exist only to catch clicks
@@ -44,6 +46,7 @@ export const LAYER = {
     missionControl: "kiwi-mission-control",
     missionControlClose: "kiwi-mission-control-close",
     scrim: "kiwi-scrim",
+    island: "kiwi-island",
     plain: "kiwi-plain",
 } as const
 
@@ -86,6 +89,7 @@ const RULES: Rule[] = [
     { name: "kiwi-dock", namespace: LAYER.dock },
     { name: "kiwi-cards", namespace: LAYER.cards },
     { name: "kiwi-scrim", namespace: LAYER.scrim },
+    { name: "kiwi-island", namespace: LAYER.island, noAnim: true },
     { name: "kiwi-mission-control", namespace: LAYER.missionControl, noAnim: true, solid: true },
     { name: "kiwi-mission-control-close", namespace: LAYER.missionControlClose, noAnim: true, solid: true },
 ]

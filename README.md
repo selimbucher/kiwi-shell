@@ -9,6 +9,7 @@ A macOS-style desktop shell for Hyprland.
 - **App switcher** with live window previews
 - **Launcher** for apps, open windows, sums and the web
 - **Menu bar** with the system menu, tray and notifications
+- **Dynamic Island** in the bar: desktops, date or weather, and music, privacy dots and alerts as they happen
 - **Accent colour** from the wallpaper, **Night Shift**, desktop icons
 - **Kiwi Settings** for all of it
 
