@@ -4,7 +4,7 @@ import GObject from "gi://GObject"
 import Gsk from "gi://Gsk"
 import Graphene from "gi://Graphene"
 
-import { Spring, Tween, easeOutCubic, type SpringParams, type Timing } from "../MissionControl/motion"
+import { Spring, Tween, cubicBezier, easeOutCubic, type SpringParams, type Timing } from "../MissionControl/motion"
 
 // ─── How the island moves ─────────────────────────────────────────────────────
 // iOS's Dynamic Island never jumps: it is one shape that springs from size to
@@ -26,9 +26,18 @@ export const ISLAND_SPRING = spring(0.5, 0.25)
 export const BUBBLE_SPRING = spring(0.45, 0.3, 0.002)
 export const CARD_SPRING = spring(0.5, 0.15, 0.002)
 
-// what the island holds, fading in once it has room and out at once
-export const FADE_IN: Timing = { ms: 220, curve: easeOutCubic }
-export const FADE_OUT: Timing = { ms: 120, curve: easeOutCubic }
+// What the island holds comes and goes as iOS's does (SwiftUI's
+// blurReplace): out of a blur, a little small, into focus; and back into a
+// blur as the shape closes over it. Out takes as long as the shape takes to
+// close most of the way, evenly, so that it is still there to be closed over
+// rather than gone in the first frames.
+export const FADE_IN: Timing = { ms: 280, curve: easeOutCubic }
+export const FADE_OUT: Timing = { ms: 260, curve: cubicBezier(0.4, 0, 0.6, 1) }
+// how blurred, and how small, it is at nothing
+const BLUR = 6
+const SMALL = 0.82
+// the pill itself fading once it has closed to a dot (an island left empty)
+const PILL_OUT: Timing = { ms: 320, curve: cubicBezier(0.6, 0, 0.9, 0.6) }
 
 const at = (x: number, y: number) => new Graphene.Point().init(x, y)
 
@@ -88,11 +97,11 @@ export const IslandShape = GObject.registerClass(
         // made on first use: GJS sets a class's fields after _init has run
         private get ticker(): Ticker {
             return this._ticker ??= new Ticker(this, now => {
-                const moved = [this.width.step(now), this.fade.step(now)].some(Boolean)
+                const moved = [this.width.step(now), this.fade.step(now), this.residual.step(now)].some(Boolean)
                 this.set_opacity(this.fade.value)
                 if (!this.wanted && !this.fade.running) this.set_visible(false)
                 this.queue_resize()
-                return moved || this.width.running || this.fade.running
+                return moved || this.width.running || this.fade.running || this.residual.running
             })
         }
 
@@ -125,7 +134,9 @@ export const IslandShape = GObject.registerClass(
                 this.fade.to(1, FADE_IN)
                 this.set_visible(true)
             } else {
-                this.fade.to(0, FADE_OUT)
+                // what it held blurs away as it closes; the dot it closes to
+                // goes last
+                this.fade.to(0, PILL_OUT)
             }
             this.ticker.start()
             this.queue_resize()
@@ -159,15 +170,53 @@ export const IslandShape = GObject.registerClass(
                 this.ticker.start()
             }
             const width = Math.max(0, Math.round(this.width.value))
+            this.shownWidth = width
             return [width, width, -1, -1]
         }
+
+        /**
+         * Which end stays put while the pill grows or shrinks to a new size: 0
+         * the leading end, 1 the trailing end, 0.5 neither (it stays centred).
+         * With only the trailing side changing (Now Playing's controls coming
+         * as it's pointed at), the pill grows away from its leading end and
+         * everything else stays where it was, under the pointer too; it
+         * centres again as it goes back to the size it had.
+         */
+        get anchor(): number {
+            return this._anchor
+        }
+
+        set anchor(anchor: number) {
+            if (anchor === this._anchor) return
+            // where it was off centre, now let go of gently
+            this.residual.jump(this.shift)
+            this.residual.to(0)
+            this._anchor = anchor
+            this.base = this.width.value
+            this.ticker.start()
+        }
+
+        /** How far right of centre the pill is laid out (Island.tsx, the row). */
+        get shift(): number {
+            return (this.shownWidth - this.base) * (0.5 - this._anchor) + this.residual.value
+        }
+
+        private _anchor = 0.5
+        // its width when the anchor was set
+        private base = 0
+        private readonly residual = new Spring(0, ISLAND_SPRING)
+        private shownWidth = 0
 
         vfunc_size_allocate(width: number, height: number, baseline: number): void {
             const child = this.child
             if (!child) return
             const [, natural] = child.measure(Gtk.Orientation.HORIZONTAL, -1)
             const w = Math.max(natural, 0)
-            const transform = new Gsk.Transform().translate(at(Math.round((width - w) / 2), 0))
+            // Not rounded, nor is where the row puts the pill: rounded each on
+            // its own, what it holds went half a pixel one way and the next
+            // frame the other as the pill grew, a tremble all the way. Halves
+            // are whole pixels on a HiDPI display.
+            const transform = new Gsk.Transform().translate(at((width - w) * this.anchor, 0))
             child.allocate(w, height, baseline, transform)
         }
 
@@ -194,29 +243,28 @@ export const Fader = GObject.registerClass(
     { GTypeName: "KiwiIslandFader" },
     class Fader extends Gtk.Widget {
         edge: Edge = "center"
+        // what's leaving cut off at its own edge, rather than running on over
+        // whatever comes after it (the privacy dots after the trailing side)
+        clipLeaving = false
         private current: Gtk.Widget | null = null
-        private readonly leaving = new Map<Gtk.Widget, Tween>()
-        private incoming: Tween | null = null
+        // how far each child is shown, 0 to 1: the current one coming in,
+        // the ones leaving going out
+        private readonly shown = new Map<Gtk.Widget, Tween>()
         private _ticker: Ticker | null = null
 
         private get ticker(): Ticker {
             return this._ticker ??= new Ticker(this, now => {
                 let moving = false
-                if (this.incoming?.step(now)) {
-                    moving = true
-                    this.current?.set_opacity(this.incoming.value)
-                }
-                if (this.incoming && !this.incoming.running) this.incoming = null
-                for (const [widget, tween] of this.leaving) {
+                for (const [widget, tween] of this.shown) {
                     if (tween.step(now)) moving = true
-                    widget.set_opacity(tween.value)
-                    if (!tween.running) {
+                    if (widget !== this.current && !tween.running) {
                         done(widget)
-                        this.leaving.delete(widget)
+                        this.shown.delete(widget)
                     }
                 }
                 this.queue_allocate()
-                return moving || this.leaving.size > 0 || this.incoming !== null
+                this.queue_draw()
+                return moving || [...this.shown.values()].some(t => t.running)
             })
         }
 
@@ -224,36 +272,34 @@ export const Fader = GObject.registerClass(
         show(widget: Gtk.Widget | null, animate = true) {
             const old = this.current
             if (old === widget) return
+            const motion = animate && this.get_mapped()
             if (old) {
-                if (animate && this.get_mapped()) {
-                    const tween = new Tween(old.get_opacity())
-                    tween.to(0, FADE_OUT)
-                    this.leaving.set(old, tween)
-                } else {
+                if (motion) this.shown.get(old)?.to(0, FADE_OUT)
+                else {
                     done(old)
+                    this.shown.delete(old)
                 }
             }
             this.current = widget
             if (widget) {
                 widget.set_parent(this)
-                if (animate && this.get_mapped()) {
-                    widget.set_opacity(0)
-                    this.incoming = new Tween(0)
-                    this.incoming.to(1, FADE_IN)
-                } else {
-                    widget.set_opacity(1)
-                    this.incoming = null
-                }
+                const tween = new Tween(motion ? 0 : 1)
+                if (motion) tween.to(1, FADE_IN)
+                this.shown.set(widget, tween)
             }
             this.ticker.start()
             this.queue_resize()
+        }
+
+        private leaving(): Gtk.Widget[] {
+            return [...this.shown.keys()].filter(w => w !== this.current)
         }
 
         // as wide as what it shows now, and as tall as anything still on show
         vfunc_measure(orientation: Gtk.Orientation, forSize: number): [number, number, number, number] {
             let [min, nat] = this.current ? this.current.measure(orientation, forSize) : [0, 0]
             if (orientation === Gtk.Orientation.VERTICAL) {
-                for (const widget of this.leaving.keys()) {
+                for (const widget of this.leaving()) {
                     const [lmin, lnat] = widget.measure(orientation, -1)
                     min = Math.max(min, lmin)
                     nat = Math.max(nat, lnat)
@@ -262,22 +308,56 @@ export const Fader = GObject.registerClass(
             return [min, nat, -1, -1]
         }
 
-        vfunc_size_allocate(width: number, height: number, baseline: number): void {
-            if (this.current) this.current.allocate(width, height, baseline, null)
-            for (const widget of this.leaving.keys()) {
+        // small at nothing, about its middle
+        private place(widget: Gtk.Widget, w: number, h: number, x: number, y: number) {
+            const t = this.shown.get(widget)?.value ?? 1
+            const scale = SMALL + (1 - SMALL) * t
+            const transform = new Gsk.Transform()
+                .translate(at(Math.round(x) + w / 2, Math.round(y) + h / 2))
+                .scale(scale, scale)
+                .translate(at(-w / 2, -h / 2))
+            widget.allocate(w, h, -1, transform)
+        }
+
+        vfunc_size_allocate(width: number, height: number, _baseline: number): void {
+            if (this.current) {
+                // measured before laid out, as GTK wants each time
+                this.current.measure(Gtk.Orientation.HORIZONTAL, height)
+                this.place(this.current, width, height, 0, 0)
+            }
+            for (const widget of this.leaving()) {
                 const [, w] = widget.measure(Gtk.Orientation.HORIZONTAL, -1)
                 const [h] = widget.measure(Gtk.Orientation.VERTICAL, w)
+                // where it was against the slot's inner edge, towards the middle
                 const x = this.edge === "start" ? width - w : this.edge === "end" ? 0 : (width - w) / 2
                 const tall = Math.max(height, h)
-                widget.allocate(w, tall, -1, new Gsk.Transform().translate(at(Math.round(x), Math.round((height - tall) / 2))))
+                this.place(widget, w, tall, x, (height - tall) / 2)
+            }
+        }
+
+        vfunc_snapshot(snapshot: Gtk.Snapshot): void {
+            for (const [widget, tween] of this.shown) {
+                const t = Math.max(0, Math.min(1, tween.value))
+                if (t <= 0) continue
+                const clip = this.clipLeaving && widget !== this.current
+                if (clip) snapshot.push_clip(new Graphene.Rect().init(0, 0, this.get_width(), this.get_height()))
+                if (t >= 1) {
+                    this.snapshot_child(widget, snapshot)
+                } else {
+                    snapshot.push_opacity(t)
+                    snapshot.push_blur((1 - t) * BLUR)
+                    this.snapshot_child(widget, snapshot)
+                    snapshot.pop()
+                    snapshot.pop()
+                }
+                if (clip) snapshot.pop()
             }
         }
 
         vfunc_dispose(): void {
             this._ticker?.stop()
-            for (const widget of this.leaving.keys()) done(widget)
-            this.leaving.clear()
-            if (this.current) done(this.current)
+            for (const widget of this.shown.keys()) done(widget)
+            this.shown.clear()
             this.current = null
             super.vfunc_dispose()
         }
@@ -432,6 +512,9 @@ export const CardMorph = GObject.registerClass(
         // then can that give way to it, or it blinks out for a frame; and
         // again (false) as it is about to be back there
         onCovering: ((on: boolean) => void) | null = null
+        // called on every layout with where the card is now, in its own
+        // coordinates: all of its window that takes the pointer
+        onLayout: ((shape: Rect) => void) | null = null
         private frames = 0
         private handedBack = 0
         private from: Rect = { x: 0, y: 0, width: 0, height: 0 }
@@ -537,6 +620,7 @@ export const CardMorph = GObject.registerClass(
                 this.content.allocate(w, h, baseline, new Gsk.Transform().translate(at(Math.round(cx), Math.round(s.y))))
                 this.content.set_opacity(Math.max(0, Math.min(1, (t - 0.35) / 0.45)))
             }
+            this.onLayout?.(s)
         }
 
         vfunc_snapshot(snapshot: Gtk.Snapshot): void {

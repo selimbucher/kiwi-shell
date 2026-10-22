@@ -1,8 +1,9 @@
 import { Gtk, Gdk } from "ags/gtk4"
-import { createBinding, createComputed, createMemo, createState, With } from "ags"
+import { createBinding, createComputed, createMemo, createState, onCleanup, With, type Accessor } from "ags"
 import GLib from "gi://GLib"
 import GObject from "gi://GObject"
 import Graphene from "gi://Graphene"
+import Gsk from "gi://Gsk"
 import Pango from "gi://Pango"
 import Gio from "gi://Gio"
 import Mpris from "gi://AstalMpris"
@@ -11,7 +12,8 @@ import Hyprland from "gi://AstalHyprland"
 import { conf } from "../../config"
 import { giconForEntry } from "../../appIcon"
 import { loadThumbnail } from "../../services/wallpaper"
-import { addActivitySource, opened, PRIORITY, type Activity } from "../model"
+import { addActivitySource, collapse, opened, PRIORITY, type Activity } from "../model"
+import { focusClient, isMinimized, restoreClient } from "../../Dock/dock-state"
 
 // ─── Now Playing ──────────────────────────────────────────────────────────────
 // iOS's: the cover on the leading side, bars on the trailing one, and a
@@ -39,13 +41,15 @@ const watched = new Map<Mpris.Player, number[]>()
 const [current, setCurrent] = createState<Mpris.Player | null>(null)
 let lingerTimer = 0
 
+// A player is taken up once it plays something with a name, and kept while
+// it's there: between two songs a browser says the title is empty for a moment.
 function choose() {
-    const players = mpris.get_players().filter(named)
+    const players = mpris.get_players().filter(p => p.bus_name !== PROXY)
     for (const p of players)
         if (playing(p) && !startedAt.has(p.bus_name)) startedAt.set(p.bus_name, GLib.get_monotonic_time())
     for (const p of players) if (!playing(p)) startedAt.delete(p.bus_name)
 
-    const latest = players.filter(playing)
+    const latest = players.filter(p => playing(p) && (named(p) || p === current()))
         .sort((a, b) => startedAt.get(b.bus_name)! - startedAt.get(a.bus_name)!)[0] ?? null
     if (latest) {
         stopLinger()
@@ -105,11 +109,24 @@ const idOf = (p: Mpris.Player) => `media:${p.bus_name}`
 // having the focus, told by the process behind the player's bus name (asked
 // once per player) and the focused window's. A browser is one app whatever
 // tab plays, as Safari is on iOS: which tab is showing isn't anything MPRIS
-// says.
+// says. Minimized, the window keeps Hyprland's focus until another takes it,
+// but it's out of view: so the focused window's workspace is watched too.
 
 const hyprland = Hyprland.get_default()
-const [focusedPid, setFocusedPid] = createState(hyprland.get_focused_client()?.get_pid() ?? 0)
-hyprland.connect("notify::focused-client", () => setFocusedPid(hyprland.get_focused_client()?.get_pid() ?? 0))
+const [focusedPid, setFocusedPid] = createState(0)
+let focusWatch: { client: Hyprland.Client; id: number } | null = null
+
+function lookAtFocus() {
+    const client = hyprland.get_focused_client()
+    if (focusWatch?.client !== client) {
+        focusWatch?.client.disconnect(focusWatch.id)
+        focusWatch = client ? { client, id: client.connect("notify::workspace", lookAtFocus) } : null
+    }
+    setFocusedPid(client && !isMinimized(client) ? client.get_pid() : 0)
+}
+
+hyprland.connect("notify::focused-client", lookAtFocus)
+lookAtFocus()
 
 const [playerPids, setPlayerPids] = createState(new Map<string, number>())
 
@@ -132,6 +149,26 @@ function askPid(busName: string) {
 const askCurrent = () => { const p = current(); if (p) askPid(p.bus_name) }
 current.subscribe(askCurrent)
 askCurrent()
+
+// ─── The app ──────────────────────────────────────────────────────────────────
+// The player's own window, brought forward (out of the dock if minimized):
+// the one of its process that had the focus last. MPRIS's Raise is only
+// what's left without one: a browser can't bring itself forward on Wayland,
+// so it says it can and does nothing.
+
+function showApp(player: Mpris.Player) {
+    const pid = playerPids().get(player.bus_name)
+    const window = pid ? hyprland.get_clients()
+        .filter(c => c.get_pid() === pid)
+        .sort((a, b) => a.focus_history_id - b.focus_history_id)[0] : undefined
+    if (window) {
+        if (isMinimized(window)) restoreClient(window)
+        else focusClient(window)
+    } else if (player.can_raise) {
+        player.raise()
+    }
+    collapse()
+}
 
 // ─── Views ────────────────────────────────────────────────────────────────────
 
@@ -194,6 +231,104 @@ function Bars({ player }: { player: Mpris.Player }) {
     )
 }
 
+// ─── Play, pause, back, forward ───────────────────────────────────────────────
+// Apple's transport symbols (SF Symbols' backward.fill, play.fill, pause.fill,
+// forward.fill), drawn here rather than taken from the icon theme, which draws
+// them every which way: WhiteSur's 24 px pause sits in its icon's top-left
+// corner. Filled, the corners rounded by a stroke of the same colour.
+
+type Glyph = "back" | "play" | "pause" | "forward"
+
+// in a unit square, the way the symbols sit in theirs
+const SHAPES: Record<Glyph, [number, number][][]> = {
+    play: [[[0.24, 0.15], [0.24, 0.85], [0.84, 0.5]]],
+    pause: [
+        [[0.24, 0.15], [0.39, 0.15], [0.39, 0.85], [0.24, 0.85]],
+        [[0.61, 0.15], [0.76, 0.15], [0.76, 0.85], [0.61, 0.85]],
+    ],
+    forward: [
+        [[0.07, 0.24], [0.07, 0.76], [0.5, 0.5]],
+        [[0.5, 0.24], [0.5, 0.76], [0.93, 0.5]],
+    ],
+    back: [
+        [[0.93, 0.24], [0.93, 0.76], [0.5, 0.5]],
+        [[0.5, 0.24], [0.5, 0.76], [0.07, 0.5]],
+    ],
+}
+
+const MediaGlyph = GObject.registerClass(
+    { GTypeName: "KiwiMediaGlyph" },
+    class MediaGlyph extends Gtk.Widget {
+        size = 16
+        private _glyph: Glyph = "play"
+
+        get glyph(): Glyph {
+            return this._glyph
+        }
+
+        set glyph(glyph: Glyph) {
+            if (glyph === this._glyph) return
+            this._glyph = glyph
+            this.queue_draw()
+        }
+
+        vfunc_measure(): [number, number, number, number] {
+            return [this.size, this.size, -1, -1]
+        }
+
+        vfunc_snapshot(snapshot: Gtk.Snapshot): void {
+            const s = this.size
+            const x0 = (this.get_width() - s) / 2, y0 = (this.get_height() - s) / 2
+            const builder = new Gsk.PathBuilder()
+            for (const shape of SHAPES[this._glyph]) {
+                shape.forEach(([x, y], i) => i === 0
+                    ? builder.move_to(x0 + x * s, y0 + y * s)
+                    : builder.line_to(x0 + x * s, y0 + y * s))
+                builder.close()
+            }
+            const path = builder.to_path()
+            const color = this.get_color()
+            snapshot.append_fill(path, Gsk.FillRule.WINDING, color)
+            const stroke = new Gsk.Stroke(s * 0.1)
+            stroke.set_line_join(Gsk.LineJoin.ROUND)
+            snapshot.append_stroke(path, stroke, color)
+        }
+    },
+)
+
+function glyph(kind: Glyph | Accessor<Glyph>, size: number): Gtk.Widget {
+    const widget = new MediaGlyph({ valign: Gtk.Align.CENTER, halign: Gtk.Align.CENTER })
+    widget.size = size
+    if (typeof kind === "string") widget.glyph = kind
+    else {
+        widget.glyph = kind()
+        const stop = kind.subscribe(() => { widget.glyph = kind() })
+        onCleanup(stop)
+    }
+    return widget
+}
+
+/** Back, play or pause, forward: in the card, and in the island pointed at. */
+function Controls({ player, size }: { player: Mpris.Player; size: number }) {
+    const status = createBinding(player, "playback_status")
+    const playPause = status(s => s === Mpris.PlaybackStatus.PLAYING ? "pause" : "play") as Accessor<Glyph>
+    return (
+        <box class="island-controls" halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}>
+            <button sensitive={createBinding(player, "can_go_previous")}
+                onClicked={() => player.previous()}>
+                {glyph("back", size)}
+            </button>
+            <button class="play" onClicked={() => player.play_pause()}>
+                {glyph(playPause, Math.round(size * 0.9))}
+            </button>
+            <button sensitive={createBinding(player, "can_go_next")}
+                onClicked={() => player.next()}>
+                {glyph("forward", size)}
+            </button>
+        </box>
+    )
+}
+
 function time(seconds: number): string {
     if (!(seconds > 0) || seconds > 1e9) return "0:00"
     const s = Math.floor(seconds)
@@ -203,7 +338,6 @@ function time(seconds: number): string {
 function Expanded({ player }: { player: Mpris.Player }) {
     const title = createBinding(player, "title").as(t => String(t ?? ""))
     const artist = createBinding(player, "artist").as(a => String(a ?? ""))
-    const status = createBinding(player, "playback_status")
     const position = createBinding(player, "position")
     const length = createBinding(player, "length")
     const left = createComputed(get => Math.max(0, get(length) - get(position)))
@@ -212,7 +346,7 @@ function Expanded({ player }: { player: Mpris.Player }) {
         <box class="island-card island-media" orientation={Gtk.Orientation.VERTICAL}>
             <box class="head">
                 <button class="cover-button" tooltipText="Show the app"
-                    onClicked={() => { if (player.can_raise) player.raise() }}>
+                    onClicked={() => showApp(player)}>
                     <Cover player={player} size={52} />
                 </button>
                 <box class="titles" orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand>
@@ -221,24 +355,17 @@ function Expanded({ player }: { player: Mpris.Player }) {
                 </box>
                 <Bars player={player} />
             </box>
-            <box class="progress" visible={length(l => l > 0)}>
-                <label class="time" label={position(time)} widthChars={5} xalign={0} />
+            <box class="progress" orientation={Gtk.Orientation.VERTICAL} visible={length(l => l > 0)}>
                 <slider hexpand min={0} max={length} value={position}
                     sensitive={createBinding(player, "can_seek")}
                     onChangeValue={self => player.set_position(self.value)} />
-                <label class="time" label={left(l => `-${time(l)}`)} widthChars={5} xalign={1} />
+                <box class="times">
+                    <label class="time" label={position(time)} hexpand xalign={0} />
+                    <label class="time" label={left(l => `-${time(l)}`)} hexpand xalign={1} />
+                </box>
             </box>
             <box class="controls" halign={Gtk.Align.CENTER}>
-                <button sensitive={createBinding(player, "can_go_previous")} onClicked={() => player.previous()}>
-                    <Gtk.Image iconName="media-skip-backward-symbolic" pixelSize={20} />
-                </button>
-                <button class="play" onClicked={() => player.play_pause()}>
-                    <Gtk.Image pixelSize={24} iconName={status(s => s === Mpris.PlaybackStatus.PLAYING
-                        ? "media-playback-pause-symbolic" : "media-playback-start-symbolic")} />
-                </button>
-                <button sensitive={createBinding(player, "can_go_next")} onClicked={() => player.next()}>
-                    <Gtk.Image iconName="media-skip-forward-symbolic" pixelSize={20} />
-                </button>
+                <Controls player={player} size={22} />
             </box>
         </box>
     )
@@ -260,6 +387,7 @@ const activity = createComputed(get => {
         priority: PRIORITY.media,
         leading: () => <Cover player={player} size={20} /> as Gtk.Widget,
         trailing: () => <Bars player={player} /> as Gtk.Widget,
+        pointed: () => <Controls player={player} size={14} /> as Gtk.Widget,
         minimal: () => <Cover player={player} size={20} /> as Gtk.Widget,
         expanded: () => <Expanded player={player} /> as Gtk.Widget,
     } satisfies Activity

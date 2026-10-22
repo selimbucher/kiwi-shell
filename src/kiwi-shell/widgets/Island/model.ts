@@ -43,6 +43,9 @@ export type Activity = {
     // compact: either side of the centre
     leading: View
     trailing?: View
+    // the trailing side while the island is pointed at, growing it (Now
+    // Playing's controls). iOS has no pointer: it's a press and hold there.
+    pointed?: View
     // a bubble beside the island
     minimal: View
     // the card a click opens

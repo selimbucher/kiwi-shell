@@ -297,6 +297,23 @@ window.IslandBar {
     }
 }
 
+// back, play or pause, forward: drawn glyphs (sources/media.tsx), in the card
+// and in the island pointed at
+.island-controls button {
+    @include flat-button;
+    padding: 3px 7px;
+    border-radius: 99px;
+    color: var(--k-fg);
+
+    &:hover {
+        background-color: var(--k-fill);
+    }
+
+    &:disabled {
+        color: var(--k-fg-4);
+    }
+}
+
 @keyframes island-wave {
     from { transform: scale(1, 0.35); }
     to { transform: scale(1, 1); }
@@ -386,25 +403,21 @@ window.IslandCardWindow {
             color: var(--k-fg-3);
             font-weight: 600;
         }
+        // as iOS's: the bar the card's width, the times under its ends
         .progress {
             .time {
                 color: var(--k-fg-3);
                 font-size: 11px;
                 font-feature-settings: "tnum";
             }
-            slider {
-                margin: 0 8px;
+            .times {
+                margin-top: 2px;
             }
         }
         .controls {
             margin-top: 6px;
             button {
-                @include flat-button;
                 padding: 6px 14px;
-                border-radius: 99px;
-                &:hover {
-                    background-color: var(--k-fill);
-                }
             }
         }
     }

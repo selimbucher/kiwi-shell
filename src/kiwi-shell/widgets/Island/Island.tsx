@@ -1,9 +1,11 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createComputed, createMemo, createRoot, onCleanup, type Accessor } from "ags"
+import { createComputed, createMemo, createRoot, createState, onCleanup, type Accessor } from "ags"
 import GLib from "gi://GLib"
 import GObject from "gi://GObject"
 import Cairo from "gi://cairo"
+import Gsk from "gi://Gsk"
+import Graphene from "gi://Graphene"
 
 import { logger } from "../../log"
 import { conf } from "../config"
@@ -36,6 +38,10 @@ export type Center = "desktops" | "date" | "weather" | "none"
 // TEMPORARY: the two looks side by side, until one is chosen
 const LOOK = GLib.getenv("KIWI_ISLAND") === "black" ? " island-black" : ""
 
+// how long the island stays grown once the pointer has left what grew it: a
+// pointer slipping off its edge for a moment doesn't shut it
+const UNPOINT_AFTER_MS = 300
+
 const windowCss = conf.as(c => `--primary: ${c.primary_color}; --bar-margin: ${c.bar_margin}px;`)
 
 // A CenterBox that says when it has been laid out again. GTK leaves a
@@ -45,9 +51,24 @@ const RowLayout = GObject.registerClass(
     { GTypeName: "KiwiIslandRowLayout" },
     class RowLayout extends Gtk.CenterLayout {
         onLayout: (() => void) | null = null
+        // how far right of the middle the centre goes (IslandShape.shift)
+        shift: () => number = () => 0
 
-        vfunc_allocate(widget: Gtk.Widget, width: number, height: number, baseline: number): void {
-            super.vfunc_allocate(widget, width, height, baseline)
+        // CenterLayout's, but with the centre where the island says: the
+        // sides take what's left either side of it
+        vfunc_allocate(_widget: Gtk.Widget, width: number, height: number, baseline: number): void {
+            const center = this.get_center_widget()
+            const [, cw] = center?.get_visible() ? center.measure(Gtk.Orientation.HORIZONTAL, height) : [0, 0]
+            // not rounded: see IslandShape's allocation
+            const x = Math.max(0, Math.min(width - cw, (width - cw) / 2 + this.shift()))
+            const place = (child: Gtk.Widget | null, from: number, w: number) => {
+                if (!child?.get_visible()) return
+                child.measure(Gtk.Orientation.HORIZONTAL, height)
+                child.allocate(Math.max(0, Math.floor(w)), height, baseline, new Gsk.Transform().translate(new Graphene.Point().init(from, 0)))
+            }
+            place(this.get_start_widget(), 0, x)
+            place(center, x, cw)
+            place(this.get_end_widget(), x + cw, width - x - cw)
             this.onLayout?.()
         }
     },
@@ -57,12 +78,14 @@ const Row = GObject.registerClass(
     { GTypeName: "KiwiIslandRow" },
     class Row extends Gtk.CenterBox {
         onLayout: (() => void) | null = null
+        shift: () => number = () => 0
 
         _init(props?: Partial<Gtk.CenterBox.ConstructorProps>) {
             // @ts-expect-error GJS constructs GObject classes through _init
             super._init(props)
             const layout = new RowLayout()
             layout.onLayout = () => this.onLayout?.()
+            layout.shift = () => this.shift()
             this.set_layout_manager(layout)
         }
     },
@@ -110,6 +133,16 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         const a = alert()
         return a ? `alert:${a.seq}` : compactId() ? `activity:${compactId()}` : ""
     })
+    // Its trailing side pointed at, an activity that has more to show grows
+    // into it there at once (Now Playing's bars become its controls), and
+    // back a little after the pointer leaves.
+    const [pointed, setPointed] = createState(false)
+    const trailingKey = createMemo(() => {
+        const key = sideKey()
+        const id = compactId()
+        const more = key.startsWith("activity:") && pointed() && !!(id && activityById(id)?.pointed)
+        return more ? `${key}:pointed` : key
+    })
     // the card grown out of this island covers it
     const underCard = createMemo(() => covered()?.monitor === monitor && covered()?.origin === "island")
 
@@ -125,11 +158,20 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     // ─── What the island holds ────────────────────────────────────────────
 
+    const shape = new IslandShape({ cssClasses: ["island"], overflow: Gtk.Overflow.HIDDEN, valign: Gtk.Align.CENTER })
+
     const side = (edge: "leading" | "trailing") => {
         const fader = new Fader({ cssClasses: ["island-side", edge], valign: Gtk.Align.CENTER })
         fader.edge = edge === "leading" ? "start" : "end"
-        follow(sideKey, () => {
-            const key = sideKey()
+        const keyOf = edge === "leading" ? sideKey : trailingKey
+        let last = ""
+        follow(keyOf, () => {
+            const key = keyOf()
+            // the pointed-at view coming or going changes the trailing side
+            // only: the rest stays where it is
+            const base = (k: string) => k.replace(/:pointed$/, "")
+            shape.anchor = edge === "trailing" && last && base(last) === base(key) ? 0 : 0.5
+            last = key
             const a = alert()
             if (key.startsWith("alert:") && a) {
                 const view = edge === "leading" ? a.leading : a.trailing
@@ -137,6 +179,10 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             }
             const id = compactId()
             const activity = id ? activityById(id) : null
+            if (key.endsWith(":pointed") && activity?.pointed) {
+                const more = activity.pointed
+                return fader.show(scoped(() => <box class={`island-part ${edge} pointed`}>{more()}</box> as Gtk.Widget))
+            }
             const view = activity && (edge === "leading" ? activity.leading : activity.trailing)
             fader.show(view ? scoped(() => (
                 <button class={`island-part ${edge}`} valign={Gtk.Align.CENTER}
@@ -149,13 +195,19 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     }
 
     const middle = new Fader({ cssClasses: ["island-center"], valign: Gtk.Align.CENTER })
-    follow(center, () => middle.show(scoped(() => centerView(center(), monitor))))
+    follow(center, () => {
+        shape.anchor = 0.5
+        middle.show(scoped(() => centerView(center(), monitor)))
+    })
 
+    const leading = side("leading")
+    const trailing = side("trailing")
+    follow(anyPrivacy, () => { trailing.clipLeaving = anyPrivacy() })
     const body = (
         <box class="island-body">
-            {side("leading")}
+            {leading}
             {middle}
-            {side("trailing")}
+            {trailing}
             <button class="island-part privacy" visible={anyPrivacy} valign={Gtk.Align.CENTER}
                 onClicked={() => expand(PRIVACY_ID, monitor)}>
                 <PrivacyDots />
@@ -163,8 +215,34 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         </box>
     ) as Gtk.Widget
 
-    const shape = new IslandShape({ cssClasses: ["island"], overflow: Gtk.Overflow.HIDDEN, valign: Gtk.Align.CENTER })
     shape.child = body
+    // With a card open from it, the island stays as it was, pointed at or
+    // not: the card grew out of it and shrinks back into it. The pointer is
+    // over the card meanwhile, which to the island is the pointer leaving.
+    // Once the card has gone, it goes by where the pointer is.
+    const carded = createMemo(() => opened()?.monitor === monitor || covered()?.monitor === monitor)
+    let pointTimer = 0
+    const pointAfter = (on: boolean, ms: number) => {
+        if (pointTimer) GLib.source_remove(pointTimer)
+        pointTimer = 0
+        if (carded()) return
+        if (ms === 0) return setPointed(on)
+        pointTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
+            pointTimer = 0
+            setPointed(on)
+            return GLib.SOURCE_REMOVE
+        })
+    }
+    const pointer = new Gtk.EventControllerMotion()
+    pointer.connect("enter", () => pointAfter(true, 0))
+    pointer.connect("leave", () => pointAfter(false, UNPOINT_AFTER_MS))
+    trailing.add_controller(pointer)
+    subscriptions.push(carded.subscribe(() => {
+        if (carded()) return
+        const on = pointer.contains_pointer
+        if (on !== pointed()) pointAfter(on, on ? 0 : UNPOINT_AFTER_MS)
+    }))
+    subscriptions.push(() => { if (pointTimer) GLib.source_remove(pointTimer) })
     shape.shownNow = shown()
     subscriptions.push(shown.subscribe(() => shape.reveal(shown())))
     islandBodies.set(monitor, body)
@@ -256,6 +334,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             <Row class="island-row" $={(self: InstanceType<typeof Row>) => {
                 row = self
                 self.onLayout = updateRegion
+                self.shift = () => shape.shift
             }}>
                 <box $type="start" hexpand valign={Gtk.Align.CENTER}>{bubble(1, "start")}</box>
                 {/* under the card, all but invisible rather than not there:
@@ -378,6 +457,26 @@ export function IslandCard() {
             layer={Astal.Layer.OVERLAY}
             $={(self) => {
                 onCleanup(() => destroyWindow(self))
+                // The pointer only where the card is: the rest of the window
+                // is the backdrop's, whose click closes it. Set as it's laid
+                // out, so it goes with the frame that draws it there.
+                let last = ""
+                morph.onLayout = shape => {
+                    const surface = self.get_surface()
+                    const [ok, origin] = morph.compute_point(self, new Graphene.Point().init(0, 0))
+                    if (!surface || !ok) return
+                    const rect = new Cairo.RectangleInt()
+                    rect.x = Math.floor(origin.x + shape.x)
+                    rect.y = Math.floor(origin.y + shape.y)
+                    rect.width = Math.ceil(shape.width)
+                    rect.height = Math.ceil(shape.height)
+                    const signature = `${rect.x},${rect.y},${rect.width},${rect.height}`
+                    if (signature === last) return
+                    last = signature
+                    const region = new Cairo.Region()
+                    region.unionRectangle(rect)
+                    surface.set_input_region(region)
+                }
                 // The display's width, as the bar's island window has: the
                 // card grows out of the island wherever that is, and a
                 // layer surface asking for its content's width is given just
