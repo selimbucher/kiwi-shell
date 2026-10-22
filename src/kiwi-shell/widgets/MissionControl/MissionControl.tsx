@@ -125,6 +125,12 @@ function snapshot(monitorName: string): View | null {
     if (!ids.includes(monitor.active)) ids.push(monitor.active)
     ids.sort((a, b) => a - b)
 
+    const slots = spreadOf(monitor, byDesktop.get(monitor.active) ?? [])
+    return { monitor, desktops: ids.map(id => ({ id, windows: byDesktop.get(id) ?? [] })), slots }
+}
+
+/** A desktop's windows spread out below the bar, none covering another. */
+function spreadOf(monitor: Monitor, windows: Window[]): Slot<Window>[] {
     const top = barHeight(monitor)
     const area = {
         x: AREA_MARGIN,
@@ -132,11 +138,9 @@ function snapshot(monitorName: string): View | null {
         width: monitor.width - 2 * AREA_MARGIN,
         height: monitor.height - top - AREA_TOP_GAP - AREA_MARGIN,
     }
-    const windows = byDesktop.get(monitor.active) ?? []
-    const slots = spread(
+    return spread(
         windows.map(w => ({ item: w, box: { x: w.x - monitor.x, y: w.y - monitor.y, width: w.width, height: w.height } })),
         area, monitor, SPREAD)
-    return { monitor, desktops: ids.map(id => ({ id, windows: byDesktop.get(id) ?? [] })), slots }
 }
 
 // ─── Opening, closing ─────────────────────────────────────────────────────────
@@ -210,6 +214,10 @@ hyprland.connect("event", (_h: unknown, event: string, args: string) => {
         // where it went, how far the fingers got and how fast they were
         const [, , to, progress, speed] = args.split(",")
         log.info(`three fingers let go: ${to}, ${progress} of the way, ${speed} per ms`)
+    } else if (event === "kiwidesk") {
+        // the desktops sliding (the plugin, desktops.cpp): the view follows
+        const [monitor, id, fraction] = args.split(",")
+        if (scene && view.get()?.monitor.name === monitor) scene.follow(Number(id), Number(fraction))
     } else if (event === "kiwipreviews" && args === `flown,${WINDOWS_SET}`) {
         if (isOpen.get() && !closing.get()) {
             closedAt = Date.now()
@@ -743,6 +751,11 @@ class Scene {
     private size: { width: number; height: number }
     // which desktop is in view: its place in the row, between two while sliding
     private readonly camera = new Spring()
+    // Hyprland's own slide of the desktops is under way, and the view goes
+    // where it is (follow): under the fingers, on the way after they let go,
+    // on a switch from the keyboard. The camera's spring is for slides
+    // Hyprland doesn't make (without the plugin, it hears of none).
+    private following = false
     // the bar: 0 folded, 1 open
     private readonly opening = new Tween()
     // the names: 0 up above the screen, 1 in place
@@ -838,6 +851,25 @@ class Scene {
     /** The bar's own height now, folded to open: the pointer above it opens it. */
     barBottom(): number {
         return lerp(FOLDED_BAR, barHeight(this.v.monitor), this.opening.value)
+    }
+
+    /**
+     * Where Hyprland's slide of the desktops is: `fraction` of a desktop
+     * back from desktop `id`. The desktops either side of that come into
+     * the view as it gets there, their windows already spread out.
+     */
+    follow(id: number, fraction: number) {
+        const index = this.indexOf(id)
+        if (index < 0 || this.zoom || drag) return
+        const position = index - fraction
+        for (const i of new Set([Math.floor(position), Math.ceil(position)])) {
+            const desktop = this.v.desktops[i]
+            if (desktop && !this.pages.has(desktop.id))
+                this.addPage(desktop.id, spreadOf(this.v.monitor, desktop.windows), new Map())
+        }
+        this.following = fraction !== 0
+        this.camera.jump(position)
+        this.animate()
     }
 
     private indexOf(id: number): number {
@@ -1207,7 +1239,7 @@ class Scene {
         const after = v.desktops.findIndex(d => d.id === old.monitor.active)
         if (before >= 0 && after >= 0 && before !== after) this.camera.shift(after - before)
         const index = this.indexOf(v.monitor.active)
-        if (this.camera.target !== index) {
+        if (this.camera.target !== index && !this.following) {
             this.camera.to(index)
             this.animate()
         }
@@ -1402,10 +1434,12 @@ class Scene {
                     if (frame.leaving && !frame.move.running) this.dropFrame(page, frame)
             // grown to fill the display: that desktop is there
             if (this.zoom && !this.zoom.growing.running && this.zoom.growing.value === 1) void this.zoomed(this.zoom)
-            // a desktop slid out of view is gone
-            if (!this.camera.running)
+            // a desktop slid out of view is gone: neither the one in view
+            // nor where a slide has left the view (Hyprland may say it has
+            // stopped there before the shell hears which desktop is active)
+            if (!this.camera.running && !this.following)
                 for (const page of [...this.pages.values()])
-                    if (page.id !== this.v.monitor.active) this.dropPage(page)
+                    if (page.id !== this.v.monitor.active && this.indexOf(page.id) !== Math.round(this.camera.value)) this.dropPage(page)
             this.place()
             if (running) return GLib.SOURCE_CONTINUE
             this.tick = 0

@@ -17,19 +17,34 @@
 //
 // A config reload takes persistence from every workspace no rule asks it for,
 // so the set is applied again after each, and when a monitor is connected.
+//
+// While a display's desktops slide (Hyprland's own swipe under the fingers,
+// its finish after they let go, a switch from the keyboard), the plugin says
+// where the slide is, every frame it moves:
+//
+//     kiwidesk>>MONITOR,WORKSPACEID,FRACTION
+//
+// FRACTION is how far the active workspace is from its place, in desktops
+// (its offset over the display's width and the gap between workspaces):
+// the view is FRACTION desktops back from WORKSPACEID. Mission Control
+// follows it, so that a swipe while it is open moves its desktops with the
+// fingers rather than jumping once Hyprland has switched.
 
 #include "kiwi.hpp"
 #include "requests.hpp"
 
 #include <plugins/PluginAPI.hpp>
 #include <desktop/Workspace.hpp>
+#include <config/ConfigValue.hpp>
 #include <event/EventBus.hpp>
+#include <managers/EventManager.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <output/Monitor.hpp>
 #include <state/MonitorState.hpp>
 #include <state/WorkspaceState.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <map>
 #include <ranges>
@@ -55,12 +70,14 @@ namespace {
             // after the reload has taken persistence away, not before
             m_refreshedListener = Event::bus()->m_events.config.props_refreshed.listen([this](bool) { applySoon(); });
             m_monitorListener   = Event::bus()->m_events.monitor.added.listen([this](PHLMONITOR) { applySoon(); });
+            m_frameListener     = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) { tellSlide(monitor); });
             return true;
         }
 
         void exit() {
             m_refreshedListener.reset();
             m_monitorListener.reset();
+            m_frameListener.reset();
             m_command.reset();
             m_kept.clear();
             release({});
@@ -72,7 +89,27 @@ namespace {
         // the workspaces marked persistent here
         std::vector<PHLWORKSPACEREF> m_ours;
         SP<SHyprCtlCommand>          m_command;
-        CHyprSignalListener          m_refreshedListener, m_monitorListener;
+        CHyprSignalListener          m_refreshedListener, m_monitorListener, m_frameListener;
+        // where each display's slide was last told to be, by monitor name
+        std::map<std::string, std::pair<WORKSPACEID, double>> m_slides;
+
+        // Only when it has moved: a display at rest sends nothing, and
+        // one frame at rest after a slide says it has stopped.
+        void tellSlide(const PHLMONITOR& monitor) {
+            if (!monitor || !monitor->m_activeWorkspace)
+                return;
+            static auto  GAP      = CConfigValue<Config::INTEGER>("general:gaps_workspaces");
+            const auto   WS       = monitor->m_activeWorkspace;
+            const double DESKTOP  = monitor->m_size.x + *GAP;
+            const double FRACTION = DESKTOP > 0 ? WS->m_renderOffset->value().x / DESKTOP : 0.0;
+            auto&        last     = m_slides[monitor->m_name];
+            if (last.first == WS->m_id && std::abs(last.second - FRACTION) < 1e-4)
+                return;
+            const bool MOVED = last.first != WS->m_id || FRACTION != 0.0 || last.second != 0.0;
+            last             = {WS->m_id, FRACTION};
+            if (MOVED)
+                g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwidesk", .data = std::format("{},{},{:.4f}", monitor->m_name, WS->m_id, FRACTION)});
+        }
         bool                         m_applying = false;
 
         void applySoon() {
