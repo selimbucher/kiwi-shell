@@ -63,7 +63,8 @@ const SWIPE = {
     workspace_swipe_forever: false,
     workspace_swipe_use_r: false,
     workspace_swipe_distance: 400,
-    workspace_swipe_min_speed_to_force: 20,
+    // a short quick swipe is enough, as on a Mac
+    workspace_swipe_min_speed_to_force: 12,
     workspace_swipe_cancel_ratio: 0.2,
 }
 

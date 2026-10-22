@@ -95,6 +95,11 @@ export const [isOpen, setOpen] = createState(false)
 const [view, setView] = createState<View | null>(null)
 const [expanded, setExpanded] = createState(false)
 const [selected, setSelected] = createState<string | null>(null)
+// Three fingers have the windows (the plugin's gesture, previews.cpp) until
+// they let go, the pictures following them in or out. Nothing is pointed at
+// meanwhile: a window's outline and title stay where the window was in the
+// spread, and they stood there as ghosts while the window went home.
+let fingersHold = false
 
 // ─── Geometry ─────────────────────────────────────────────────────────────────
 
@@ -197,6 +202,14 @@ function landed(heard: boolean) {
 hyprland.connect("event", (_h: unknown, event: string, args: string) => {
     if (event === "kiwigesture" && args === `open,${WINDOWS_SET}`) {
         if (!isOpen.get()) openMissionControl()
+    } else if (event === "kiwigesture" && args === `held,${WINDOWS_SET}`) {
+        fingersHold = true
+        setSelected(null)
+    } else if (event === "kiwigesture" && args.startsWith(`let,${WINDOWS_SET},`)) {
+        fingersHold = false
+        // where it went, how far the fingers got and how fast they were
+        const [, , to, progress, speed] = args.split(",")
+        log.info(`three fingers let go: ${to}, ${progress} of the way, ${speed} per ms`)
     } else if (event === "kiwipreviews" && args === `flown,${WINDOWS_SET}`) {
         if (isOpen.get() && !closing.get()) {
             closedAt = Date.now()
@@ -902,7 +915,10 @@ class Scene {
             const widget = new Gtk.Box({ cssClasses: ["mc-window", "mc-target"] })
             widget.append(picture)
             const motion = new Gtk.EventControllerMotion()
-            motion.connect("enter", () => { if (!drag) setSelected(address) })
+            const point = () => { if (!drag && !fingersHold && selected.get() !== address) setSelected(address) }
+            motion.connect("enter", point)
+            // and once the pointer moves again after the fingers let go
+            motion.connect("motion", point)
             motion.connect("leave", () => { if (selected.get() === address) setSelected(null) })
             widget.add_controller(motion)
             click(widget, () => goToWindow(slot.item))

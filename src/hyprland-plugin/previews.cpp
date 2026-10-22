@@ -56,7 +56,11 @@
 // as macOS's Mission Control does; let go past half way (or flicked) the
 // flight goes on by itself, short of it it goes back. Out of nothing, the
 // plugin asks the shell for the set with `kiwigesture>>open,<set>` and holds
-// the tiles where the fingers are once they come. Hyprland clears gestures
+// the tiles where the fingers are once they come. `kiwigesture>>held,<set>`
+// says the fingers have the set, `kiwigesture>>let,<set>,out|home` where it
+// goes once they let go. While the fingers hold the flight the windows stay
+// hidden, wherever the pictures are: shown under pictures that are still on
+// their way, they were two of each. Hyprland clears gestures
 // on every config reload; this one is added again after each.
 // <badge> is an image file (percent-encoded: a path has spaces and commas),
 // the app's icon, drawn in the picture's bottom-right corner with a drop
@@ -184,9 +188,13 @@ namespace {
     }
 
     // a full swipe, from the windows to the tiles, in the trackpad's units
-    constexpr float GESTURE_DISTANCE = 300.F;
-    // let go faster than this (units per ms) and the flight goes that way
-    constexpr float GESTURE_FLICK = 0.5F;
+    constexpr float GESTURE_DISTANCE = 240.F;
+    // Let go faster than this (units per ms) and the flight goes that way;
+    // slower, it goes on past this share of the way, and back short of it.
+    // A Mac takes a short quick swipe as readily as a long one, and lets a
+    // slow one go a little way.
+    constexpr float GESTURE_FLICK   = 0.3F;
+    constexpr float GESTURE_PAST    = 0.35F;
     // and held still this long, it was no flick
     constexpr auto GESTURE_REST = std::chrono::milliseconds{80};
 
@@ -486,6 +494,8 @@ namespace {
             m_closing         = true;
             m_since           = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - SHOWN));
             m_held            = false;
+            m_showBelow       = std::min(FLY_HIDDEN_BY, SHOWN);
+            m_hiddenChanged   = true;
             // nothing else may be drawing: the way home starts with a frame
             damageMonitors();
         }
@@ -521,9 +531,11 @@ namespace {
                 m_flying = true;
                 hideWindows();
             }
-            m_held    = true;
-            m_closing = false;
-            m_heldAt  = std::clamp(progress, 0.F, 1.F);
+            m_held          = true;
+            m_closing       = false;
+            m_heldAt        = std::clamp(progress, 0.F, 1.F);
+            m_showBelow     = 0.F;
+            m_hiddenChanged = true;
             damageMonitors();
         }
 
@@ -531,13 +543,15 @@ namespace {
         void letGo(bool out) {
             if (!m_held)
                 return;
-            m_held = false;
+            m_held          = false;
+            m_hiddenChanged = true;
             if (out) {
                 m_closing = false;
                 m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(m_heldAt));
             } else {
-                m_closing = true;
-                m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - m_heldAt));
+                m_closing   = true;
+                m_since     = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - m_heldAt));
+                m_showBelow = std::min(FLY_HIDDEN_BY, m_heldAt);
             }
             damageMonitors();
         }
@@ -735,6 +749,11 @@ namespace {
         Time::steady_tp m_since;
         float           m_applied       = -1.F; // the flight's point last applied to the windows
         bool            m_hiddenChanged = false;
+        // the share of the way below which the windows show: FLY_HIDDEN_BY
+        // for a flight of its own; nothing while fingers hold it, nor on
+        // the way out after (the windows are gone already); on the way home
+        // after, from where the fingers let go
+        float m_showBelow = FLY_HIDDEN_BY;
         struct SHidden {
             PHLWINDOWREF window;
             float        alpha = 1.F;
@@ -749,6 +768,8 @@ namespace {
                 return;
             }
             const float SHOWN = m_flying ? shown() : 0.F;
+            if (!m_flying)
+                m_showBelow = FLY_HIDDEN_BY;
             m_flying          = true;
             m_closing         = false;
             m_since           = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(SHOWN));
@@ -801,7 +822,7 @@ namespace {
             if (SHOWN != m_applied || m_hiddenChanged) {
                 m_applied       = SHOWN;
                 m_hiddenChanged = false;
-                const float LEFT = 1.F - std::clamp(SHOWN / FLY_HIDDEN_BY, 0.F, 1.F);
+                const float LEFT = m_showBelow <= 0.F ? (SHOWN <= 0.F ? 1.F : 0.F) : 1.F - std::clamp(SHOWN / m_showBelow, 0.F, 1.F);
                 for (const auto& hidden : m_hidden) {
                     if (const auto WINDOW = hidden.window.lock())
                         WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(hidden.alpha * LEFT);
@@ -1024,6 +1045,8 @@ namespace {
                 return;
             m_swipe.active = true;
             m_swipe.lastMs = ms;
+            // the shell lets nothing be pointed at while the fingers have the windows
+            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("held,{}", m_gestureSet)});
             swipeUpdate(travel, ms);
         }
 
@@ -1046,9 +1069,14 @@ namespace {
             // fingers that came to rest before letting go flicked nothing
             if (Time::steadyNow() - m_swipe.lastAt > GESTURE_REST)
                 m_swipe.velocity = 0.F;
-            bool out = m_swipe.velocity > GESTURE_FLICK ? true : m_swipe.velocity < -GESTURE_FLICK ? false : m_swipe.progress > 0.5F;
+            // past the mark from where it started, the way the fingers went
+            const float PAST = m_swipe.opening ? GESTURE_PAST : 1.F - GESTURE_PAST;
+            bool        out  = m_swipe.velocity > GESTURE_FLICK ? true : m_swipe.velocity < -GESTURE_FLICK ? false : m_swipe.progress > PAST;
             if (cancelled)
                 out = !m_swipe.opening;
+            // with how far and how fast, for tuning the two above on a real trackpad
+            g_pEventManager->postEvent(SHyprIPCEvent{
+                .event = "kiwigesture", .data = std::format("let,{},{},{:.2f},{:.2f}", m_gestureSet, out ? "out" : "home", m_swipe.progress, m_swipe.velocity)});
             if (const auto SET = gestureSet(); SET && SET->hasTiles() && SET->isHeld())
                 SET->letGo(out);
             else {
