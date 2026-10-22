@@ -459,6 +459,14 @@ namespace {
                 // just given back. Only a clear sends tiles home.
                 if (fly)
                     hideWindows();
+            } else if (fly && !m_flying) {
+                // Shown with nothing to fly (Mission Control on an empty
+                // desktop): it is out already. Tiles that come later (a
+                // desktop zoomed into, one slid to) are where they're put,
+                // rather than flying out of their windows as on opening.
+                m_flying  = true;
+                m_closing = false;
+                m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION));
             }
         }
 
