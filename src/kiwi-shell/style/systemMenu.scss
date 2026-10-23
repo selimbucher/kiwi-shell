@@ -408,56 +408,6 @@
         }
       }
     }
-
-    .media-player {
-      label {
-        color: var(--k-fg-2);
-      }
-      padding: 12px;
-      background-color: var(--k-fill);
-      border-radius: 8px;
-      .cover-art {
-        border-radius: 6px;
-        margin-right: 12px;
-        
-        .generic-container {
-          background: var(--k-fill);
-          padding: 16px;
-        }
-        
-      }
-      .playback-info {
-        margin-bottom: 0;
-        scrolledwindow {
-        }
-        .title {
-          font-weight: bold;
-          font-size: 18px;
-        }
-        .bottom-bar {
-          margin-bottom: -4px;
-          margin-top: 4px;
-        }
-        .control-bar {
-          button {
-            background: none;
-            border: none;
-            box-shadow: none;
-            padding: 0 4px;
-          }
-          
-        }
-        
-        scale {
-          padding: 0;
-          highlight {
-            background-color: var(--k-fg);
-          }
-        }
-      }
-    }
-    
-
   }
 }
 

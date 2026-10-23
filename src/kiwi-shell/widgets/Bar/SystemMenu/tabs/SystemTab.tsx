@@ -10,7 +10,6 @@ import AstalBattery from "gi://AstalBattery"
 import Notifd from "gi://AstalNotifd"
 
 
-import { MediaPlayer } from "../../../Misc"
 import { KeyedList } from "../../../KeyedList"
 import { Icon, powerProfileIcon, volumeIcon, brightnessIcon } from "../../../iconNames"
 import { brightness, setBrightnessLevel, brightnessAvailable, brightnessWritable } from "../../../brightness"
@@ -77,7 +76,6 @@ export default function SystemTab({ visible }) {
       </box>
       <Sliders />
       <OptionButtons />
-      <MediaPlayer />
     </box>
   )
 }
