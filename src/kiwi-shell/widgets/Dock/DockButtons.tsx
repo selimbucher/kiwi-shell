@@ -6,7 +6,7 @@ import GLib from "gi://GLib"
 import { conf } from "../config"
 import { playSound } from "../sound"
 import { HOME, launchBounce, type Hop } from "./dock-state"
-import { openUri, openPath, emptyTrash } from "./dock-utils"
+import { openUri, openPath, emptyTrash, letGoOnClose } from "./dock-utils"
 import { ContextMenu } from "../ContextMenu"
 
 export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void }) {
@@ -55,6 +55,7 @@ export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) =>
                     gesture.set_button(3)
                     gesture.connect("released", () => menu.popup())
                     self.add_controller(gesture)
+                    letGoOnClose(menu, self)
                 }}
             >
                 <box orientation={Gtk.Orientation.VERTICAL}>
@@ -132,6 +133,7 @@ export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void
                     gesture.set_button(3)
                     gesture.connect("released", () => menu.popup())
                     self.add_controller(gesture)
+                    letGoOnClose(menu, self)
 
                     const dropTarget = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE | Gdk.DragAction.COPY)
                     dropTarget.connect("accept", (_target, drop) =>

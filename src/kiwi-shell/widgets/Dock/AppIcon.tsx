@@ -4,6 +4,7 @@ import Pango from "gi://Pango"
 import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient, registerDockIcon, clientsBinding as windowsBinding } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
+import { letGoOnClose } from "./dock-utils"
 import { mapVersion, canonicalEntry } from "../desktopEntries"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
@@ -205,6 +206,7 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                         menu.popup()
                     })
                     self.add_controller(gesture)
+                    letGoOnClose(menu, self)
 
                     const hover = new Gtk.EventControllerMotion()
                     hover.connect("enter", () => {

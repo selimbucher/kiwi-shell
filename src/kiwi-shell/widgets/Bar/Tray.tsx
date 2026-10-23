@@ -47,6 +47,15 @@ export default function Tray() {
                             }}
                             hasArrow={true}
                             class="tray-menu"
+                            // The menu takes the pointer while open, and GTK
+                            // never sees it leave the item: closed by a click
+                            // elsewhere, the item stayed lit. As on macOS, an
+                            // item is lit while its menu is open, not after.
+                            onClosed={(self: Gtk.PopoverMenu) => {
+                                const item = self.get_parent()
+                                item?.unset_state_flags(Gtk.StateFlags.PRELIGHT)
+                                item?.get_first_child()?.unset_state_flags(Gtk.StateFlags.PRELIGHT)
+                            }}
                         />
                     </menubutton>
                 }

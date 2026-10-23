@@ -2,6 +2,45 @@ import { logger } from "../../log"
 const log = logger("dock")
 import { conf } from "../config"
 import GLib from "gi://GLib"
+import { Gtk, Gdk } from "ags/gtk4"
+import Hyprland from "gi://AstalHyprland"
+
+/**
+ * Whether the pointer is over `widget`, one of the dock's (a bottom-anchored
+ * layer as wide as its display), as Hyprland has it: GTK can't tell once a
+ * menu hanging off the widget has had the pointer.
+ */
+export function pointerOverDock(widget: Gtk.Widget): boolean {
+    const root = widget.get_root() as Gtk.Widget & { gdkmonitor?: Gdk.Monitor } | null
+    const monitor = root?.gdkmonitor
+    if (!root || !monitor) return false
+    let reply: string
+    try {
+        reply = Hyprland.get_default().message("cursorpos")
+    } catch {
+        return false
+    }
+    const at = reply.match(/(-?\d+),\s*(-?\d+)/)
+    const [ok, bounds] = widget.compute_bounds(root)
+    if (!at || !ok) return false
+    const geo = monitor.get_geometry()
+    const x = Number(at[1]) - geo.x
+    const y = Number(at[2]) - (geo.y + geo.height - root.get_height())
+    return x >= bounds.get_x() && x <= bounds.get_x() + bounds.get_width()
+        && y >= bounds.get_y() && y <= bounds.get_y() + bounds.get_height()
+}
+
+/**
+ * A menu hanging off a dock button takes the pointer while it's open, and GTK
+ * never sees the pointer leave the button: an item chosen or a click
+ * elsewhere left it lifted as if pointed at. Closed, it lets go, unless the
+ * pointer is on the button.
+ */
+export function letGoOnClose(menu: Gtk.Popover, button: Gtk.Widget) {
+    menu.connect("closed", () => {
+        if (!pointerOverDock(button)) button.unset_state_flags(Gtk.StateFlags.PRELIGHT)
+    })
+}
 
 const FILE_MANAGERS = [
     { bin: "nautilus", flag: "" },
