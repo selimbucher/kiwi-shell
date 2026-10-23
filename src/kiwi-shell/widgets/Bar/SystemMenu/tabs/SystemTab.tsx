@@ -1,7 +1,7 @@
 import { Gtk } from "ags/gtk4"
 import Pango from "gi://Pango"
 import { execAsync } from "ags/process"
-import { createState, createBinding, createComputed, With } from "ags"
+import { createState, createBinding, createComputed, With, type Accessor } from "ags"
 import { subprocess } from "ags/process"
 
 import AstalWp from "gi://AstalWp"
@@ -210,6 +210,35 @@ function OptionButtons(){
   )
 }
 
+// ─── Outputs ──────────────────────────────────────────────────────────────────
+// Only the outputs that are there, as macOS and GNOME list them: an HDMI or
+// DisplayPort connector with no display on it says so, and choosing it
+// played nothing. Each is called by its port ("Speaker", "HDMI / DisplayPort
+// 1 Output"), not by the sound card's long name, which said nothing before
+// the part that tells them apart and was cut off there.
+//
+// A card that is one device with several outputs (an Intel laptop's speaker
+// and its HDMI connectors) has a port for each, described as the output's
+// profile is. AstalWp gives every one of them the device's first port, so
+// the match is made here; an output matching none (a card whose ports are
+// one output's, headphones and speakers) is there unless all its device's
+// outputs are unplugged.
+
+const OUTPUT = AstalWp.Direction.OUTPUT
+const UNPLUGGED = AstalWp.Available.NO
+
+function portOf(speaker: AstalWp.Endpoint, ports: AstalWp.Route[]): AstalWp.Route | null {
+  const profile = speaker.get_pw_property("device.profile.description")
+  return profile ? ports.find(port => port.description === profile) ?? null : null
+}
+
+function outputPorts(speaker: AstalWp.Endpoint, get: <T>(a: Accessor<T>) => T): AstalWp.Route[] {
+  const device = speaker.device
+  if (!device) return []
+  const routes = (get(createBinding(device, "routes")) ?? []) as AstalWp.Route[]
+  return routes.filter(route => route.direction === OUTPUT)
+}
+
 function AudioDevices({ close }) {
   return (
     <KeyedList
@@ -225,14 +254,25 @@ function AudioDevices({ close }) {
         // (wp.audio's notify::default-speaker does NOT fire reliably, so a
         // defaultSpeaker binding would go stale.)
         const isDefault = createBinding(spk, "isDefault")
+        // the one in use always shows, whatever its port says
+        const there = createComputed(get => {
+          if (get(isDefault)) return true
+          const ports = outputPorts(spk, get)
+          const port = portOf(spk, ports)
+          if (port) return get(createBinding(port, "available")) !== UNPLUGGED
+          return ports.length === 0 || ports.some(p => get(createBinding(p, "available")) !== UNPLUGGED)
+        })
+        const name = createComputed(get =>
+          portOf(spk, outputPorts(spk, get))?.description || spk.description || spk.name || "Unknown Device")
         return (
           <button
             class={isDefault.as(d => d ? "menu-item active" : "menu-item")}
+            visible={there}
             onClicked={() => { spk.set_is_default(true); close() }}
           >
             <box spacing={6}>
               <label
-                label={spk.description ?? spk.name ?? "Unknown Device"}
+                label={name}
                 xalign={0}
                 hexpand={true}
                 maxWidthChars={24}
