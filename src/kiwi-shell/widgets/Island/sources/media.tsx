@@ -13,6 +13,7 @@ import Hyprland from "gi://AstalHyprland"
 import { conf } from "../../config"
 import { giconForEntry } from "../../appIcon"
 import { loadThumbnail } from "../../services/wallpaper"
+import { coverFile, fetchedCover, isWebCover } from "../../services/covers"
 import { addActivitySource, collapse, opened, PRIORITY, type Activity } from "../model"
 import { focusClient, isMinimized, restoreClient } from "../../Dock/dock-state"
 
@@ -198,8 +199,52 @@ const CoverArt = GObject.registerClass(
     },
 )
 
+// Covers decoded, the last few: one coming back (an alert gone, the card
+// closed) is a new widget, and decoded again it got its picture halfway
+// through fading in, or after.
+const decoded = new Map<string, Gdk.Texture>()
+const DECODED_KEEP = 12
+
+function decodedCover(file: string, size: number, then: (texture: Gdk.Texture) => void): Gdk.Texture | null {
+    const key = `${size}:${file}`
+    const known = decoded.get(key)
+    if (known) {
+        decoded.delete(key)
+        decoded.set(key, known)
+        return known
+    }
+    // decoded off the main loop, at the size it is shown
+    void loadThumbnail(file, size, size, false).then(texture => {
+        if (!texture) return
+        decoded.set(key, texture)
+        for (const old of decoded.keys()) if (decoded.size > DECODED_KEEP) decoded.delete(old)
+        then(texture)
+    })
+    return null
+}
+
+// The cover as a file: AstalMpris's, a browser's own or one it fetched before;
+// one on the web it no longer fetches (gvfs is off, services/covers.ts)
+// comes from kiwi. Until then, or without one, the app's icon.
 function Cover({ player, size }: { player: Mpris.Player; size: number }) {
-    const cover = createBinding(player, "cover_art").as(c => String(c ?? ""))
+    const source = createComputed(get =>
+        String(get(createBinding(player, "cover_art")) || get(createBinding(player, "art_url")) || ""))
+    const [cover, setCover] = createState("")
+    const look = () => {
+        const wanted = source()
+        if (!isWebCover(wanted)) {
+            setCover(wanted.startsWith("file://") ? GLib.filename_from_uri(wanted)[0] ?? "" : wanted)
+            return
+        }
+        // fetched before: at once, not a frame of the app's icon first
+        const fetched = fetchedCover(wanted)
+        if (fetched) return setCover(fetched)
+        void coverFile(wanted).then(file => {
+            if (source() === wanted) setCover(file ?? "")
+        })
+    }
+    onCleanup(source.subscribe(look))
+    look()
     return (
         <box class="island-cover" overflow={Gtk.Overflow.HIDDEN} valign={Gtk.Align.CENTER} halign={Gtk.Align.CENTER}
             hexpand={false} vexpand={false}>
@@ -209,8 +254,7 @@ function Cover({ player, size }: { player: Mpris.Player; size: number }) {
                         pixelSize={size} /> as Gtk.Widget
                     const art = new CoverArt()
                     art.size = size
-                    // decoded off the main loop, at the size it is shown
-                    void loadThumbnail(file, size, size, false).then(texture => {
+                    art.texture = decodedCover(file, size, texture => {
                         art.texture = texture
                         art.queue_draw()
                     })
@@ -239,12 +283,33 @@ const BAR_REST = 3
 const SETTLE = 12
 
 // made switched off: on, it would start listening at once
-const cava = new AstalCava.Cava({ active: false, bars: BAR_COUNT, framerate: 30, stereo: false })
-const listening = new Set<Gtk.Widget>()
+const cava = new AstalCava.Cava({ active: false, autosens: false, bars: BAR_COUNT, framerate: 30, stereo: false })
 
-function listen(widget: Gtk.Widget, on: boolean) {
-    if (on) listening.add(widget)
-    else listening.delete(widget)
+// How high the bars go is kiwi's, not cava's: cava's own sensitivity
+// (autosens) starts from nothing each time it starts listening and climbs
+// until the bars overshoot, every bar at the top for a second or so whenever
+// they came. Here the top is the loudest of late: it follows a louder bar at
+// once and lets go over a couple of seconds, so a quiet song fills the bars
+// too, and it is kept from one time the bars listen to the next. Raw, music
+// comes in at about 0.2 to 0.6; silence isn't made loud.
+const LOUD_START = 0.75
+const LOUD_HALF_LIFE = 60 // frames: 2 s
+const LOUD_DECAY = Math.pow(0.5, 1 / LOUD_HALF_LIFE)
+const LOUD_FLOOR = 0.05
+let loud = LOUD_START
+
+const listening = new Set<{ hear(levels: number[]): void }>()
+
+cava.connect("notify::values", () => {
+    const values = cava.get_values() ?? []
+    loud = Math.max(LOUD_FLOOR, loud * LOUD_DECAY, ...values)
+    const levels = Array.from({ length: BAR_COUNT }, (_, i) => Math.max(0, Math.min(1, (values[i] ?? 0) / loud)))
+    for (const bars of listening) bars.hear(levels)
+})
+
+function listen(bars: { hear(levels: number[]): void }, on: boolean) {
+    if (on) listening.add(bars)
+    else listening.delete(bars)
     const active = listening.size > 0
     if (cava.active !== active) cava.active = active
 }
@@ -257,7 +322,6 @@ const MusicBars = GObject.registerClass(
         private playing = false
         private settling = 0
         private lastTick = 0
-        private heard = 0
 
         setPlaying(playing: boolean) {
             if (playing === this.playing) return
@@ -269,11 +333,6 @@ const MusicBars = GObject.registerClass(
         private update() {
             const on = this.playing && this.get_mapped()
             listen(this, on)
-            if (on && !this.heard) this.heard = cava.connect("notify::values", () => this.hear())
-            if (!on && this.heard) {
-                cava.disconnect(this.heard)
-                this.heard = 0
-            }
             if (!on && !this.settling && this.levels.some(l => l > 0)) {
                 this.lastTick = 0
                 this.settling = this.add_tick_callback((_w, clock) => this.settle(clock.get_frame_time()))
@@ -282,11 +341,10 @@ const MusicBars = GObject.registerClass(
 
         // drawn again only when a bar moves: silence, as between two
         // songs, draws nothing
-        private hear() {
-            const values = cava.get_values() ?? []
+        hear(levels: number[]) {
             let moved = false
             for (let i = 0; i < BAR_COUNT; i++) {
-                const level = Math.max(0, Math.min(1, values[i] ?? 0))
+                const level = levels[i]
                 if (Math.abs(level - this.levels[i]) * (BAR_HEIGHT - BAR_REST) < 0.25) continue
                 this.levels[i] = level
                 moved = true
@@ -312,8 +370,6 @@ const MusicBars = GObject.registerClass(
 
         vfunc_unmap(): void {
             listen(this, false)
-            if (this.heard) cava.disconnect(this.heard)
-            this.heard = 0
             if (this.settling) this.remove_tick_callback(this.settling)
             this.settling = 0
             super.vfunc_unmap()

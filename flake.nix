@@ -222,7 +222,10 @@
                 --prefix GI_TYPELIB_PATH : "${kiwi-surface}/lib/girepository-1.0" \
                 --prefix LD_LIBRARY_PATH : "${app-capture}/lib" \
                 --prefix LD_LIBRARY_PATH : "${hyprland-shortcuts}/lib" \
-                --prefix LD_LIBRARY_PATH : "${kiwi-surface}/lib"
+                --prefix LD_LIBRARY_PATH : "${kiwi-surface}/lib" \
+                --set GIO_USE_VFS local
+                # (no gvfs: its web downloader can hang for good, and with it
+                # every media player AstalMpris would list; services/covers.ts)
 
               # Start Wrapper: argv/instance guards, log rotation, capped tee to the log
               cat << 'EOF' > $out/bin/${pname}
