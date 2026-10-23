@@ -1,5 +1,6 @@
 import { Gtk } from "ags/gtk4"
 import { createComputed, createState, With, type Accessor } from "ags"
+import Hyprland from "gi://AstalHyprland"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import GLibUnix from "gi://GLibUnix"
@@ -11,16 +12,19 @@ import { conf } from "../../config"
 import { readText, readNumber, listDir } from "../../sysfs"
 import { giconForEntry, entryFromCmdline } from "../../appIcon"
 import { detectCpuTempFile } from "../../Bar/SystemMenu/tabs/hardwarePolling"
-import { addActivitySource, opened, PRIORITY, type Activity } from "../model"
+import { addActivitySource, opened, showAlert, PRIORITY, type Activity } from "../model"
 
 const log = logger("island")
 
 // ─── Performance ──────────────────────────────────────────────────────────────
 // Three activities, for when the machine is working unusually hard: memory
-// running out, the CPU running hot, the CPU busy for minutes on end (all of
-// it, or one app holding a core). macOS has nothing in its place; Activity
-// Monitor and "Apps Using Significant Energy" in the battery menu are where
-// a Mac shows this, and only when asked.
+// running out, the CPU running hot, all of the CPU busy. And macOS's "Apps
+// Using Significant Energy": an app that has kept a lot of the CPU busy for
+// minutes, listed in the system menu's Performance tab (a Mac lists them in
+// its battery menu, which kiwi doesn't have). One that isn't on screen gets a
+// word in the island too, once. macOS has nothing in the island's place;
+// Activity Monitor and the battery menu are where a Mac shows all this, and
+// only when asked.
 //
 // None of it needs to be on time to the second, and the laptop runs on
 // battery, so the shell looks only every 30 s (one read of /proc/stat,
@@ -32,12 +36,23 @@ const log = logger("island")
 // kernel's calls.
 
 const CHECK_SECONDS = 30
-// the CPU counts as busy at this share of all its cores…
-const BUSY = 0.8
-// …and an app as holding a core when one of its processes takes this share of
-// one, two looks in a row: one process, not all of an app's added up, which a
-// browser with a few lightly busy tabs reaches without anything wrong
-const HOLDING = 0.95
+// The CPU counts as busy at this share of all its cores, two looks in a
+// row, and stays busy down to the second: the extreme case only, the machine
+// as good as full. One app keeping a core or two busy is significant energy
+// (below), not this.
+const BUSY = 0.9
+const STILL_BUSY = 0.7
+// An app uses significant energy from this share of one core, all its
+// processes together, averaged over the last 5 minutes (ten looks), and
+// stops below half of it. A minute or two of hard work isn't enough, music
+// playing in the background (a few %) is nowhere near: Spotify drawing its
+// looping videos where no one sees them (a whole core) is. The CPU's time
+// stands in for energy; macOS counts the GPU, wake-ups and the disk too.
+const SIGNIFICANT = 0.4
+const INSIGNIFICANT = 0.2
+const ENERGY_LOOKS = 10
+// how long the island says so
+const ENERGY_ALERT_MS = 4000
 // Memory is short below 5% available, or below 20% while apps wait for it,
 // and fine again above 10% with none waiting. Waiting alone isn't memory
 // running out: reading back what was swapped out or dropped from the cache
@@ -119,11 +134,8 @@ function sumBy(items: { pid: number; comm: string; value: number }[]): Group[] {
     return [...groups.values()].sort((a, b) => b.value - a.value)
 }
 
-/**
- * CPU time between two looks, as shares of one core: by app, busiest first,
- * and the single busiest process, as its app.
- */
-function cpuBetween(before: Map<number, Proc>, after: Map<number, Proc>, seconds: number): { apps: Group[]; busiest: Group | null } {
+/** CPU time between two looks, as shares of one core: by app, busiest first. */
+function cpuBetween(before: Map<number, Proc>, after: Map<number, Proc>, seconds: number): Group[] {
     const items: { pid: number; comm: string; value: number }[] = []
     for (const [pid, proc] of after) {
         const earlier = before.get(pid)
@@ -131,8 +143,7 @@ function cpuBetween(before: Map<number, Proc>, after: Map<number, Proc>, seconds
         const value = (proc.ticks - earlier.ticks) / TICKS_PER_SECOND / seconds
         if (value >= 0.02) items.push({ pid, comm: proc.comm, value })
     }
-    const top = items.reduce<typeof items[number] | null>((a, b) => !a || b.value > a.value ? b : a, null)
-    return { apps: sumBy(items), busiest: top ? { ...groupOf(top.pid, top.comm), value: top.value } : null }
+    return sumBy(items)
 }
 
 /** Resident memory in bytes, by app; biggest first. */
@@ -186,10 +197,9 @@ let lastCpu = readCpu()
 let lastLookAt = GLib.get_monotonic_time()
 let snapshot: Map<number, Proc> | null = null
 let busyLooks = 0
-let holdingLooks = 0
 let hotLooks = 0
 
-type CpuState = { kind: "busy" | "holding"; load: number; top: Group[]; since: number }
+type CpuState = { load: number; top: Group[]; since: number }
 type MemoryState = { used: number; top: Group[]; pressured: boolean; since: number }
 type HeatState = { degrees: number; top: Group[]; since: number }
 
@@ -197,9 +207,8 @@ const [cpu, setCpu] = createState<CpuState | null>(null)
 const [memory, setMemory] = createState<MemoryState | null>(null)
 const [heat, setHeat] = createState<HeatState | null>(null)
 
-// the busiest apps between the last two looks, and the busiest process
+// the busiest apps between the last two looks
 let lastTop: Group[] = []
-let lastBusiest: Group | null = null
 
 function look() {
     const now = GLib.get_monotonic_time()
@@ -211,25 +220,19 @@ function look() {
         ? 1 - (ticks[0] - lastCpu[0]) / (ticks[1] - lastCpu[1]) : 0
     lastCpu = ticks
 
-    // apps are only looked at while at least a core's worth is busy
-    const working = load * cores >= 0.9
+    // apps are only looked at while the CPU does enough that one of them
+    // could matter: below that, none can, and each counts nothing
+    const working = load * cores >= INSIGNIFICANT
     const procs = working ? processes() : null
     const between = procs && snapshot ? cpuBetween(snapshot, procs, seconds) : null
-    lastTop = between?.apps ?? []
-    lastBusiest = between?.busiest ?? null
+    lastTop = between ?? []
     snapshot = procs
+    if (between) weigh(between)
+    else if (!working) weigh([])
 
     busyLooks = load >= BUSY ? busyLooks + 1 : 0
-    holdingLooks = (lastBusiest?.value ?? 0) >= HOLDING ? holdingLooks + 1 : 0
-    const busy = busyLooks >= 2 || (cpu()?.kind === "busy" && load >= BUSY * 0.75)
-    const holding = holdingLooks >= 2
-    const since = cpu()?.since ?? now
-    if (busy) setCpu({ kind: "busy", load, top: lastTop, since })
-    else if (holding && lastBusiest) {
-        // the app holding it first, at what its one process takes
-        const holder = lastBusiest
-        setCpu({ kind: "holding", load: holder.value, top: [holder, ...lastTop.filter(g => g.key !== holder.key)], since })
-    }
+    const busy = busyLooks >= 2 || (cpu() !== null && load >= STILL_BUSY)
+    if (busy) setCpu({ load, top: lastTop, since: cpu()?.since ?? now })
     else if (cpu()) setCpu(null)
 
     const degrees = readTemperature()
@@ -301,6 +304,73 @@ function watchPressure(): boolean {
     }
 }
 
+// ─── Significant energy ───────────────────────────────────────────────────────
+// Each look adds each app's share of a core to its last ten; an app not seen
+// adds nothing, and goes once it has added nothing ten times.
+
+const hyprland = Hyprland.get_default()
+
+const usage = new Map<string, { group: Group; shares: number[] }>()
+const [energy, setEnergy] = createState<Group[]>([])
+// the apps the island has told about, until they stop
+const alerted = new Set<string>()
+
+/** The apps using significant energy, most first, each at its average. */
+export const significantEnergy: Accessor<Group[]> = energy
+/** Whether anyone is looking (the island's performance activities on). */
+export const weighingEnergy: Accessor<boolean> = conf(c => !!c.island.performance)
+
+function weigh(apps: Group[]) {
+    const seen = new Map(apps.map(g => [g.key, g]))
+    for (const g of apps) if (!usage.has(g.key)) usage.set(g.key, { group: g, shares: [] })
+    const listed = new Set(energy().map(g => g.key))
+    const significant: Group[] = []
+    for (const [key, app] of usage) {
+        const now = seen.get(key)
+        if (now) app.group = now
+        app.shares.push(now?.value ?? 0)
+        if (app.shares.length > ENERGY_LOOKS) app.shares.shift()
+        const average = app.shares.reduce((a, b) => a + b, 0) / ENERGY_LOOKS
+        if (average >= SIGNIFICANT || (listed.has(key) && average >= INSIGNIFICANT))
+            significant.push({ ...app.group, value: average })
+        else alerted.delete(key)
+        if (app.shares.every(share => share === 0)) usage.delete(key)
+    }
+    significant.sort((a, b) => b.value - a.value)
+    const names = (groups: Group[]) => groups.map(g => `${g.key}=${g.name}`).join(";")
+    if (names(significant) !== names(energy())) setEnergy(significant)
+
+    // the island says so once, for an app out of sight: one on screen is
+    // working for whoever is looking at it
+    const onScreen = appsOnScreen()
+    for (const app of significant) {
+        if (alerted.has(app.key) || onScreen.has(app.key)) continue
+        alerted.add(app.key)
+        log.info(`performance: ${app.name} uses significant energy (${percent(app.value)} of a core, averaged over 5 minutes)`)
+        showAlert({
+            id: `energy:${app.key}`, ms: ENERGY_ALERT_MS,
+            leading: () => (
+                <box class="island-alert leading" valign={Gtk.Align.CENTER}>
+                    <GroupIcon group={app} size={16} cssClass="symbol" />
+                    <label label={app.name} valign={Gtk.Align.CENTER} />
+                </box>
+            ) as Gtk.Widget,
+            trailing: () => <label class="island-alert trailing" label="Using a lot of energy" valign={Gtk.Align.CENTER} /> as Gtk.Widget,
+        })
+    }
+}
+
+// the apps with a window on a desktop that a monitor shows (minimized ones
+// are on a hidden one)
+function appsOnScreen(): Set<string> {
+    const shown = new Set(hyprland.get_monitors().map(m => m.get_active_workspace()?.get_id()))
+    const apps = new Set<string>()
+    for (const client of hyprland.get_clients()) {
+        if (shown.has(client.get_workspace()?.get_id())) apps.add(groupOf(client.get_pid(), "").key)
+    }
+    return apps
+}
+
 // ─── On and off ───────────────────────────────────────────────────────────────
 
 let looking = 0
@@ -322,14 +392,17 @@ function setWatching(on: boolean) {
         pressureStream?.close(null)
         pressureStream = null
         snapshot = null
-        busyLooks = holdingLooks = hotLooks = 0
+        busyLooks = hotLooks = 0
+        usage.clear()
+        alerted.clear()
+        setEnergy([])
         setCpu(null)
         setMemory(null)
         setHeat(null)
     }
 }
 
-const enabled = conf(c => !!c.island.performance)
+const enabled = weighingEnergy
 enabled.subscribe(() => setWatching(enabled()))
 setWatching(enabled())
 
@@ -366,10 +439,10 @@ function minutes(since: number): string {
     return m < 1 ? "under a minute" : m === 1 ? "a minute" : `${m} minutes`
 }
 
-function GroupIcon({ group, size }: { group: Group | undefined; size: number }) {
+export function GroupIcon({ group, size, cssClass = "" }: { group: Group | undefined; size: number; cssClass?: string }) {
     return group?.entry
-        ? <Gtk.Image gicon={giconForEntry(group.entry)} pixelSize={size} />
-        : <Gtk.Image iconName="am-cpu-symbolic" pixelSize={size} />
+        ? <Gtk.Image class={cssClass} gicon={giconForEntry(group.entry)} pixelSize={size} />
+        : <Gtk.Image class={cssClass} iconName="am-cpu-symbolic" pixelSize={size} />
 }
 
 function Top({ groups, value }: { groups: Group[]; value: (g: Group) => string }) {
@@ -423,21 +496,12 @@ addActivitySource(createComputed(get => {
     return {
         id: "cpu",
         priority: PRIORITY.cpu,
-        leading: () => {
-            const c = cpu()
-            return c?.kind === "holding" && c.top[0]?.entry
-                ? <GroupIcon group={c.top[0]} size={18} /> as Gtk.Widget
-                : <Symbol icon={CPU_ICON} tone="busy" />
-        },
+        leading: () => <Symbol icon={CPU_ICON} tone="busy" />,
         trailing: () => <Value text={value} tone="busy" />,
         minimal: () => <Symbol icon={CPU_ICON} tone="busy" />,
-        expanded: () => <With value={cpu}>{(c: CpuState | null) => !c ? <box /> : c.kind === "busy"
-            ? <Card tone="busy" icon={CPU_ICON} title="CPU busy"
+        expanded: () => <With value={cpu}>{(c: CpuState | null) => !c ? <box /> :
+            <Card tone="busy" icon={CPU_ICON} title="CPU busy"
                 detail={`${percent(c.load)} of all ${cores} cores, for ${minutes(c.since)}`}>
-                <Top groups={c.top} value={g => percent(g.value)} />
-            </Card>
-            : <Card tone="busy" icon={CPU_ICON} title={`${c.top[0]?.name ?? "An app"} is busy`}
-                detail={`It has kept a whole core busy for ${minutes(c.since)}. 100% is one core.`}>
                 <Top groups={c.top} value={g => percent(g.value)} />
             </Card>}
         </With> as Gtk.Widget,

@@ -1,10 +1,12 @@
 import { Gtk } from 'ags/gtk4'
 import { With } from 'ags'
+import Pango from 'gi://Pango'
 
 import { CircularProgress } from '../../../Misc';
 import { Icon } from "../../../iconNames";
 import { cpuUsage, gpuUsage, ramUsage, cpuTemp, hardwareAvailable } from "./hardwarePolling"
 import { conf } from '../../../config';
+import { significantEnergy, weighingEnergy, GroupIcon, type Group } from '../../../Island/sources/performance';
 
 export default function PerformanceTab({visible}) {
     return (
@@ -41,6 +43,7 @@ export default function PerformanceTab({visible}) {
                                 labelFn={cpuTemp(t => `${Math.round(t)}°C`)}
                             />
                         </box>
+                        <Energy />
                     </box>
                 ) : (
                     <box />
@@ -66,6 +69,29 @@ function PerformanceGraph({progress, icon, color, labelFn = null, visible = true
                 label={labelFn ?? progress(p => `${Math.round(p * 100)}%`)}
                 halign={Gtk.Align.CENTER}
             />
+        </box>
+    )
+}
+
+// macOS's battery menu list; kiwi has no battery menu, so it's here
+// (Island/sources/performance.tsx weighs the apps)
+function Energy() {
+    return (
+        <box class="energy" orientation={Gtk.Orientation.VERTICAL} visible={weighingEnergy}>
+            <label class="energy-title" label="Using Significant Energy" xalign={0} />
+            <With value={significantEnergy}>
+                {(apps: Group[]) => apps.length === 0
+                    ? <label class="energy-none" label="No Apps Using Significant Energy" xalign={0} />
+                    : <box orientation={Gtk.Orientation.VERTICAL}>
+                        {apps.map(app => (
+                            <box class="energy-app" spacing={8}>
+                                <GroupIcon group={app} size={16} />
+                                <label label={app.name} xalign={0} hexpand
+                                    ellipsize={Pango.EllipsizeMode.END} maxWidthChars={1} />
+                            </box>
+                        ))}
+                    </box>}
+            </With>
         </box>
     )
 }

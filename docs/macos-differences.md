@@ -64,9 +64,13 @@ Activities as menu bar items.
 - Alerts (a charger plugged in, a Bluetooth device connected, Do Not Disturb)
   show either side of the middle for a few seconds. iOS grows the island into
   them; macOS shows none of them and chimes for the charger.
-- Memory running out, a hot CPU and a CPU busy for minutes are activities.
-  A Mac shows these only in Activity Monitor and the battery menu's "Apps
-  Using Significant Energy".
+- Memory running out, a hot CPU and a CPU as good as full (90% of all its
+  cores) are activities. A Mac shows these only in Activity Monitor.
+- Apps using significant energy are listed in the system menu's Performance
+  tab; a Mac lists them in its battery menu, which kiwi doesn't have. One
+  that isn't on screen also gets a few seconds in the island, once; a Mac
+  never says. kiwi goes by CPU time alone (40% of a core, averaged over 5
+  minutes); macOS's energy counts the GPU, wake-ups and the disk too.
 - The camera dot sees only apps that use the camera through PipeWire, as
   GNOME and KDE do. macOS sees every app.
 - The weather is Open-Meteo's, for a city set in the settings. macOS's comes
