@@ -32,33 +32,58 @@ function marksOn(monitor: string): Mark[] {
     })
 }
 
+// A desktop more grows a mark at the row's end out of nothing, one fewer
+// shrinks the last away (the marks before it take on what the desktops now
+// are): the row, and with it the island, changes width on the marks' own
+// transition rather than at once (island.scss).
+const LEAVE_MS = 300
+
 export default function Desktops({ monitor }: { monitor: string }) {
     const row = new Gtk.Box({ cssClasses: ["island-desktops"], valign: Gtk.Align.CENTER })
-    let buttons: Gtk.Button[] = []
+    // the marks, in order; not the ones on their way out
+    const buttons: Gtk.Button[] = []
     let ids: number[] = []
+    const leaving = new Set<number>()
 
-    const build = (marks: Mark[]) => {
-        buttons.forEach(b => row.remove(b))
-        ids = marks.map(m => m.id)
-        buttons = marks.map(() => {
-            const button = new Gtk.Button({ cssClasses: ["desktop"], valign: Gtk.Align.CENTER })
-            button.set_child(new Gtk.Box({ cssClasses: ["tile"], valign: Gtk.Align.CENTER }))
-            // the id at the time of the click: a reordered row keeps its buttons
-            button.connect("clicked", () => {
-                const index = buttons.indexOf(button)
-                const id = ids[index]
-                if (id === undefined) return
-                if (marksOn(monitor)[index]?.current) toggleMissionControl()
-                else void goToDesktop(id)
-            })
-            row.append(button)
-            return button
+    const make = () => {
+        const button = new Gtk.Button({ cssClasses: ["desktop", "arriving"], valign: Gtk.Align.CENTER })
+        button.set_child(new Gtk.Box({ cssClasses: ["tile"], valign: Gtk.Align.CENTER }))
+        // the id at the time of the click: a reordered row keeps its buttons
+        button.connect("clicked", () => {
+            const index = buttons.indexOf(button)
+            const id = ids[index]
+            if (id === undefined) return
+            if (marksOn(monitor)[index]?.current) toggleMissionControl()
+            else void goToDesktop(id)
         })
+        // from nothing once it has been drawn so (a frame later: the first
+        // comes before it is styled at all), or there's no start to go from
+        let frames = 0
+        button.add_tick_callback(() => {
+            if (++frames < 2) return GLib.SOURCE_CONTINUE
+            button.remove_css_class("arriving")
+            return GLib.SOURCE_REMOVE
+        })
+        row.insert_child_after(button, buttons.at(-1) ?? null)
+        buttons.push(button)
+    }
+
+    const drop = () => {
+        const button = buttons.pop()!
+        button.add_css_class("leaving")
+        button.set_can_target(false)
+        const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LEAVE_MS, () => {
+            leaving.delete(timer)
+            row.remove(button)
+            return GLib.SOURCE_REMOVE
+        })
+        leaving.add(timer)
     }
 
     const update = () => {
         const marks = marksOn(monitor)
-        if (marks.length !== buttons.length) build(marks)
+        while (buttons.length < marks.length) make()
+        while (buttons.length > marks.length) drop()
         ids = marks.map(m => m.id)
         marks.forEach((mark, i) => {
             const b = buttons[i]
@@ -90,6 +115,7 @@ export default function Desktops({ monitor }: { monitor: string }) {
         hyprland.disconnect(id)
         unwatch()
         if (pending) GLib.source_remove(pending)
+        leaving.forEach(timer => GLib.source_remove(timer))
     })
     update()
 

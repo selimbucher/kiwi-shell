@@ -87,7 +87,8 @@ window.IslandBar {
     min-width: 14px;
     padding: 0 3px;
     // a mark grows into the current one and back, as the island grows
-    transition: min-width 260ms cubic-bezier(0.25, 0.1, 0.25, 1);
+    transition: min-width 260ms cubic-bezier(0.25, 0.1, 0.25, 1), padding 260ms cubic-bezier(0.25, 0.1, 0.25, 1),
+        opacity 200ms ease-out;
 
     .tile {
         transition: min-width 260ms cubic-bezier(0.25, 0.1, 0.25, 1), background-color 200ms ease-out;
@@ -116,6 +117,17 @@ window.IslandBar {
 
     &.urgent .tile {
         background-color: $red;
+    }
+
+    // a desktop coming or going: its mark out of nothing, or into it
+    // (center/Desktops.tsx)
+    &.arriving, &.leaving {
+        min-width: 0;
+        padding: 0;
+        opacity: 0;
+        .tile {
+            min-width: 0;
+        }
     }
 }
 
@@ -375,8 +387,10 @@ window.IslandCardWindow {
                 font-size: 11px;
                 font-feature-settings: "tnum";
             }
+            // under the bar's very ends: a scale keeps 4px either side of
+            // its bar (global.scss)
             .times {
-                margin-top: 2px;
+                margin: 2px 4px 0;
             }
         }
         .controls {

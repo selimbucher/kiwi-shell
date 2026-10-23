@@ -15,7 +15,7 @@ import {
     alert, arrangement, activityById, collapse, expand, opened, cardOn, setCardOn, covered, setCovered, islandRects, islandBodies, PRIVACY_ID,
     type Rect,
 } from "./model"
-import { IslandShape, Fader, Bubble, CardMorph, whenDone } from "./shape"
+import { IslandShape, IslandBody, Fader, Bubble, CardMorph, whenDone } from "./shape"
 import { PrivacyDots, PrivacyCard, anyPrivacy } from "./sources/privacy"
 import Desktops from "./center/Desktops"
 import DateCenter from "./center/DateCenter"
@@ -200,17 +200,13 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     const leading = side("leading")
     const trailing = side("trailing")
     follow(anyPrivacy, () => { trailing.clipLeaving = anyPrivacy() })
-    const body = (
-        <box class="island-body">
-            {leading}
-            {middle}
-            {trailing}
-            <button class="island-part privacy" visible={anyPrivacy} valign={Gtk.Align.CENTER}
-                onClicked={() => expand(PRIVACY_ID, monitor)}>
-                <PrivacyDots />
-            </button>
-        </box>
-    ) as Gtk.Widget
+    const body = new IslandBody({ cssClasses: ["island-body"] })
+    body.hold(leading, middle, trailing, (
+        <button class="island-part privacy" visible={anyPrivacy} valign={Gtk.Align.CENTER}
+            onClicked={() => expand(PRIVACY_ID, monitor)}>
+            <PrivacyDots />
+        </button>
+    ) as Gtk.Widget)
 
     shape.child = body
     // With a card open from it, the island stays as it was, pointed at or

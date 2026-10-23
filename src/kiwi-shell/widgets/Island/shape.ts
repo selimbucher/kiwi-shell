@@ -25,6 +25,9 @@ function spring(response: number, bounce: number, rest = 0.05): SpringParams {
 export const ISLAND_SPRING = spring(0.5, 0.25)
 export const BUBBLE_SPRING = spring(0.45, 0.3, 0.002)
 export const CARD_SPRING = spring(0.5, 0.15, 0.002)
+// the most the pill follows in one frame rather than springing to: a mark
+// growing on its transition moves about 2 px a frame at its fastest
+const KEEP_UP = 4
 
 // What the island holds comes and goes as iOS's does (SwiftUI's
 // blurReplace): out of a blur, a little small, into focus; and back into a
@@ -100,8 +103,10 @@ export const IslandShape = GObject.registerClass(
                 const moved = [this.width.step(now), this.fade.step(now), this.residual.step(now)].some(Boolean)
                 // back at the size it had when the anchor was set (the
                 // controls gone again): centred from now on, or whatever
-                // changes later (a desktop added) would grow it one way only
-                if (this._anchor !== 0.5 && !this.width.running && Math.abs(this.shownWidth - this.base) < 1) this._anchor = 0.5
+                // changes later (a desktop added) would grow it one way only.
+                // Only once it has been away: this frame comes before the
+                // layout that gives it somewhere to go.
+                if (this._anchor !== 0.5 && this.away && !this.width.running && Math.abs(this.shownWidth - this.base) < 1) this._anchor = 0.5
                 this.set_opacity(this.fade.value)
                 if (!this.wanted && !this.fade.running) this.set_visible(false)
                 this.queue_resize()
@@ -172,9 +177,16 @@ export const IslandShape = GObject.registerClass(
                 if (!this.width.running) this.width.jump(target)
                 this.settled = this.get_mapped()
             } else if (target !== this.width.target) {
-                this.width.to(target)
-                this.ticker.start()
+                // Something inside growing on its own, a few pixels a frame (a
+                // desktop's mark): the pill keeps up with it. Chasing it on its
+                // spring, it fell behind and what it holds ran past its edges.
+                if (!this.width.running && Math.abs(target - this.width.target) <= KEEP_UP) this.width.jump(target)
+                else {
+                    this.width.to(target)
+                    this.ticker.start()
+                }
             }
+            if (this._anchor !== 0.5 && Math.abs(this.width.target - this.base) >= 1) this.away = true
             const width = Math.max(0, Math.round(this.width.value))
             this.shownWidth = width
             return [width, width, -1, -1]
@@ -199,6 +211,7 @@ export const IslandShape = GObject.registerClass(
             this.residual.to(0)
             this._anchor = anchor
             this.base = this.width.value
+            this.away = false
             this.ticker.start()
         }
 
@@ -208,22 +221,17 @@ export const IslandShape = GObject.registerClass(
         }
 
         private _anchor = 0.5
-        // its width when the anchor was set
+        // its width when the anchor was set, and whether it has been
+        // another since
         private base = 0
+        private away = false
         private readonly residual = new Spring(0, ISLAND_SPRING)
         private shownWidth = 0
 
+        // What it holds is laid out on the pill as it is now (IslandBody), so
+        // that it moves with the pill rather than ahead of it.
         vfunc_size_allocate(width: number, height: number, baseline: number): void {
-            const child = this.child
-            if (!child) return
-            const [, natural] = child.measure(Gtk.Orientation.HORIZONTAL, -1)
-            const w = Math.max(natural, 0)
-            // Not rounded, nor is where the row puts the pill: rounded each on
-            // its own, what it holds went half a pixel one way and the next
-            // frame the other as the pill grew, a tremble all the way. Halves
-            // are whole pixels on a HiDPI display.
-            const transform = new Gsk.Transform().translate(at((width - w) * this.anchor, 0))
-            child.allocate(w, height, baseline, transform)
+            this.child?.allocate(width, height, baseline, null)
         }
 
         vfunc_dispose(): void {
@@ -234,6 +242,94 @@ export const IslandShape = GObject.registerClass(
     },
 )
 export type IslandShape = InstanceType<typeof IslandShape>
+
+// ─── What the pill holds ──────────────────────────────────────────────────────
+
+/**
+ * The island's insides, laid out on the pill as wide as it is now, not as it
+ * will be: each side rides its own edge of the pill (the trailing one with
+ * the privacy dots after it), as iOS's do, and the middle stays in the
+ * pill's middle, where it is at the pill's own width. Centred as one block
+ * instead, the sides went with whatever changed inside at once (the marks
+ * growing, a side swapping), ahead of the pill's edges.
+ *
+ * A side swapping for a narrower one moves where the middle belongs; it goes
+ * there on the pill's spring, from where it was.
+ */
+export const IslandBody = GObject.registerClass(
+    { GTypeName: "KiwiIslandBody" },
+    class IslandBody extends Gtk.Widget {
+        private parts: { leading: Gtk.Widget; middle: Gtk.Widget; trailing: Gtk.Widget; end: Gtk.Widget } | null = null
+        private readonly drift = new Spring(0, ISLAND_SPRING)
+        // where the middle belongs, from the pill's middle
+        private offset: number | null = null
+        private _ticker: Ticker | null = null
+
+        private get ticker(): Ticker {
+            return this._ticker ??= new Ticker(this, now => {
+                const moved = this.drift.step(now)
+                this.queue_allocate()
+                return moved || this.drift.running
+            })
+        }
+
+        /** The four, in order: drawn in it, laid out as described. */
+        hold(leading: Gtk.Widget, middle: Gtk.Widget, trailing: Gtk.Widget, end: Gtk.Widget) {
+            for (const widget of [leading, middle, trailing, end]) widget.set_parent(this)
+            this.parts = { leading, middle, trailing, end }
+        }
+
+        private static wide(widget: Gtk.Widget): number {
+            return widget.get_visible() ? widget.measure(Gtk.Orientation.HORIZONTAL, -1)[1] : 0
+        }
+
+        // as wide as the four side by side; any narrower while the pill gets there
+        vfunc_measure(orientation: Gtk.Orientation, _forSize: number): [number, number, number, number] {
+            if (!this.parts) return [0, 0, -1, -1]
+            const all = Object.values(this.parts).filter(w => w.get_visible())
+            if (orientation === Gtk.Orientation.HORIZONTAL)
+                return [0, all.reduce((sum, w) => sum + IslandBody.wide(w), 0), -1, -1]
+            const sizes = all.map(w => w.measure(orientation, -1))
+            return [Math.max(0, ...sizes.map(([min]) => min)), Math.max(0, ...sizes.map(([, nat]) => nat)), -1, -1]
+        }
+
+        vfunc_size_allocate(width: number, height: number, _baseline: number): void {
+            if (!this.parts) return
+            const { leading, middle, trailing, end } = this.parts
+            const [l, m, t, e] = [leading, middle, trailing, end].map(IslandBody.wide)
+            // where the middle is with the pill at its natural width
+            const offset = (l - t - e) / 2
+            if (this.offset !== null && offset !== this.offset) {
+                this.drift.jump(this.drift.value + this.offset - offset)
+                this.drift.to(0)
+                this.ticker.start()
+            }
+            this.offset = offset
+            // Not rounded: rounded each on its own, the parts trembled half a
+            // pixel apart as the pill grew. Halves are whole pixels at scale 2.
+            const put = (widget: Gtk.Widget, x: number, w: number) => {
+                if (widget.get_visible()) widget.allocate(w, height, -1, new Gsk.Transform().translate(at(x, 0)))
+            }
+            // each side on its edge, unless that is over the middle (the pill
+            // still narrower than it will be): then against the middle, past
+            // the edge, where the pill's rounded edge cuts it off
+            const x = width / 2 + offset + this.drift.value - m / 2
+            const right = Math.max(width - e - t, x + m)
+            put(leading, Math.min(0, x - l), l)
+            put(middle, x, m)
+            put(trailing, right, t)
+            put(end, Math.max(width - e, right + t), e)
+        }
+
+        vfunc_dispose(): void {
+            this._ticker?.stop()
+            if (this.parts) for (const widget of Object.values(this.parts)) widget.unparent()
+            this.parts = null
+            super.vfunc_dispose()
+        }
+    },
+)
+export type IslandBody = InstanceType<typeof IslandBody>
 
 // ─── A slot that cross-fades ──────────────────────────────────────────────────
 
