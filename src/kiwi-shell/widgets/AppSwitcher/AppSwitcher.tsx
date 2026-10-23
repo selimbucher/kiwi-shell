@@ -5,7 +5,6 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, createBinding, onCleanup } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
-import GLib from "gi://GLib"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { playSound } from "../sound"
@@ -210,13 +209,10 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
 // (services/previews.ts), measured after every layout from the widget that
 // holds the picture.
 
-// TEMPORARY: the two looks being compared, KIWI_ALTTAB=b for the second
-const TITLE_BELOW = GLib.getenv("KIWI_ALTTAB") === "b"
-
-// a window's title bar above its picture: only the bottom corners are rounded
+// the picture alone, its title under it: rounded all round
 const live = new LiveTiles({
     set: "app-switcher", namespace: LAYER.switcher, motion: "live",
-    radius: TITLE_BELOW ? 10 : 6, squareTop: !TITLE_BELOW,
+    radius: 10, squareTop: false,
 })
 
 // Uniform height, width hugs the window's aspect ratio — the tile IS the
@@ -320,7 +316,7 @@ function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     const pane = (
         <box
-            class={TITLE_BELOW ? "app-switch-container title-below" : "app-switch-container"}
+            class="app-switch-container app-switcher"
             orientation={Gtk.Orientation.VERTICAL}
             spacing={TILE_GAP}
             // hug the rows — FILL (the default) would stretch the
@@ -388,14 +384,14 @@ export function WindowPreview({ client, height }: { client: any, height: number 
             ellipsize={Pango.EllipsizeMode.END}
             maxWidthChars={1}
             hexpand
-            xalign={TITLE_BELOW ? 0.5 : 0}
+            xalign={0.5}
         />
     )
     const tile = (
-        <button class="window-preview" onclicked={activate}>
+        <button class="app-preview" onclicked={activate}>
             <box orientation={Gtk.Orientation.VERTICAL} spacing={0}>
-            {TITLE_BELOW ? <box /> : <box class="preview-title-bar">{title}</box>}
-
+            {/* the outline goes round the picture, not its title */}
+            <box class="app-preview-frame">
             <overlay>
                 {/* a Picture's natural width is the full screenshot size, so
                     it must sit in a scroll-less viewport with the tile size
@@ -458,33 +454,34 @@ export function WindowPreview({ client, height }: { client: any, height: number 
                     <AppIconImage entry={entryForClient(client)} pixelSize={64} cssClass="switcher-badge-icon" />
                 </box>
             </overlay>
-            {TITLE_BELOW ? <box class="preview-title-below">{title}</box> : <box />}
+            </box>
+            <box class="preview-title-below">{title}</box>
             </box>
         </button>
     ) as Gtk.Button
 
     createEffect(() => {
         if (selectedAddress() === address) {
-            tile.add_css_class("selected")
+            tile.add_css_class("chosen")
         } else {
-            tile.remove_css_class("selected")
+            tile.remove_css_class("chosen")
         }
     })
 
     return (
         <overlay class="preview-tile">
             {tile}
-            {/* hover-revealed, floating over the end of the title so it
-                reserves no layout space there — not over the picture, which
-                the compositor draws over the shell */}
+            {/* hover-revealed, floating over the end of the title under the
+                picture so it reserves no layout space there — not over the
+                picture, which the compositor draws over the shell */}
             <button
                 $type="overlay"
                 class="switcher-preview-close"
                 halign={Gtk.Align.END}
-                valign={TITLE_BELOW ? Gtk.Align.END : Gtk.Align.START}
+                valign={Gtk.Align.END}
                 marginTop={10}
-                marginBottom={TITLE_BELOW ? 9 : 0}
-                marginEnd={TITLE_BELOW ? 8 : 6}
+                marginBottom={9}
+                marginEnd={8}
                 onclicked={() => closeClientFromSwitcher(client)}
             >
                 <Gtk.Image iconName="window-close-symbolic" pixelSize={12} />

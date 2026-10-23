@@ -81,9 +81,10 @@ Activities as menu bar items.
 
 ## App switcher
 
-- kiwi's Alt+Tab shows a picture of every window, the chosen one outlined in
-  the accent colour. macOS's Command+Tab shows one icon per app, the chosen
-  one on a lighter rounded square, its name under the row.
+- kiwi's Alt+Tab shows a picture of every window with its title under it,
+  the chosen picture outlined in the accent colour. macOS's Command+Tab shows
+  one icon per app, the chosen one on a lighter rounded square, its name
+  under the row.
 
 ## Measured against macOS
 

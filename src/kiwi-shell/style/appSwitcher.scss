@@ -81,24 +81,60 @@ button.switcher-preview-close {
     filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6));
 }
 
-.selected {
+// the workspace switcher's chosen card; only in the switcher's panel, or it
+// would light up anything else called selected (Mission Control's chosen
+// window left a pale square where it had been as it flew home)
+.app-switch-container .selected {
     background-color: var(--k-fill-subtle);
     border-radius: 13px;
     border-color: var(--primary);
 }
 
-// the title under the picture, as macOS names the app under its icon
+// ─── App switcher tiles ──────────────────────────────────────────────────────
+// A button, so the whole tile is clickable, flattened: the tile is its
+// picture in a frame, outlined in the accent when chosen, and the title under
+// it, as macOS names the app under its icon. The outline goes round the
+// picture only. (.window-preview and .selected above are the workspace
+// switcher's cards.)
+button.app-preview {
+    padding: 0;
+    border: none;
+    background: none;
+    background-image: none;
+    box-shadow: none;
+    min-width: 0;
+    min-height: 0;
+
+    &:hover, &:active {
+        background: none;
+        background-image: none;
+        box-shadow: none;
+    }
+}
+
+// the picture's radius (10) plus the gap and the outline
+.app-preview-frame {
+    padding: 3px;
+    border: 3px solid transparent;
+    border-radius: 16px;
+}
+
+.app-preview.chosen .app-preview-frame {
+    background-color: var(--k-fill-subtle);
+    border-color: var(--primary);
+}
+
 .preview-title-below {
     padding: 6px 4px 1px;
 }
 
-.title-below {
+.app-switcher {
     .preview-title {
         font-size: 12px;
         color: var(--k-fg-3);
     }
 
-    .selected .preview-title {
+    .chosen .preview-title {
         color: var(--k-fg);
         font-weight: 600;
     }
