@@ -120,9 +120,9 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
     onToggleNcReady: (w: Gtk.Widget) => void
 }) {
     // formatted in-process — no `date` spawn every second. With the date in
-    // the island, only the time.
+    // the island, the weekday short and the time.
     const time = createComputed(get => get(minuteNow).format(
-        get(conf).island?.center === "date" ? "%H:%M" : "%a %b %d  %H:%M") ?? "")
+        get(conf).island?.center === "date" ? "%a %H:%M" : "%a %b %d  %H:%M") ?? "")
 
     return (
         <box class="MenuButtons">
