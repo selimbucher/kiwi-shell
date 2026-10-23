@@ -7,6 +7,7 @@ import Gsk from "gi://Gsk"
 import Pango from "gi://Pango"
 import Gio from "gi://Gio"
 import Mpris from "gi://AstalMpris"
+import AstalCava from "gi://AstalCava"
 import Hyprland from "gi://AstalHyprland"
 
 import { conf } from "../../config"
@@ -220,15 +221,134 @@ function Cover({ player, size }: { player: Mpris.Player; size: number }) {
     )
 }
 
-// iOS's waveform: bars that move while it plays, at rest when paused. The
-// motion is the island's own (CSS, style/island.scss), not the sound's.
+// ─── The bars ─────────────────────────────────────────────────────────────────
+// iOS's waveform follows the music: four bars, bass to treble, from cava
+// (AstalCava) listening to what the speakers play. It listens only while
+// bars are on screen and their player plays; switched off, cava stops
+// listening altogether, its thread and timer gone. Paused, the bars settle
+// into a row of dots. Its stream is a capture of the speakers, which the
+// privacy dots leave out (privacy.tsx).
+
+const BAR_COUNT = 4
+const BAR_WIDTH = 3
+const BAR_GAP = 2
+const BAR_HEIGHT = 14
+// a bar at rest: a dot
+const BAR_REST = 3
+// how fast the bars settle when the music stops, per second
+const SETTLE = 12
+
+// made switched off: on, it would start listening at once
+const cava = new AstalCava.Cava({ active: false, bars: BAR_COUNT, framerate: 30, stereo: false })
+const listening = new Set<Gtk.Widget>()
+
+function listen(widget: Gtk.Widget, on: boolean) {
+    if (on) listening.add(widget)
+    else listening.delete(widget)
+    const active = listening.size > 0
+    if (cava.active !== active) cava.active = active
+}
+
+const MusicBars = GObject.registerClass(
+    { GTypeName: "KiwiIslandMusicBars" },
+    class MusicBars extends Gtk.Widget {
+        // how high each bar is shown, 0 (a dot) to 1
+        private levels = new Array<number>(BAR_COUNT).fill(0)
+        private playing = false
+        private settling = 0
+        private lastTick = 0
+        private heard = 0
+
+        setPlaying(playing: boolean) {
+            if (playing === this.playing) return
+            this.playing = playing
+            this.update()
+        }
+
+        // listening while mapped and playing; settling down otherwise
+        private update() {
+            const on = this.playing && this.get_mapped()
+            listen(this, on)
+            if (on && !this.heard) this.heard = cava.connect("notify::values", () => this.hear())
+            if (!on && this.heard) {
+                cava.disconnect(this.heard)
+                this.heard = 0
+            }
+            if (!on && !this.settling && this.levels.some(l => l > 0)) {
+                this.lastTick = 0
+                this.settling = this.add_tick_callback((_w, clock) => this.settle(clock.get_frame_time()))
+            }
+        }
+
+        // drawn again only when a bar moves: silence, as between two
+        // songs, draws nothing
+        private hear() {
+            const values = cava.get_values() ?? []
+            let moved = false
+            for (let i = 0; i < BAR_COUNT; i++) {
+                const level = Math.max(0, Math.min(1, values[i] ?? 0))
+                if (Math.abs(level - this.levels[i]) * (BAR_HEIGHT - BAR_REST) < 0.25) continue
+                this.levels[i] = level
+                moved = true
+            }
+            if (moved) this.queue_draw()
+        }
+
+        private settle(now: number): boolean {
+            const dt = this.lastTick ? (now - this.lastTick) / 1e6 : 0
+            this.lastTick = now
+            const keep = Math.exp(-SETTLE * dt)
+            this.levels = this.levels.map(l => l * keep < 0.01 ? 0 : l * keep)
+            this.queue_draw()
+            if (this.levels.some(l => l > 0)) return GLib.SOURCE_CONTINUE
+            this.settling = 0
+            return GLib.SOURCE_REMOVE
+        }
+
+        vfunc_map(): void {
+            super.vfunc_map()
+            this.update()
+        }
+
+        vfunc_unmap(): void {
+            listen(this, false)
+            if (this.heard) cava.disconnect(this.heard)
+            this.heard = 0
+            if (this.settling) this.remove_tick_callback(this.settling)
+            this.settling = 0
+            super.vfunc_unmap()
+        }
+
+        vfunc_measure(orientation: Gtk.Orientation): [number, number, number, number] {
+            const size = orientation === Gtk.Orientation.HORIZONTAL ? BAR_COUNT * BAR_WIDTH + (BAR_COUNT - 1) * BAR_GAP : BAR_HEIGHT
+            return [size, size, -1, -1]
+        }
+
+        vfunc_snapshot(snapshot: Gtk.Snapshot): void {
+            const color = this.get_color()
+            const middle = this.get_height() / 2
+            const radius = new Graphene.Size().init(BAR_WIDTH / 2, BAR_WIDTH / 2)
+            this.levels.forEach((level, i) => {
+                const h = BAR_REST + (BAR_HEIGHT - BAR_REST) * level
+                const rect = new Graphene.Rect().init(i * (BAR_WIDTH + BAR_GAP), middle - h / 2, BAR_WIDTH, h)
+                snapshot.push_rounded_clip(new Gsk.RoundedRect().init(rect, radius, radius, radius, radius))
+                snapshot.append_color(color, rect)
+                snapshot.pop()
+            })
+        }
+    },
+)
+
 function Bars({ player }: { player: Mpris.Player }) {
-    const playing = createBinding(player, "playback_status").as(s => s === Mpris.PlaybackStatus.PLAYING)
-    return (
-        <box class={playing(p => p ? "island-bars playing" : "island-bars")} valign={Gtk.Align.CENTER}>
-            {[0.55, 1, 0.7, 0.85].map(h => <box class="bar" valign={Gtk.Align.CENTER} heightRequest={Math.round(14 * h)} />)}
-        </box>
-    )
+    const bars = new MusicBars({ cssClasses: ["island-bars"], valign: Gtk.Align.CENTER })
+    const playing = () => bars.setPlaying(player.playback_status === Mpris.PlaybackStatus.PLAYING)
+    const id = player.connect("notify::playback-status", playing)
+    playing()
+    onCleanup(() => {
+        player.disconnect(id)
+        bars.setPlaying(false)
+    })
+    return bars
 }
 
 // ─── Play, pause, back, forward ───────────────────────────────────────────────

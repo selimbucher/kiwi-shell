@@ -156,6 +156,8 @@
             tray
             apps
             notifd
+            # the island's Now Playing bars follow the music (sources/media.tsx)
+            cava
           ];
 
           extraPackages = astalPackages ++ [

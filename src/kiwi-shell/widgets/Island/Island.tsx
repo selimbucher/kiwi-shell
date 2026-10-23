@@ -35,9 +35,6 @@ const { TOP, LEFT, RIGHT, BOTTOM } = Astal.WindowAnchor
 
 export type Center = "desktops" | "date" | "weather" | "none"
 
-// TEMPORARY: the two looks side by side, until one is chosen
-const LOOK = GLib.getenv("KIWI_ISLAND") === "black" ? " island-black" : ""
-
 // how long the island stays grown once the pointer has left what grew it: a
 // pointer slipping off its edge for a moment doesn't shut it
 const UNPOINT_AFTER_MS = 300
@@ -315,7 +312,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             css={windowCss}
             visible
             name="kiwi-island"
-            class={themeClasses(t => `Bar IslandBar ${t}${LOOK}`)}
+            class={themeClasses(t => `Bar IslandBar ${t}`)}
             gdkmonitor={gdkmonitor}
             exclusivity={Astal.Exclusivity.EXCLUSIVE}
             anchor={TOP | LEFT | RIGHT}
@@ -448,7 +445,7 @@ export function IslandCard() {
             namespace={LAYER.island}
             css={windowCss}
             name="kiwi-island-card"
-            class={themeClasses(t => `Bar IslandCardWindow ${t}${LOOK}`)}
+            class={themeClasses(t => `Bar IslandCardWindow ${t}`)}
             visible={cardOn(on => on !== null)}
             gdkmonitor={where(monitorOf)}
             exclusivity={Astal.Exclusivity.IGNORE}

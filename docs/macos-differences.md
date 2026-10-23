@@ -71,6 +71,11 @@ Activities as menu bar items.
   GNOME and KDE do. macOS sees every app.
 - The weather is Open-Meteo's, for a city set in the settings. macOS's comes
   from Apple Weather, for where the Mac is.
+- The island is the bar's glass, like the other pills. iOS's is black, as
+  the camera it sits around is.
+- Now Playing's controls come up as you point at its bars, the island
+  growing for them. iOS has no pointer: the controls are a press and hold
+  away there, in the expanded island.
 - The motion is springs chosen by eye (the island's size: response 0.5 s,
   bounce 0.25), not measured off an iPhone.
 

@@ -98,6 +98,10 @@ export const IslandShape = GObject.registerClass(
         private get ticker(): Ticker {
             return this._ticker ??= new Ticker(this, now => {
                 const moved = [this.width.step(now), this.fade.step(now), this.residual.step(now)].some(Boolean)
+                // back at the size it had when the anchor was set (the
+                // controls gone again): centred from now on, or whatever
+                // changes later (a desktop added) would grow it one way only
+                if (this._anchor !== 0.5 && !this.width.running && Math.abs(this.shownWidth - this.base) < 1) this._anchor = 0.5
                 this.set_opacity(this.fade.value)
                 if (!this.wanted && !this.fade.running) this.set_visible(false)
                 this.queue_resize()
@@ -127,8 +131,10 @@ export const IslandShape = GObject.registerClass(
             if (on === this.wanted && (on ? this.get_visible() : true)) return
             this.wanted = on
             if (on) {
-                // out of a dot as wide as it is high
+                // out of a dot as wide as it is high, centred
                 const [, height] = this.naturalHeight()
+                this._anchor = 0.5
+                this.residual.jump(0)
                 this.width.jump(height)
                 this.fade.jump(0)
                 this.fade.to(1, FADE_IN)

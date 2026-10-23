@@ -1,10 +1,10 @@
 @use 'theme' as *;
 
 // ─── The island (widgets/Island) ─────────────────────────────────────────────
-// A bar pill like the others, or iOS's: black, with a faint key line. Apple's
-// system colours for what it tells: orange for the microphone and a busy CPU,
-// green for the camera and the charger, purple for the screen, red for heat,
-// yellow for memory.
+// A bar pill like the others (iOS's is black: kiwi's is the panels' glass,
+// docs/macos-differences.md). Apple's system colours for what it tells:
+// orange for the microphone and a busy CPU, green for the camera and the
+// charger, purple for the screen, red for heat, yellow for memory.
 
 $orange: #ff9f0a;
 $green: #30d158;
@@ -26,14 +26,6 @@ $height: 34px; // the bar's other pills, border included
 
 @mixin island-pane {
     @include panel;
-}
-
-// iOS's: opaque black, a key line so it doesn't vanish into a dark wallpaper
-@mixin island-black {
-    background-color: #000000;
-    background-image: none;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    box-shadow: none;
 }
 
 window.IslandBar {
@@ -69,12 +61,6 @@ window.IslandBar {
         border-radius: 99px;
         min-width: $height - 2px;
         min-height: $height - 2px;
-    }
-
-    &.island-black {
-        .island, .island-bubble {
-            @include island-black;
-        }
     }
 
     button.island-part {
@@ -280,21 +266,9 @@ window.IslandBar {
     border-radius: 99px;
 }
 
+// drawn (sources/media.tsx, MusicBars) in this colour, following the music
 .island-bars {
-    .bar {
-        min-width: 3px;
-        margin: 0 1px;
-        border-radius: 2px;
-        background-color: var(--primary);
-    }
-
-    // each bar at its own pace, so together they never repeat in step
-    &.playing .bar {
-        animation: island-wave 560ms ease-in-out infinite alternate;
-        &:nth-child(2) { animation-duration: 430ms; animation-delay: -200ms; }
-        &:nth-child(3) { animation-duration: 690ms; animation-delay: -350ms; }
-        &:nth-child(4) { animation-duration: 500ms; animation-delay: -120ms; }
-    }
+    color: var(--primary);
 }
 
 // back, play or pause, forward: drawn glyphs (sources/media.tsx), in the card
@@ -312,11 +286,6 @@ window.IslandBar {
     &:disabled {
         color: var(--k-fg-4);
     }
-}
-
-@keyframes island-wave {
-    from { transform: scale(1, 0.35); }
-    to { transform: scale(1, 1); }
 }
 
 .island-symbol, .island-value {
@@ -370,10 +339,6 @@ window.IslandCardWindow {
     .island-card-pane {
         @include island-pane;
         border-radius: 26px;
-    }
-
-    &.island-black .island-card-pane {
-        @include island-black;
     }
 
     .island-card {
