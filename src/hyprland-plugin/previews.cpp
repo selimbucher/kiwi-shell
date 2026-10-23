@@ -14,9 +14,10 @@
 // back, and a client that talked to this plugin could only make windows
 // appear on the screen, which it can already see.
 //
-//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
+//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
 //     hyprctl kiwi-previews clear [<set>]
 //     hyprctl kiwi-previews raise <set> <address>
+//     hyprctl kiwi-previews select <set> <address>|- [<rrggbb>]
 //     hyprctl kiwi-previews gesture <set> <fingers>
 //     hyprctl kiwi-previews swipe begin up|down | update <travel> <ms> | end [cancel]
 //
@@ -40,6 +41,9 @@
 // off. (The shell used to get that by sending a tile reaching up behind the
 // title bar, but a window fitted into that taller tile came out wider than
 // the picture and lost its sides.)
+// shadow draws a soft shadow under each picture, and select outlines one in
+// a colour: Mission Control's frame round its windows, drawn here so that it
+// goes where the picture is, in flight too ("Around a picture" below).
 // fly is Mission Control's: the tiles leave their windows as the set appears,
 // from where each window is on screen to its tile, and go back into them when
 // the set is cleared, after which a `kiwipreviews>>flown,<set>` event says
@@ -149,6 +153,7 @@ namespace {
         PHLWINDOWREF window;
         CBox         box, clip;
         std::string  badge;
+        bool         selected = false;
     };
 
     // ─── Flying ─────────────────────────────────────────────────────────────
@@ -214,6 +219,22 @@ namespace {
     // icon holds it.
     constexpr int BADGE_PAD = 4;
 
+    // ─── Around a picture ───────────────────────────────────────────────────
+    // A set with `shadow` (Mission Control's windows) has what the shell's
+    // frame used to draw round each picture drawn here instead: a soft shadow
+    // under it, and the chosen one's outline in the accent (`select`). Drawn
+    // here they go where the picture is, flying out of the window and home
+    // with it and fading with the flight, rather than waiting at its place in
+    // Mission Control. Logical pixels, as the shell had them: a shadow of
+    // 0 6px 18px at 32% black; a 4 px outline 1 px out from the picture.
+    constexpr int   SHADOW_RANGE  = 18;
+    constexpr int   SHADOW_DROP   = 6;
+    constexpr float SHADOW_ALPHA  = 0.32F;
+    constexpr int   OUTLINE_GAP   = 1;
+    constexpr int   OUTLINE_WIDTH = 4;
+    // how far past a picture these reach
+    constexpr int DECOR_REACH = SHADOW_RANGE + SHADOW_DROP;
+
     // textures by "<file>@<pixels>"; a file that failed to load stays null so
     // it is not tried every frame
     using BadgeTextures = std::map<std::string, SP<Render::ITexture>>;
@@ -261,8 +282,12 @@ namespace {
 
     class CPreviewPassElement : public IPassElement {
       public:
-        CPreviewPassElement(std::vector<SDrawTile>&& tiles, int rounding, bool squareTop, float alpha, BadgeTextures& badges) :
-            m_tiles(std::move(tiles)), m_rounding(rounding), m_squareTop(squareTop), m_alpha(alpha), m_badges(badges) {}
+        // `decor`: how far the shadow and the outline are shown, `outline` the
+        // chosen tile's colour (see "Around a picture")
+        CPreviewPassElement(std::vector<SDrawTile>&& tiles, int rounding, bool squareTop, float alpha, BadgeTextures& badges, bool shadow = false, float decor = 0.F,
+                            std::optional<CHyprColor> outline = std::nullopt) :
+            m_tiles(std::move(tiles)), m_rounding(rounding), m_squareTop(squareTop), m_alpha(alpha), m_badges(badges), m_shadow(shadow), m_decor(decor),
+            m_outline(outline) {}
 
         std::vector<UP<IPassElement>> draw() override {
             const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
@@ -288,6 +313,13 @@ namespace {
                 // does with its own captures
                 const double FACTOR = std::max(tile.box.w / SIZE.x, tile.box.h / SIZE.y);
                 const Vector2D OFFSET{tile.box.x + (tile.box.w - SIZE.x * FACTOR) / 2, tile.box.y + (tile.box.h - SIZE.y * FACTOR) / 2};
+
+                const double SCALE = MONITOR->m_scale;
+                if (m_shadow && m_decor > 0.F) {
+                    g_pHyprRenderer->m_renderData.clipBox = reach(tile, DECOR_REACH * SCALE);
+                    const CBox SHADE = tile.box.copy().expand(SHADOW_RANGE * SCALE).translate(Vector2D{0.0, SHADOW_DROP * SCALE}).round();
+                    g_pHyprOpenGL->renderRoundedShadow(SHADE, m_rounding, 2.F, std::round(SHADOW_RANGE * SCALE), CHyprColor(0.F, 0.F, 0.F, SHADOW_ALPHA), m_decor);
+                }
 
                 g_pHyprRenderer->m_renderData.clipBox = tile.clip;
 
@@ -337,10 +369,38 @@ namespace {
                 if (!tile.badge.empty())
                     drawBadge(tile, MONITOR->m_scale);
 
+                if (tile.selected && m_outline && m_decor > 0.F) {
+                    const int GAP   = std::round(OUTLINE_GAP * SCALE);
+                    const int WIDTH = std::round(OUTLINE_WIDTH * SCALE);
+                    g_pHyprRenderer->m_renderData.clipBox = reach(tile, GAP + WIDTH);
+                    // the width logical (Hyprland scales it), the box and rounding
+                    // physical; the outer corner is concentric with the inner
+                    g_pHyprOpenGL->renderBorder(tile.box.copy().expand(GAP).round(), Config::CGradientValueData(*m_outline),
+                                                {.round = m_rounding + GAP, .roundingPower = 2.F, .borderSize = OUTLINE_WIDTH, .a = m_decor});
+                }
+
                 g_pHyprRenderer->m_renderData.clipBox = {};
             }
 
             return {};
+        }
+
+        // The tile's clip opened out by `by` on each side the shell hasn't
+        // narrowed it on: where something of the shell's covers the picture,
+        // its shadow and outline are cut off with it.
+        static CBox reach(const SDrawTile& tile, double by) {
+            constexpr double SLACK  = 1.0; // pixels, for rounding
+            double           left   = tile.clip.x, top = tile.clip.y;
+            double           right  = tile.clip.x + tile.clip.w, bottom = tile.clip.y + tile.clip.h;
+            if (left <= tile.box.x + SLACK)
+                left -= by;
+            if (top <= tile.box.y + SLACK)
+                top -= by;
+            if (right >= tile.box.x + tile.box.w - SLACK)
+                right += by;
+            if (bottom >= tile.box.y + tile.box.h - SLACK)
+                bottom += by;
+            return CBox{left, top, right - left, bottom - top};
         }
 
         // whether a box shown in a tile takes up one of the tile's corners
@@ -395,8 +455,10 @@ namespace {
                 right  = std::max(right, tile.clip.x + tile.clip.w);
                 bottom = std::max(bottom, tile.clip.y + tile.clip.h);
             }
+            // and what's drawn round the pictures
+            const double REACH = m_shadow || m_outline ? DECOR_REACH * MONITOR->m_scale : 0.0;
             // the pass wants it unscaled
-            return CBox{left, top, right - left, bottom - top}.scale(1.0 / MONITOR->m_scale).round();
+            return CBox{left - REACH, top - REACH, right - left + 2 * REACH, bottom - top + 2 * REACH}.scale(1.0 / MONITOR->m_scale).round();
         }
 
       private:
@@ -405,6 +467,9 @@ namespace {
         bool                   m_squareTop = false;
         float                  m_alpha     = 1.F;
         BadgeTextures&         m_badges;
+        bool                   m_shadow = false;
+        float                  m_decor  = 0.F;
+        std::optional<CHyprColor> m_outline;
     };
 
     struct SCounters {
@@ -441,6 +506,15 @@ namespace {
         bool        live      = false;
         bool        squareTop = false;
         bool        fly       = false;
+        bool        shadow    = false;
+
+        // the tile outlined as chosen, if any, and in what
+        void select(const PHLWINDOWREF& window, const CHyprColor& color) {
+            damageTilesOf(m_selected); // where the outline was
+            m_selected    = window;
+            m_selectColor = color;
+            damageTilesOf(m_selected);
+        }
 
         void apply(std::vector<STile>&& tiles) {
             m_done = false;
@@ -682,7 +756,8 @@ namespace {
                     box             = between(FROM, box, SHOWN).round();
                     clip            = box;
                 }
-                tiles.emplace_back(SDrawTile{.window = tile.window, .box = box, .clip = clip, .badge = tile.badge});
+                const auto SELECTED = m_selected.lock();
+                tiles.emplace_back(SDrawTile{.window = tile.window, .box = box, .clip = clip, .badge = tile.badge, .selected = SELECTED && SELECTED == WINDOW});
             }
             return tiles;
         }
@@ -695,9 +770,13 @@ namespace {
             auto       tiles  = tilesOn(monitor, ANCHOR);
             if (tiles.empty())
                 return;
-            // the windows in flight are the windows: whole all the way
+            // the windows in flight are the windows: whole all the way; what
+            // is round them comes and goes with the flight
             const float ALPHA = fly ? 1.F : ANCHOR->alpha;
-            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), squareTop, ALPHA, m_badges));
+            const float DECOR = fly ? shown() : ANCHOR->alpha;
+            const auto  OUTLINE = m_selected.lock() ? std::optional<CHyprColor>{m_selectColor} : std::nullopt;
+            g_pHyprRenderer->m_renderPass.add(
+                makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), squareTop, ALPHA, m_badges, shadow, DECOR, OUTLINE));
         }
 
         // A window nobody can see is suspended and never drawn, so it would
@@ -739,14 +818,21 @@ namespace {
                     if (tile.window != window)
                         continue;
                     ++m_counters.damages;
-                    g_pHyprRenderer->damageBox(tile.clip.copy().scale(1.0 / monitor->m_scale).translate(monitor->m_position));
+                    g_pHyprRenderer->damageBox(tile.clip.copy().expand(decorReach() * monitor->m_scale).scale(1.0 / monitor->m_scale).translate(monitor->m_position));
                 }
             }
         }
 
       private:
+        // how far past its picture a tile draws, logical
+        double decorReach() const {
+            return shadow || m_selected.lock() ? DECOR_REACH : 0.0;
+        }
+
         SCounters&                          m_counters;
         BadgeTextures&                      m_badges;
+        PHLWINDOWREF                        m_selected;
+        CHyprColor                          m_selectColor;
         std::vector<STile>                  m_tiles;
         // new tiles are held back until the shell's surface next commits;
         // the ones on screen stay until then
@@ -884,7 +970,7 @@ namespace {
         void damageAll() {
             for (const auto& monitor : State::monitorState()->monitors()) {
                 for (const auto& tile : tilesOn(monitor, anchorOn(monitor)))
-                    g_pHyprRenderer->damageBox(tile.clip.copy().scale(1.0 / monitor->m_scale).translate(monitor->m_position));
+                    g_pHyprRenderer->damageBox(tile.clip.copy().expand(decorReach() * monitor->m_scale).scale(1.0 / monitor->m_scale).translate(monitor->m_position));
             }
         }
     };
@@ -1132,7 +1218,7 @@ namespace {
                 std::string sets;
                 for (const auto& [name, set] : m_sets)
                     sets += std::format(" {}: {} tiles on {}{} ({}{}{})", name, set->size(), set->namespace_, set->popup ? " popup" : "", set->live ? "live" : "still",
-                                        set->squareTop ? ", square top" : "", set->fly ? ", flying" : "");
+                                        set->squareTop ? ", square top" : "", set->fly ? (set->shadow ? ", flying, shadowed" : ", flying") : (set->shadow ? ", shadowed" : ""));
                 return std::format("sets:{}; commits {}, damages {}, keepalives {}\n", sets.empty() ? " none" : sets, m_counters.commits, m_counters.damages,
                                    m_counters.keepAlives);
             }
@@ -1150,6 +1236,22 @@ namespace {
                 const auto WINDOW = windowFrom(WORDS[2]);
                 if (IT == m_sets.end() || !WINDOW || !IT->second->raise(WINDOW))
                     return "no such tile";
+                return "ok";
+            }
+            // the tile outlined as chosen: "select <set> <address>|- [<rrggbb>]"
+            if ((WORDS.size() == 3 || WORDS.size() == 4) && WORDS[0] == "select") {
+                const auto IT = m_sets.find(WORDS[1]);
+                if (IT == m_sets.end())
+                    return "no such set";
+                uint64_t rgb = 0xffffff;
+                if (WORDS.size() == 4) {
+                    try {
+                        rgb = std::stoull(std::string{WORDS[3]}, nullptr, 16);
+                    } catch (...) { return "a colour is rrggbb"; }
+                }
+                const CHyprColor COLOR{((rgb >> 16) & 0xff) / 255.F, ((rgb >> 8) & 0xff) / 255.F, (rgb & 0xff) / 255.F, 1.F};
+                const auto       WINDOW = WORDS[2] == "-" ? nullptr : windowFrom(WORDS[2]);
+                IT->second->select(PHLWINDOWREF{WINDOW}, COLOR);
                 return "ok";
             }
             // the gesture's swipe without a trackpad, step by step: for tests,
@@ -1180,14 +1282,14 @@ namespace {
                 return "ok";
             }
             if (WORDS.size() < 3)
-                return "usage: kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...";
+                return "usage: kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...";
 
             int rounding = 0;
             if (!parse(WORDS[2], rounding))
                 return "rounding must be a number";
 
             size_t first = 3;
-            bool   live = false, popup = false, squareTop = false, fly = false;
+            bool   live = false, popup = false, squareTop = false, fly = false, shadow = false;
             for (; first < WORDS.size(); ++first) {
                 if (WORDS[first] == "live")
                     live = true;
@@ -1197,6 +1299,8 @@ namespace {
                     squareTop = true;
                 else if (WORDS[first] == "fly")
                     fly = true;
+                else if (WORDS[first] == "shadow")
+                    shadow = true;
                 else if (WORDS[first] != "still")
                     break;
             }
@@ -1243,6 +1347,7 @@ namespace {
             set->popup      = popup;
             set->squareTop  = squareTop;
             set->fly        = fly;
+            set->shadow     = shadow;
             set->name       = NAME;
 
             const auto COUNT = tiles.size();

@@ -176,6 +176,12 @@ button.mc-add {
     &.selected {
         border-color: var(--primary);
     }
+
+    // with kiwi's plugin the compositor draws the outline, so it flies with
+    // the window (previews.cpp, "Around a picture")
+    &.mc-live.selected {
+        border-color: transparent;
+    }
 }
 
 // under the window's picture: a shadow around it, and its corners for the
@@ -183,6 +189,11 @@ button.mc-add {
 .mc-picture {
     border-radius: 10px;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+
+    // the compositor's, as the outline is
+    &.mc-live {
+        box-shadow: none;
+    }
 }
 
 .mc-icon {

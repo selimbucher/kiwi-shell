@@ -1,5 +1,6 @@
 import Hyprland from "gi://AstalHyprland"
 import Gtk from "gi://Gtk?version=4.0"
+import Gdk from "gi://Gdk?version=4.0"
 import GObject from "gi://GObject"
 import GLib from "gi://GLib"
 
@@ -92,13 +93,13 @@ export function showPreviews(
     namespace: string,
     rounding: number,
     tiles: PreviewTile[],
-    options: { motion?: "live" | "still", popup?: boolean, squareTop?: boolean, fly?: boolean } = {},
+    options: { motion?: "live" | "still", popup?: boolean, squareTop?: boolean, fly?: boolean, shadow?: boolean } = {},
     taken?: (ok: boolean) => void,
 ) {
     if (!livePreviews()) return
     const request = tiles.length === 0 && !options.fly
         ? `kiwi-previews clear ${set}`
-        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""}${options.squareTop ? " square-top" : ""}${options.fly ? " fly" : ""} `
+        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""}${options.squareTop ? " square-top" : ""}${options.fly ? " fly" : ""}${options.shadow ? " shadow" : ""} `
             + tiles.map(t => {
                 // a badge needs the clip in front of it; the tile's own rectangle will do
                 const clip = t.clip ?? (t.badge ? t : undefined)
@@ -109,8 +110,12 @@ export function showPreviews(
         taken?.(true)
         return
     }
+    const fresh = !showing.has(set)
     showing.set(set, request)
     send(request, set, taken)
+    // the outline chosen before the compositor had the set
+    const outline = outlines.get(set)
+    if (fresh && outline && !request.startsWith("kiwi-previews clear")) send(outline)
 }
 
 /**
@@ -136,6 +141,24 @@ export function raisePreview(set: string, address: string) {
     if (!livePreviews() || !showing.has(set)) return
     send(`kiwi-previews raise ${set} 0x${address.replace(/^0x/, "")}`)
 }
+
+/**
+ * Outline the window's tile as the chosen one, in `color` (any CSS colour),
+ * or none: a set shown with `shadow`.
+ */
+export function selectPreview(set: string, address: string | null, color: string) {
+    if (!livePreviews()) return
+    const rgba = new Gdk.RGBA()
+    if (!rgba.parse(color)) rgba.parse("white")
+    const hex = [rgba.red, rgba.green, rgba.blue].map(c => Math.round(c * 255).toString(16).padStart(2, "0")).join("")
+    const request = `kiwi-previews select ${set} ${address ? `0x${address.replace(/^0x/, "")}` : "-"} ${hex}`
+    // kept for when the set is shown, if it isn't yet
+    outlines.set(set, request)
+    if (showing.has(set)) send(request)
+}
+
+// each set's last selectPreview
+const outlines = new Map<string, string>()
 
 export function clearPreviews(set: string) {
     if (!livePreviews() || !showing.has(set)) return
@@ -255,6 +278,9 @@ type Options = {
     squareTop?: boolean
     // the tiles fly out of their windows and back (showPreviews)
     fly?: boolean
+    // the compositor draws a shadow under each picture, and selectPreview's
+    // outline: they go with the pictures, in flight too
+    shadow?: boolean
 }
 
 /**
@@ -321,11 +347,11 @@ export class LiveTiles {
      * `then` once the compositor has them back.
      */
     giveBack(then: () => void) {
-        const { set, namespace, radius, motion, popup, squareTop, fly } = this.options
+        const { set, namespace, radius, motion, popup, squareTop, fly, shadow } = this.options
         this.tiles.clear()
         ++this.generation
         if (!livePreviews() || !fly) return then()
-        showPreviews(set, namespace, radius, [], { motion, popup, squareTop, fly }, () => then())
+        showPreviews(set, namespace, radius, [], { motion, popup, squareTop, fly, shadow }, () => then())
     }
 
     /** Measure the tiles and send them; after every layout. */
@@ -363,8 +389,8 @@ export class LiveTiles {
         if (pane.waiting && tiles.length === 0 && this.tiles.size > 0) return
 
         const measured = ++this.generation
-        const { set, namespace, motion, popup, squareTop, fly } = this.options
-        showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly }, () => {
+        const { set, namespace, motion, popup, squareTop, fly, shadow } = this.options
+        showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly, shadow }, () => {
             if (measured === this.generation) this.pane?.show()
         })
     }

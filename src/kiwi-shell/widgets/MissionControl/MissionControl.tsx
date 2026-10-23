@@ -11,7 +11,7 @@ import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { livePreviews, LiveTiles, PreviewPane, raisePreview, type Rect } from "../services/previews"
+import { livePreviews, LiveTiles, PreviewPane, raisePreview, selectPreview, type Rect } from "../services/previews"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { focusClient } from "../Dock/dock-state"
@@ -232,7 +232,7 @@ hyprland.connect("event", (_h: unknown, event: string, args: string) => {
 
 export function closeMissionControl(then?: () => void) {
     if (!isOpen.get() || closing.get()) return
-    setSelected(null)
+    // the chosen window keeps its outline on the way home, fading with it
     afterLanding = then ?? null
     closedAt = Date.now()
     setClosing(true)
@@ -378,6 +378,9 @@ const windowTiles = new LiveTiles({
     motion: "live",
     radius: WINDOW_RADIUS,
     fly: true,
+    // the shadow under each window and the chosen one's outline are the
+    // compositor's, so they fly with the windows (.mc-live in the CSS)
+    shadow: true,
     // the windows of a desktop being zoomed into, cut off at its picture
     clipOf: tile => {
         let picture = tile.get_parent()
@@ -438,7 +441,7 @@ function WindowPicture({ window, width, height, tiles }: {
     if (livePreviews()) {
         return (
             <box
-                class="mc-picture"
+                class="mc-picture mc-live"
                 widthRequest={width}
                 heightRequest={height}
                 $={(self: Gtk.Widget) => {
@@ -948,7 +951,7 @@ class Scene {
         const address = slot.item.client.get_address()
         return createRoot(dispose => {
             const picture = <WindowPicture window={slot.item} width={slot.width} height={slot.height} tiles={windowTiles} /> as Gtk.Widget
-            const widget = new Gtk.Box({ cssClasses: ["mc-window", "mc-target"] })
+            const widget = new Gtk.Box({ cssClasses: ["mc-window", "mc-target", ...livePreviews() ? ["mc-live"] : []] })
             widget.append(picture)
             const motion = new Gtk.EventControllerMotion()
             const point = () => { if (!drag && !fingersHold && selected.get() !== address) setSelected(address) }
@@ -1019,6 +1022,7 @@ class Scene {
             on ? frame.widget.add_css_class("selected") : frame.widget.remove_css_class("selected")
             frame.title.set_visible(on)
         }
+        selectPreview(WINDOWS_SET, address, conf.get().primary_color)
     }
 
     private showWallpaper() {
