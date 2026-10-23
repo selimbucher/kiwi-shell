@@ -26,9 +26,12 @@ export type Privacy = { mic: Use[]; camera: Use[]; screen: Use[] }
 const [privacy, setPrivacy] = createState<Privacy>({ mic: [], camera: [], screen: [] })
 export { privacy }
 
+// A PipeWire property of the node. AstalWp has it on the node itself (there's
+// no `wp` field to reach through: with one, every lookup came back empty, and
+// a stream that only meters or records the speakers lit the microphone dot).
 const prop = (node: AstalWp.Node, key: string): string | null => {
     try {
-        return (node as any).wp?.get_pw_property(key) ?? null
+        return node.get_pw_property(key) ?? null
     } catch {
         return null
     }
