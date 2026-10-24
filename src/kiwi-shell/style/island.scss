@@ -63,6 +63,13 @@ window.IslandBar {
         min-height: $height - 2px;
     }
 
+    // round with one icon, as the others: GTK's min-width is the content's,
+    // without the padding round it
+    .island-bubble.privacy {
+        padding: 0 8px;
+        min-width: $height - 2px - 16px;
+    }
+
     button.island-part {
         @include flat-button;
         &:hover {
@@ -266,7 +273,6 @@ window.IslandBar {
 }
 
 // back, play or pause, forward: drawn glyphs (sources/media.tsx), in the card
-// and in the island pointed at
 .island-controls button {
     @include flat-button;
     padding: 3px 7px;
@@ -284,6 +290,8 @@ window.IslandBar {
 
 .island-symbol, .island-value {
     &.busy { color: $orange; }
+    // the CPU's spell over, waiting to be seen (performance.tsx)
+    &.was { color: var(--k-fg-3); }
     &.hot { color: $red; }
     &.full { color: $yellow; }
 }
@@ -294,22 +302,22 @@ window.IslandBar {
 }
 
 .island-privacy {
-    .dot {
-        min-width: 7px;
-        min-height: 7px;
-        border-radius: 99px;
-        margin-left: 5px;
+    // the line before the icons, as the bar had before the island
+    .parting {
+        min-width: 1px;
+        min-height: 14px;
+        background-color: var(--k-divider);
+        margin: 0 7px 0 4px;
+    }
+    .kind + .kind {
+        margin-left: 6px;
     }
 }
 
-.island-body > .island-part.privacy {
-    margin-left: 4px;
-}
-
-.dot {
-    &.mic { background-color: $orange; }
-    &.camera { background-color: $green; }
-    &.screen { background-color: $purple; }
+.kind {
+    &.mic { color: $orange; }
+    &.camera { color: $green; }
+    &.screen { color: $purple; }
 }
 
 // ─── Alerts ───────────────────────────────────────────────────────────────────
@@ -399,6 +407,7 @@ window.IslandCardWindow {
             }
         }
         &.busy .head .symbol { color: $orange; }
+        &.was .head .symbol { color: var(--k-fg-3); }
         &.hot .head .symbol { color: $red; }
         &.full .head .symbol { color: $yellow; }
 
@@ -421,10 +430,7 @@ window.IslandCardWindow {
         min-width: 280px;
         .use {
             min-height: 34px;
-            .dot {
-                min-width: 9px;
-                min-height: 9px;
-                border-radius: 99px;
+            .kind {
                 margin-right: 12px;
             }
             .kind {

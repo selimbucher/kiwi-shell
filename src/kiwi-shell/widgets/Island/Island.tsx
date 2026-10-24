@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createComputed, createMemo, createRoot, createState, onCleanup, type Accessor } from "ags"
+import { createComputed, createMemo, createRoot, onCleanup, type Accessor } from "ags"
 import GLib from "gi://GLib"
 import GObject from "gi://GObject"
 import Cairo from "gi://cairo"
@@ -16,7 +16,7 @@ import {
     type Rect,
 } from "./model"
 import { IslandShape, IslandBody, Fader, Bubble, CardMorph, whenDone } from "./shape"
-import { PrivacyDots, PrivacyCard, anyPrivacy } from "./sources/privacy"
+import { PrivacyIcons, PrivacyCard, anyPrivacy, privacyKinds } from "./sources/privacy"
 import Desktops from "./center/Desktops"
 import DateCenter from "./center/DateCenter"
 import WeatherCenter from "./center/WeatherCenter"
@@ -35,10 +35,6 @@ const { TOP, LEFT, RIGHT, BOTTOM } = Astal.WindowAnchor
 
 export type Center = "desktops" | "date" | "weather" | "none"
 
-// how long the island stays grown once the pointer has left what grew it: a
-// pointer slipping off its edge for a moment doesn't shut it
-const UNPOINT_AFTER_MS = 300
-
 const windowCss = conf.as(c => `--primary: ${c.primary_color}; --bar-margin: ${c.bar_margin}px;`)
 
 // A CenterBox that says when it has been laid out again. GTK leaves a
@@ -48,16 +44,14 @@ const RowLayout = GObject.registerClass(
     { GTypeName: "KiwiIslandRowLayout" },
     class RowLayout extends Gtk.CenterLayout {
         onLayout: (() => void) | null = null
-        // how far right of the middle the centre goes (IslandShape.shift)
-        shift: () => number = () => 0
 
-        // CenterLayout's, but with the centre where the island says: the
-        // sides take what's left either side of it
+        // CenterLayout's: the centre in the middle, the sides taking what's
+        // left either side of it
         vfunc_allocate(_widget: Gtk.Widget, width: number, height: number, baseline: number): void {
             const center = this.get_center_widget()
             const [, cw] = center?.get_visible() ? center.measure(Gtk.Orientation.HORIZONTAL, height) : [0, 0]
             // not rounded: see IslandShape's allocation
-            const x = Math.max(0, Math.min(width - cw, (width - cw) / 2 + this.shift()))
+            const x = Math.max(0, (width - cw) / 2)
             const place = (child: Gtk.Widget | null, from: number, w: number) => {
                 if (!child?.get_visible()) return
                 child.measure(Gtk.Orientation.HORIZONTAL, height)
@@ -75,14 +69,12 @@ const Row = GObject.registerClass(
     { GTypeName: "KiwiIslandRow" },
     class Row extends Gtk.CenterBox {
         onLayout: (() => void) | null = null
-        shift: () => number = () => 0
 
         _init(props?: Partial<Gtk.CenterBox.ConstructorProps>) {
             // @ts-expect-error GJS constructs GObject classes through _init
             super._init(props)
             const layout = new RowLayout()
             layout.onLayout = () => this.onLayout?.()
-            layout.shift = () => this.shift()
             this.set_layout_manager(layout)
         }
     },
@@ -130,16 +122,6 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         const a = alert()
         return a ? `alert:${a.seq}` : compactId() ? `activity:${compactId()}` : ""
     })
-    // Its trailing side pointed at, an activity that has more to show grows
-    // into it there at once (Now Playing's bars become its controls), and
-    // back a little after the pointer leaves.
-    const [pointed, setPointed] = createState(false)
-    const trailingKey = createMemo(() => {
-        const key = sideKey()
-        const id = compactId()
-        const more = key.startsWith("activity:") && pointed() && !!(id && activityById(id)?.pointed)
-        return more ? `${key}:pointed` : key
-    })
     // the card grown out of this island covers it
     const underCard = createMemo(() => covered()?.monitor === monitor && covered()?.origin === "island")
 
@@ -160,15 +142,8 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     const side = (edge: "leading" | "trailing") => {
         const fader = new Fader({ cssClasses: ["island-side", edge], valign: Gtk.Align.CENTER })
         fader.edge = edge === "leading" ? "start" : "end"
-        const keyOf = edge === "leading" ? sideKey : trailingKey
-        let last = ""
-        follow(keyOf, () => {
-            const key = keyOf()
-            // the pointed-at view coming or going changes the trailing side
-            // only: the rest stays where it is
-            const base = (k: string) => k.replace(/:pointed$/, "")
-            shape.anchor = edge === "trailing" && last && base(last) === base(key) ? 0 : 0.5
-            last = key
+        follow(sideKey, () => {
+            const key = sideKey()
             const a = alert()
             if (key.startsWith("alert:") && a) {
                 const view = edge === "leading" ? a.leading : a.trailing
@@ -176,10 +151,6 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             }
             const id = compactId()
             const activity = id ? activityById(id) : null
-            if (key.endsWith(":pointed") && activity?.pointed) {
-                const more = activity.pointed
-                return fader.show(scoped(() => <box class={`island-part ${edge} pointed`}>{more()}</box> as Gtk.Widget))
-            }
             const view = activity && (edge === "leading" ? activity.leading : activity.trailing)
             fader.show(view ? scoped(() => (
                 <button class={`island-part ${edge}`} valign={Gtk.Align.CENTER}
@@ -193,48 +164,49 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     const middle = new Fader({ cssClasses: ["island-center"], valign: Gtk.Align.CENTER })
     follow(center, () => {
-        shape.anchor = 0.5
         middle.show(scoped(() => centerView(center(), monitor)))
     })
 
     const leading = side("leading")
     const trailing = side("trailing")
+
+    // What uses the camera, the microphone or the screen: at the island's
+    // trailing end, parted from the middle by a line, while the island shows
+    // nothing else; beside it in a bubble of its own while it does, as an
+    // activity that isn't the first is (in the island too, it got crowded).
+    // It comes out from behind the pill's edge as the pill opens for it.
+    const crowded = createMemo(() => compactId() !== "" || alertShown())
+    const inIsland = createMemo(() => crowded() ? "" : privacyKinds())
+    const inBubble = createMemo(() => crowded() ? privacyKinds() : "")
+    const end = new Fader({ cssClasses: ["island-end"], valign: Gtk.Align.CENTER })
+    end.edge = "end"
+    end.grows = true
+    follow(inIsland, () => {
+        const kinds = inIsland()
+        end.show(kinds ? scoped(() => (
+            <button class="island-part privacy" valign={Gtk.Align.CENTER}
+                onClicked={() => expand(PRIVACY_ID, monitor)}>
+                <PrivacyIcons kinds={kinds} parted />
+            </button>
+        ) as Gtk.Widget) : null)
+    })
+    const privacyBubble = new Bubble({ valign: Gtk.Align.CENTER, halign: Gtk.Align.START })
+    privacyBubble.side = "end"
+    follow(inBubble, () => {
+        const kinds = inBubble()
+        privacyBubble.show(kinds ? scoped(() => (
+            <button class="island-bubble privacy" valign={Gtk.Align.CENTER}
+                opacity={covered(c => c?.monitor === monitor && c.origin === "bubble" && c.id === PRIVACY_ID ? 0.001 : 1)}
+                onClicked={self => expand(PRIVACY_ID, monitor, { rect: boundsIn(self, win), widget: self })}>
+                <PrivacyIcons kinds={kinds} parted={false} centered />
+            </button>
+        ) as Gtk.Widget) : null)
+    })
+
     const body = new IslandBody({ cssClasses: ["island-body"] })
-    body.hold(leading, middle, trailing, (
-        <button class="island-part privacy" visible={anyPrivacy} valign={Gtk.Align.CENTER}
-            onClicked={() => expand(PRIVACY_ID, monitor)}>
-            <PrivacyDots />
-        </button>
-    ) as Gtk.Widget)
+    body.hold(leading, middle, trailing, end)
 
     shape.child = body
-    // With a card open from it, the island stays as it was, pointed at or
-    // not: the card grew out of it and shrinks back into it. The pointer is
-    // over the card meanwhile, which to the island is the pointer leaving.
-    // Once the card has gone, it goes by where the pointer is.
-    const carded = createMemo(() => opened()?.monitor === monitor || covered()?.monitor === monitor)
-    let pointTimer = 0
-    const pointAfter = (on: boolean, ms: number) => {
-        if (pointTimer) GLib.source_remove(pointTimer)
-        pointTimer = 0
-        if (carded()) return
-        if (ms === 0) return setPointed(on)
-        pointTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
-            pointTimer = 0
-            setPointed(on)
-            return GLib.SOURCE_REMOVE
-        })
-    }
-    const pointer = new Gtk.EventControllerMotion()
-    pointer.connect("enter", () => pointAfter(true, 0))
-    pointer.connect("leave", () => pointAfter(false, UNPOINT_AFTER_MS))
-    trailing.add_controller(pointer)
-    subscriptions.push(carded.subscribe(() => {
-        if (carded()) return
-        const on = pointer.contains_pointer
-        if (on !== pointed()) pointAfter(on, on ? 0 : UNPOINT_AFTER_MS)
-    }))
-    subscriptions.push(() => { if (pointTimer) GLib.source_remove(pointTimer) })
     shape.shownNow = shown()
     subscriptions.push(shown.subscribe(() => shape.reveal(shown())))
     islandBodies.set(monitor, body)
@@ -326,7 +298,6 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             <Row class="island-row" $={(self: InstanceType<typeof Row>) => {
                 row = self
                 self.onLayout = updateRegion
-                self.shift = () => shape.shift
             }}>
                 <box $type="start" hexpand valign={Gtk.Align.CENTER}>{bubble(1, "start")}</box>
                 {/* under the card, all but invisible rather than not there:
@@ -335,7 +306,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 <box $type="center" valign={Gtk.Align.CENTER} opacity={underCard(under => under ? 0.001 : 1)}>
                     {shape}
                 </box>
-                <box $type="end" hexpand valign={Gtk.Align.CENTER}>{bubble(0, "end")}</box>
+                <box $type="end" hexpand valign={Gtk.Align.CENTER}>{privacyBubble}{bubble(0, "end")}</box>
             </Row>
             {/* GTK draws a window whose snapshot is empty not at all, and
                 the compositor keeps its last frame: with nothing in the

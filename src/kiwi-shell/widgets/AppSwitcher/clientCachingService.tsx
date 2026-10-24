@@ -1,3 +1,4 @@
+import GLib from "gi://GLib"
 import { logger } from "../../log"
 const log = logger("app-capture")
 import { Gdk } from "ags/gtk4"
@@ -62,7 +63,17 @@ function applyMinSize() {
 // Only one capture runs at a time. The C library's signals don't say which
 // window a frame belongs to, so concurrent captures couldn't be told apart.
 let activeCapture = false
+let lastCaptureEnded = 0
 const captureQueue: Array<() => void> = []
+
+/**
+ * Whether kiwi is taking a window's picture, or took one within `ms`.
+ * Hyprland announces every capture as screen capturing (a "screencast"
+ * event), kiwi's own too; the privacy dots leave those out (privacy.tsx).
+ */
+export function capturing(ms = 250): boolean {
+    return activeCapture || (lastCaptureEnded > 0 && GLib.get_monotonic_time() - lastCaptureEnded < ms * 1000)
+}
 
 function drainQueue() {
     if (activeCapture || captureQueue.length === 0) return
@@ -104,6 +115,7 @@ function captureNow(address: string): Promise<Gdk.Texture | null> {
                 if (failedId) { capturer.disconnect(failedId); failedId = 0 }
                 if (safetyId) { clearTimeout(safetyId);        safetyId = null }
                 activeCapture = false
+                lastCaptureEnded = GLib.get_monotonic_time()
                 resolve(result ?? cache.get(address)?.texture ?? null)
                 Promise.resolve().then(drainQueue)
             }

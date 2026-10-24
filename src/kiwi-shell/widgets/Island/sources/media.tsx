@@ -14,6 +14,7 @@ import { conf } from "../../config"
 import { giconForEntry } from "../../appIcon"
 import { loadThumbnail } from "../../services/wallpaper"
 import { coverFile, fetchedCover, isWebCover } from "../../services/covers"
+import { easeOutCubic } from "../../MissionControl/motion"
 import { addActivitySource, collapse, opened, PRIORITY, type Activity } from "../model"
 import { focusClient, isMinimized, restoreClient } from "../../Dock/dock-state"
 
@@ -158,11 +159,15 @@ askCurrent()
 // what's left without one: a browser can't bring itself forward on Wayland,
 // so it says it can and does nothing.
 
-function showApp(player: Mpris.Player) {
+function windowOf(player: Mpris.Player): Hyprland.Client | undefined {
     const pid = playerPids().get(player.bus_name)
-    const window = pid ? hyprland.get_clients()
+    return pid ? hyprland.get_clients()
         .filter(c => c.get_pid() === pid)
         .sort((a, b) => a.focus_history_id - b.focus_history_id)[0] : undefined
+}
+
+function showApp(player: Mpris.Player) {
+    const window = windowOf(player)
     if (window) {
         if (isMinimized(window)) restoreClient(window)
         else focusClient(window)
@@ -181,6 +186,19 @@ const CoverArt = GObject.registerClass(
     class CoverArt extends Gtk.Widget {
         size = 20
         texture: Gdk.Texture | null = null
+
+        /** Out of nothing, briefly: a cover that arrived after its place showed. */
+        fadeIn() {
+            this.set_opacity(0)
+            let start = 0
+            this.add_tick_callback((_w, clock) => {
+                const now = clock.get_frame_time()
+                if (!start) start = now
+                const t = Math.min(1, (now - start) / (COVER_FADE_MS * 1000))
+                this.set_opacity(easeOutCubic(t))
+                return t < 1 ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE
+            })
+        }
 
         vfunc_measure(): [number, number, number, number] {
             return [this.size, this.size, -1, -1]
@@ -205,7 +223,7 @@ const CoverArt = GObject.registerClass(
 const decoded = new Map<string, Gdk.Texture>()
 const DECODED_KEEP = 12
 
-function decodedCover(file: string, size: number, then: (texture: Gdk.Texture) => void): Gdk.Texture | null {
+function decodedCover(file: string, size: number, then: (texture: Gdk.Texture | null) => void): Gdk.Texture | null {
     const key = `${size}:${file}`
     const known = decoded.get(key)
     if (known) {
@@ -215,7 +233,7 @@ function decodedCover(file: string, size: number, then: (texture: Gdk.Texture) =
     }
     // decoded off the main loop, at the size it is shown
     void loadThumbnail(file, size, size, false).then(texture => {
-        if (!texture) return
+        if (!texture) return then(null)
         decoded.set(key, texture)
         for (const old of decoded.keys()) if (decoded.size > DECODED_KEEP) decoded.delete(old)
         then(texture)
@@ -223,42 +241,52 @@ function decodedCover(file: string, size: number, then: (texture: Gdk.Texture) =
     return null
 }
 
-// The cover as a file: AstalMpris's, a browser's own or one it fetched before;
-// one on the web it no longer fetches (gvfs is off, services/covers.ts)
-// comes from kiwi. Until then, or without one, the app's icon.
+// The cover: AstalMpris's file, a browser's own, or one on the web, which
+// kiwi fetches (gvfs is off, services/covers.ts). A new one is fetched and
+// decoded before it shows: the old one stays till then, and a place that had
+// none yet stays empty, the cover fading in. The app's icon only for a song
+// without a cover at all; it flashed in while a new one came.
+const NO_COVER = "none"
+const COVER_FADE_MS = 180
+
 function Cover({ player, size }: { player: Mpris.Player; size: number }) {
-    const source = createComputed(get =>
-        String(get(createBinding(player, "cover_art")) || get(createBinding(player, "art_url")) || ""))
-    const [cover, setCover] = createState("")
+    // the player's own URL, not AstalMpris's copy of it (cover_art): it copies
+    // a web one through gvfs, and with that off the copy fails and keeps the
+    // one before, the cover stuck on an old song
+    const source = createBinding(player, "art_url").as(url => String(url || ""))
+    // null while the first one comes
+    const [art, setArt] = createState<Gdk.Texture | typeof NO_COVER | null>(null)
+    let wanted = ""
+    const show = (asked: string, file: string) => {
+        if (!file) return setArt(NO_COVER)
+        const now = decodedCover(file, size, texture => { if (wanted === asked) setArt(texture ?? NO_COVER) })
+        if (now) setArt(now)
+    }
     const look = () => {
-        const wanted = source()
-        if (!isWebCover(wanted)) {
-            setCover(wanted.startsWith("file://") ? GLib.filename_from_uri(wanted)[0] ?? "" : wanted)
-            return
-        }
-        // fetched before: at once, not a frame of the app's icon first
-        const fetched = fetchedCover(wanted)
-        if (fetched) return setCover(fetched)
-        void coverFile(wanted).then(file => {
-            if (source() === wanted) setCover(file ?? "")
-        })
+        const asked = wanted = source()
+        if (!asked) return setArt(NO_COVER)
+        if (!isWebCover(asked)) return show(asked, asked.startsWith("file://") ? GLib.filename_from_uri(asked)[0] ?? "" : asked)
+        const fetched = fetchedCover(asked)
+        if (fetched) return show(asked, fetched)
+        void coverFile(asked).then(file => { if (wanted === asked) show(asked, file ?? "") })
     }
     onCleanup(source.subscribe(look))
     look()
+    let before: Gdk.Texture | typeof NO_COVER | null = null
     return (
         <box class="island-cover" overflow={Gtk.Overflow.HIDDEN} valign={Gtk.Align.CENTER} halign={Gtk.Align.CENTER}
             hexpand={false} vexpand={false}>
-            <With value={cover}>
-                {(file: string) => {
-                    if (!file) return <Gtk.Image class="island-cover-none" gicon={giconForEntry(`${player.entry ?? ""}.desktop`)}
+            <With value={art}>
+                {(now: Gdk.Texture | typeof NO_COVER | null) => {
+                    const waited = before === null
+                    before = now
+                    if (now === NO_COVER) return <Gtk.Image class="island-cover-none" gicon={giconForEntry(`${player.entry ?? ""}.desktop`)}
                         pixelSize={size} /> as Gtk.Widget
-                    const art = new CoverArt()
-                    art.size = size
-                    art.texture = decodedCover(file, size, texture => {
-                        art.texture = texture
-                        art.queue_draw()
-                    })
-                    return art
+                    const widget = new CoverArt()
+                    widget.size = size
+                    widget.texture = now
+                    if (now && waited) widget.fadeIn()
+                    return widget
                 }}
             </With>
         </box>
@@ -484,7 +512,7 @@ function glyph(kind: Glyph | Accessor<Glyph>, size: number): Gtk.Widget {
     return widget
 }
 
-/** Back, play or pause, forward: in the card, and in the island pointed at. */
+/** Back, play or pause, forward: in the card. */
 function Controls({ player, size }: { player: Mpris.Player; size: number }) {
     const status = createBinding(player, "playback_status")
     const playPause = status(s => s === Mpris.PlaybackStatus.PLAYING ? "pause" : "play") as Accessor<Glyph>
@@ -521,8 +549,7 @@ function Expanded({ player }: { player: Mpris.Player }) {
     return (
         <box class="island-card island-media" orientation={Gtk.Orientation.VERTICAL}>
             <box class="head">
-                <button class="cover-button" tooltipText="Show the app"
-                    onClicked={() => showApp(player)}>
+                <button class="cover-button" tooltipText="Show the app" onClicked={() => showApp(player)}>
                     <Cover player={player} size={52} />
                 </button>
                 <box class="titles" orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand>
@@ -563,7 +590,6 @@ const activity = createComputed(get => {
         priority: PRIORITY.media,
         leading: () => <Cover player={player} size={20} /> as Gtk.Widget,
         trailing: () => <Bars player={player} /> as Gtk.Widget,
-        pointed: () => <Controls player={player} size={14} /> as Gtk.Widget,
         minimal: () => <Cover player={player} size={20} /> as Gtk.Widget,
         expanded: () => <Expanded player={player} /> as Gtk.Widget,
     } satisfies Activity

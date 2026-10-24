@@ -100,17 +100,11 @@ export const IslandShape = GObject.registerClass(
         // made on first use: GJS sets a class's fields after _init has run
         private get ticker(): Ticker {
             return this._ticker ??= new Ticker(this, now => {
-                const moved = [this.width.step(now), this.fade.step(now), this.residual.step(now)].some(Boolean)
-                // back at the size it had when the anchor was set (the
-                // controls gone again): centred from now on, or whatever
-                // changes later (a desktop added) would grow it one way only.
-                // Only once it has been away: this frame comes before the
-                // layout that gives it somewhere to go.
-                if (this._anchor !== 0.5 && this.away && !this.width.running && Math.abs(this.shownWidth - this.base) < 1) this._anchor = 0.5
+                const moved = [this.width.step(now), this.fade.step(now)].some(Boolean)
                 this.set_opacity(this.fade.value)
                 if (!this.wanted && !this.fade.running) this.set_visible(false)
                 this.queue_resize()
-                return moved || this.width.running || this.fade.running || this.residual.running
+                return moved || this.width.running || this.fade.running
             })
         }
 
@@ -136,10 +130,8 @@ export const IslandShape = GObject.registerClass(
             if (on === this.wanted && (on ? this.get_visible() : true)) return
             this.wanted = on
             if (on) {
-                // out of a dot as wide as it is high, centred
+                // out of a dot as wide as it is high
                 const [, height] = this.naturalHeight()
-                this._anchor = 0.5
-                this.residual.jump(0)
                 this.width.jump(height)
                 this.fade.jump(0)
                 this.fade.to(1, FADE_IN)
@@ -186,47 +178,10 @@ export const IslandShape = GObject.registerClass(
                     this.ticker.start()
                 }
             }
-            if (this._anchor !== 0.5 && Math.abs(this.width.target - this.base) >= 1) this.away = true
             const width = Math.max(0, Math.round(this.width.value))
-            this.shownWidth = width
             return [width, width, -1, -1]
         }
 
-        /**
-         * Which end stays put while the pill grows or shrinks to a new size: 0
-         * the leading end, 1 the trailing end, 0.5 neither (it stays centred).
-         * With only the trailing side changing (Now Playing's controls coming
-         * as it's pointed at), the pill grows away from its leading end and
-         * everything else stays where it was, under the pointer too; it
-         * centres again as it goes back to the size it had.
-         */
-        get anchor(): number {
-            return this._anchor
-        }
-
-        set anchor(anchor: number) {
-            if (anchor === this._anchor) return
-            // where it was off centre, now let go of gently
-            this.residual.jump(this.shift)
-            this.residual.to(0)
-            this._anchor = anchor
-            this.base = this.width.value
-            this.away = false
-            this.ticker.start()
-        }
-
-        /** How far right of centre the pill is laid out (Island.tsx, the row). */
-        get shift(): number {
-            return (this.shownWidth - this.base) * (0.5 - this._anchor) + this.residual.value
-        }
-
-        private _anchor = 0.5
-        // its width when the anchor was set, and whether it has been
-        // another since
-        private base = 0
-        private away = false
-        private readonly residual = new Spring(0, ISLAND_SPRING)
-        private shownWidth = 0
 
         // What it holds is laid out on the pill as it is now (IslandBody), so
         // that it moves with the pill rather than ahead of it.
@@ -262,6 +217,14 @@ export const IslandBody = GObject.registerClass(
         private parts: { leading: Gtk.Widget; middle: Gtk.Widget; trailing: Gtk.Widget; end: Gtk.Widget } | null = null
         // where the middle begins and ends and the dots begin, as laid out last
         private cuts = { leading: 0, trailing: 0, end: 0 }
+        // The end's width as laid out last, and whether the pill is opening
+        // or closing for it: then the end has only as much of the pill as
+        // has opened for it, the rest of it behind the pill's edge, and
+        // nothing else is pushed.
+        private endWas = 0
+        private endMoving = false
+        // the widest the end is or was while the pill moves for it
+        private endReach = 0
         private readonly drift = new Spring(0, ISLAND_SPRING)
         // where the middle belongs, from the pill's middle
         private offset: number | null = null
@@ -318,11 +281,21 @@ export const IslandBody = GObject.registerClass(
             // there: vfunc_snapshot) and comes out as the pill opens; what a
             // side lets go of fades where it was.
             const x = width / 2 + offset + this.drift.value - m / 2
+            if (e !== this.endWas) {
+                this.endReach = Math.max(e, this.endWas, this.endMoving ? this.endReach : 0)
+                this.endMoving = true
+            }
+            this.endWas = e
+            let room = e
+            if (this.endMoving) {
+                room = Math.max(0, Math.min(this.endReach, width - l - m - t))
+                if (Math.abs(width - (l + m + t + e)) < 0.5) this.endMoving = false
+            }
             put(leading, 0, l)
             put(middle, x, m)
-            put(trailing, width - e - t, t)
-            put(end, width - e, e)
-            this.cuts = { leading: x, trailing: x + m, end: width - e }
+            put(trailing, width - room - t, t)
+            put(end, width - room, room)
+            this.cuts = { leading: x, trailing: x + m, end: width - room }
         }
 
         // A side never shows over the middle, nor the trailing one over the
@@ -340,7 +313,7 @@ export const IslandBody = GObject.registerClass(
             within(leading, -this.get_width(), this.cuts.leading)
             this.snapshot_child(middle, snapshot)
             within(trailing, this.cuts.trailing, this.cuts.end)
-            this.snapshot_child(end, snapshot)
+            within(end, this.cuts.end, this.get_width())
         }
 
         vfunc_dispose(): void {
@@ -367,6 +340,12 @@ export const Fader = GObject.registerClass(
     { GTypeName: "KiwiIslandFader" },
     class Fader extends Gtk.Widget {
         edge: Edge = "center"
+        // What it shows comes out from behind the pill's edge as the pill
+        // opens for it, and goes back behind it (IslandBody lays it out so):
+        // for the privacy icons, which take no one's place. Laid out at
+        // their whole width at once, they pushed the trailing side behind
+        // the middle until the pill had opened.
+        grows = false
         private current: Gtk.Widget | null = null
         // how far each child is shown, 0 to 1: the current one coming in,
         // the ones leaving going out
@@ -443,14 +422,16 @@ export const Fader = GObject.registerClass(
         vfunc_size_allocate(width: number, height: number, _baseline: number): void {
             if (this.current) {
                 // measured before laid out, as GTK wants each time
-                this.current.measure(Gtk.Orientation.HORIZONTAL, height)
-                this.place(this.current, width, height, 0, 0)
+                const [, nat] = this.current.measure(Gtk.Orientation.HORIZONTAL, height)
+                // growing, at its whole width from where the slot begins
+                this.place(this.current, this.grows ? nat : width, height, 0, 0)
             }
             for (const widget of this.leaving()) {
                 const [, w] = widget.measure(Gtk.Orientation.HORIZONTAL, -1)
                 const [h] = widget.measure(Gtk.Orientation.VERTICAL, w)
-                // where it was against the slot's outer edge, the pill's
-                const x = this.edge === "start" ? 0 : this.edge === "end" ? width - w : (width - w) / 2
+                // where it was against the slot's outer edge, the pill's;
+                // growing, going back behind it
+                const x = this.grows ? 0 : this.edge === "start" ? 0 : this.edge === "end" ? width - w : (width - w) / 2
                 const tall = Math.max(height, h)
                 this.place(widget, w, tall, x, (height - tall) / 2)
             }

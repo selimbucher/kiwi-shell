@@ -1,10 +1,11 @@
 import { Gtk } from "ags/gtk4"
-import { createState } from "ags"
+import { createState, type Accessor } from "ags"
 import AstalWp from "gi://AstalWp"
 import Hyprland from "gi://AstalHyprland"
 import GLib from "gi://GLib"
 
 import { logger } from "../../../log"
+import { capturing } from "../../AppSwitcher/clientCachingService"
 
 const log = logger("island")
 
@@ -133,12 +134,22 @@ for (const signal of ["notify::sources", "notify::recorders"]) wp.video?.connect
 wp.audio.connect("notify::default-microphone", rewatch)
 rewatch()
 
+// kiwi's own window pictures are captures too (without its plugin it takes
+// them itself: clientCachingService), announced alike: one of a window
+// starting while kiwi is taking a picture is kiwi's, and not counted. Spamming
+// the dock or Alt+Tab lit the dot.
+let own = 0
+
 hyprland.connect("event", (_h: unknown, event: string, data: string) => {
     if (event !== "screencast") return
-    const [state] = data.split(",")
+    const [state, type] = data.split(",")
     const before = casts
-    casts = Math.max(0, casts + (state === "1" ? 1 : -1))
-    log.debug(`screencast ${data}, ${casts} running`)
+    if (state === "1") {
+        if (type === "window" && capturing()) own++
+        else casts++
+    } else if (type === "window" && own > 0) own--
+    else casts = Math.max(0, casts - 1)
+    log.debug(`screencast ${data}, ${casts} running, ${own} kiwi's own`)
     if (before === 0 && casts > 0) {
         castsSince = GLib.get_monotonic_time()
         if (castTimer) GLib.source_remove(castTimer)
@@ -153,20 +164,30 @@ hyprland.connect("event", (_h: unknown, event: string, data: string) => {
 
 // ─── Views ────────────────────────────────────────────────────────────────────
 
+// iOS's dots are a phone's lack of room: the bar has room for what each is,
+// in its colour, as the bar had the microphone before the island
 const KINDS = [
-    { key: "camera", dot: "camera", title: "Camera" },
-    { key: "mic", dot: "mic", title: "Microphone" },
-    { key: "screen", dot: "screen", title: "Screen" },
+    { key: "camera", tone: "camera", icon: "camera-video-symbolic", title: "Camera" },
+    { key: "mic", tone: "mic", icon: "audio-input-microphone-symbolic", title: "Microphone" },
+    { key: "screen", tone: "screen", icon: "screencast-recorded-symbolic", title: "Screen" },
 ] as const
 
 export const anyPrivacy = privacy(p => p.mic.length + p.camera.length + p.screen.length > 0)
 
-/** The dots, at the island's trailing end. */
-export function PrivacyDots() {
+/** Which are in use, as one key: the icons are built again when it changes. */
+export const privacyKinds: Accessor<string> = privacy(p => KINDS.filter(k => p[k.key].length > 0).map(k => k.key).join(","))
+
+/**
+ * The icons for `kinds` (privacyKinds), after a line parting them from
+ * what's before; `centered` in what holds them (a bubble, round at least).
+ */
+export function PrivacyIcons({ kinds, parted, centered = false }: { kinds: string; parted: boolean; centered?: boolean }) {
+    const on = kinds.split(",")
     return (
-        <box class="island-privacy" valign={Gtk.Align.CENTER} visible={anyPrivacy}>
-            {KINDS.map(k => <box class={`dot ${k.dot}`} valign={Gtk.Align.CENTER}
-                visible={privacy(p => p[k.key].length > 0)} />)}
+        <box class="island-privacy" valign={Gtk.Align.CENTER} halign={centered ? Gtk.Align.CENTER : Gtk.Align.FILL}>
+            {parted ? <box class="parting" valign={Gtk.Align.CENTER} /> : <box visible={false} />}
+            {KINDS.filter(k => on.includes(k.key)).map(k =>
+                <Gtk.Image class={`kind ${k.tone}`} iconName={k.icon} pixelSize={14} valign={Gtk.Align.CENTER} />)}
         </box>
     )
 }
@@ -177,7 +198,7 @@ export function PrivacyCard() {
         <box class="island-card island-privacy-card" orientation={Gtk.Orientation.VERTICAL}>
             {KINDS.map(k => (
                 <box class="use" visible={privacy(p => p[k.key].length > 0)}>
-                    <box class={`dot ${k.dot}`} valign={Gtk.Align.CENTER} />
+                    <Gtk.Image class={`kind ${k.tone}`} iconName={k.icon} pixelSize={16} valign={Gtk.Align.CENTER} />
                     <box orientation={Gtk.Orientation.VERTICAL} hexpand>
                         <label class="kind" label={k.title} xalign={0} />
                         <label class="apps" xalign={0} wrap

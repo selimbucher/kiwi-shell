@@ -12,19 +12,24 @@ import { conf } from "../../config"
 import { readText, readNumber, listDir } from "../../sysfs"
 import { giconForEntry, entryFromCmdline } from "../../appIcon"
 import { detectCpuTempFile } from "../../Bar/SystemMenu/tabs/hardwarePolling"
-import { addActivitySource, opened, showAlert, PRIORITY, type Activity } from "../model"
+import { addActivitySource, opened, PRIORITY, type Activity } from "../model"
 
 const log = logger("island")
 
 // ─── Performance ──────────────────────────────────────────────────────────────
 // Three activities, for when the machine is working unusually hard: memory
-// running out, the CPU running hot, all of the CPU busy. And macOS's "Apps
-// Using Significant Energy": an app that has kept a lot of the CPU busy for
+// running out, the CPU running hot, the CPU busy. And macOS's "Apps Using
+// Significant Energy": an app that has kept a lot of the CPU busy for
 // minutes, listed in the system menu's Performance tab (a Mac lists them in
-// its battery menu, which kiwi doesn't have). One that isn't on screen gets a
-// word in the island too, once. macOS has nothing in the island's place;
-// Activity Monitor and the battery menu are where a Mac shows all this, and
-// only when asked.
+// its battery menu, which kiwi doesn't have). macOS has nothing in the
+// island's place; Activity Monitor and the battery menu are where a Mac shows
+// all this, and only when asked.
+//
+// The CPU is busy when all of it is, or when an app out of sight keeps a lot
+// of it busy (one on screen works for whoever is looking at it). Either is
+// news that matters, and a burst of it is easily missed: the CPU stays in the
+// island until its card has been opened, past tense once it's over, and then
+// keeps away while the same goes on.
 //
 // None of it needs to be on time to the second, and the laptop runs on
 // battery, so the shell looks only every 30 s (one read of /proc/stat,
@@ -42,17 +47,15 @@ const CHECK_SECONDS = 30
 // (below), not this.
 const BUSY = 0.9
 const STILL_BUSY = 0.7
-// An app uses significant energy from this share of one core, all its
-// processes together, averaged over the last 5 minutes (ten looks), and
-// stops below half of it. A minute or two of hard work isn't enough, music
+// An app (one with a desktop entry) uses significant energy from this share
+// of one core, all its processes together, averaged over the last 5 minutes
+// (ten looks), and stops below half of it. A minute or two of hard work isn't enough, music
 // playing in the background (a few %) is nowhere near: Spotify drawing its
 // looping videos where no one sees them (a whole core) is. The CPU's time
 // stands in for energy; macOS counts the GPU, wake-ups and the disk too.
 const SIGNIFICANT = 0.4
 const INSIGNIFICANT = 0.2
 const ENERGY_LOOKS = 10
-// how long the island says so
-const ENERGY_ALERT_MS = 4000
 // Memory is short below 5% available, or below 20% while apps wait for it,
 // and fine again above 10% with none waiting. Waiting alone isn't memory
 // running out: reading back what was swapped out or dropped from the cache
@@ -199,11 +202,35 @@ let snapshot: Map<number, Proc> | null = null
 let busyLooks = 0
 let hotLooks = 0
 
-type CpuState = { load: number; top: Group[]; since: number }
+// One spell of the CPU busy: all of it (no app), or an app out of sight.
+// `value` the load now, of all the cores or of one; `over` when it ended,
+// while it waits to be seen; `seen` once its card has been opened.
+type Spell = {
+    app: Group | null; value: number; peak: number; top: Group[]
+    since: number; over: number | null; seen: boolean
+}
+let full: Spell | null = null
+const spells = new Map<string, Spell>()
+
+// what the island shows: the spells not yet seen, all the CPU first
+type CpuState = { spells: Spell[] }
 type MemoryState = { used: number; top: Group[]; pressured: boolean; since: number }
 type HeatState = { degrees: number; top: Group[]; since: number }
 
 const [cpu, setCpu] = createState<CpuState | null>(null)
+
+function showCpu() {
+    const unseen = [full, ...[...spells.values()].sort((a, b) => b.value - a.value)]
+        .filter((spell): spell is Spell => !!spell && !spell.seen)
+    setCpu(unseen.length ? { spells: unseen.map(spell => ({ ...spell })) } : null)
+}
+
+// a spell that has ended goes once seen, or is kept until it is
+function ended(spell: Spell, now: number): boolean {
+    if (spell.seen) return true
+    spell.over ??= now
+    return false
+}
 const [memory, setMemory] = createState<MemoryState | null>(null)
 const [heat, setHeat] = createState<HeatState | null>(null)
 
@@ -227,13 +254,20 @@ function look() {
     const between = procs && snapshot ? cpuBetween(snapshot, procs, seconds) : null
     lastTop = between ?? []
     snapshot = procs
-    if (between) weigh(between)
+    // apps only, as macOS lists: the compositor or the shell itself working
+    // hard (a genie spammed) is nothing to quit, nor is a daemon
+    if (between) weigh(between.filter(group => group.entry))
     else if (!working) weigh([])
 
     busyLooks = load >= BUSY ? busyLooks + 1 : 0
-    const busy = busyLooks >= 2 || (cpu() !== null && load >= STILL_BUSY)
-    if (busy) setCpu({ load, top: lastTop, since: cpu()?.since ?? now })
-    else if (cpu()) setCpu(null)
+    const going = full !== null && full.over === null
+    if (busyLooks >= 2 || (going && load >= STILL_BUSY)) {
+        if (!going) full = { app: null, value: load, peak: load, top: lastTop, since: now, over: null, seen: false }
+        else full = { ...full!, value: load, peak: Math.max(full!.peak, load), top: lastTop.length ? lastTop : full!.top }
+    } else if (going && ended(full!, now)) {
+        full = null
+    }
+    showCpu()
 
     const degrees = readTemperature()
     hotLooks = degrees !== null && degrees >= hot ? hotLooks + 1 : 0
@@ -312,8 +346,6 @@ const hyprland = Hyprland.get_default()
 
 const usage = new Map<string, { group: Group; shares: number[] }>()
 const [energy, setEnergy] = createState<Group[]>([])
-// the apps the island has told about, until they stop
-const alerted = new Set<string>()
 
 /** The apps using significant energy, most first, each at its average. */
 export const significantEnergy: Accessor<Group[]> = energy
@@ -333,31 +365,32 @@ function weigh(apps: Group[]) {
         const average = app.shares.reduce((a, b) => a + b, 0) / ENERGY_LOOKS
         if (average >= SIGNIFICANT || (listed.has(key) && average >= INSIGNIFICANT))
             significant.push({ ...app.group, value: average })
-        else alerted.delete(key)
         if (app.shares.every(share => share === 0)) usage.delete(key)
     }
     significant.sort((a, b) => b.value - a.value)
     const names = (groups: Group[]) => groups.map(g => `${g.key}=${g.name}`).join(";")
     if (names(significant) !== names(energy())) setEnergy(significant)
 
-    // the island says so once, for an app out of sight: one on screen is
-    // working for whoever is looking at it
+    // the CPU busy, for an app out of sight; one already going on keeps on
+    // wherever it is now. Its average is over the last five minutes, so that
+    // is how long it has been at it, at least.
+    const now = GLib.get_monotonic_time()
     const onScreen = appsOnScreen()
     for (const app of significant) {
-        if (alerted.has(app.key) || onScreen.has(app.key)) continue
-        alerted.add(app.key)
-        log.info(`performance: ${app.name} uses significant energy (${percent(app.value)} of a core, averaged over 5 minutes)`)
-        showAlert({
-            id: `energy:${app.key}`, ms: ENERGY_ALERT_MS,
-            leading: () => (
-                <box class="island-alert leading" valign={Gtk.Align.CENTER}>
-                    <GroupIcon group={app} size={16} cssClass="symbol" />
-                    <label label={app.name} valign={Gtk.Align.CENTER} />
-                </box>
-            ) as Gtk.Widget,
-            trailing: () => <label class="island-alert trailing" label="Using a lot of energy" valign={Gtk.Align.CENTER} /> as Gtk.Widget,
-        })
+        const spell = spells.get(app.key)
+        if (spell) {
+            spells.set(app.key, { ...spell, app, value: app.value, peak: Math.max(spell.peak, app.value), over: null })
+        } else if (!onScreen.has(app.key)) {
+            log.info(`performance: ${app.name} keeps the CPU busy out of sight (${percent(app.value)} of a core, averaged over 5 minutes)`)
+            spells.set(app.key, {
+                app, value: app.value, peak: app.value, top: [],
+                since: now - ENERGY_LOOKS * CHECK_SECONDS * 1e6, over: null, seen: false,
+            })
+        }
     }
+    for (const [key, spell] of spells)
+        if (!significant.some(app => app.key === key) && ended(spell, now)) spells.delete(key)
+    showCpu()
 }
 
 // the apps with a window on a desktop that a monitor shows (minimized ones
@@ -394,7 +427,8 @@ function setWatching(on: boolean) {
         snapshot = null
         busyLooks = hotLooks = 0
         usage.clear()
-        alerted.clear()
+        full = null
+        spells.clear()
         setEnergy([])
         setCpu(null)
         setMemory(null)
@@ -405,6 +439,22 @@ function setWatching(on: boolean) {
 const enabled = weighingEnergy
 enabled.subscribe(() => setWatching(enabled()))
 setWatching(enabled())
+
+// The CPU's card closed: what it showed has been seen. Spells over are done
+// with; the ones going on keep out of the island until they end.
+let cpuCardOpen = false
+opened.subscribe(() => {
+    const open = opened()?.id === "cpu"
+    if (open === cpuCardOpen) return
+    cpuCardOpen = open
+    if (open) return
+    if (full) full = full.over === null ? { ...full, seen: true } : null
+    for (const [key, spell] of spells) {
+        if (spell.over !== null) spells.delete(key)
+        else spells.set(key, { ...spell, seen: true })
+    }
+    showCpu()
+})
 
 // an open card has the latest by the time it shows: one more look at the
 // apps then, measured from the last
@@ -420,8 +470,11 @@ opened.subscribe(() => {
     const seconds = (now - lastLookAt) / 1e6
     if (!snapshot || seconds < 2) return
     const top = cpuBetween(snapshot, processes(), seconds)
-    const c = cpu(), h = heat()
-    if (c) setCpu({ ...c, top })
+    const h = heat()
+    if (full && full.over === null) {
+        full = { ...full, top }
+        showCpu()
+    }
     if (h) setHeat({ ...h, top })
 })
 
@@ -434,9 +487,14 @@ function bytes(n: number): string {
     return `${Math.round(n / 1024 ** 2)} MB`
 }
 
-function minutes(since: number): string {
-    const m = Math.round((GLib.get_monotonic_time() - since) / 60e6)
+function minutes(since: number, until = GLib.get_monotonic_time()): string {
+    const m = Math.round((until - since) / 60e6)
     return m < 1 ? "under a minute" : m === 1 ? "a minute" : `${m} minutes`
+}
+
+function ago(at: number): string {
+    const m = Math.round((GLib.get_monotonic_time() - at) / 60e6)
+    return m < 1 ? "just now" : `${minutes(at)} ago`
 }
 
 export function GroupIcon({ group, size, cssClass = "" }: { group: Group | undefined; size: number; cssClass?: string }) {
@@ -490,21 +548,49 @@ const cpuActivity = createComputed(get => get(cpu) ? "cpu" : null)
 const heatActivity = createComputed(get => get(heat) ? "temperature" : null)
 const memoryActivity = createComputed(get => get(memory) ? "memory" : null)
 
+// The spell the island is about: all the CPU before any app, then the app
+// keeping the most of it busy. Its load, as Activity Monitor counts: of all
+// the cores for all the CPU, of one core for an app.
+const first = (c: CpuState | null) => c?.spells[0] ?? null
+const shownValue = (spell: Spell | null) => spell ? percent(spell.over === null ? spell.value : spell.peak) : ""
+// a spell over is greyed until seen
+const toneOf = (spell: Spell | null) => spell?.over === null ? "busy" : "was"
+
+function CpuCard({ spells }: { spells: Spell[] }) {
+    const [spell] = spells
+    const over = spell.over !== null
+    if (!spell.app) return (
+        <Card tone={toneOf(spell)} icon={CPU_ICON} title={over ? "CPU was busy" : "CPU busy"}
+            detail={over
+                ? `Up to ${percent(spell.peak)} of all ${cores} cores for ${minutes(spell.since, spell.over!)}, until ${ago(spell.over!)}`
+                : `${percent(spell.value)} of all ${cores} cores, for ${minutes(spell.since)}`}>
+            <Top groups={spell.top} value={g => percent(g.value)} />
+        </Card>
+    )
+    const apps = spells.filter(s => s.app)
+    const name = spell.app.name
+    return (
+        <Card tone={toneOf(spell)} icon={CPU_ICON} title={over ? `${name} was busy` : `${name} is busy`}
+            detail={over
+                ? `It kept up to ${percent(spell.peak)} of a core busy out of sight for ${minutes(spell.since, spell.over!)}, until ${ago(spell.over!)}. 100% is one core.`
+                : `It has kept ${percent(spell.value)} of a core busy out of sight for ${minutes(spell.since)}. 100% is one core.`}>
+            {apps.length > 1
+                ? <Top groups={apps.map(s => ({ ...s.app!, value: s.over === null ? s.value : s.peak }))} value={g => percent(g.value)} />
+                : <box />}
+        </Card>
+    )
+}
+
 addActivitySource(createComputed(get => {
     if (!get(cpuActivity)) return null
-    const value = cpu(c => c ? percent(c.load) : "")
+    const spell = cpu(first)
     return {
         id: "cpu",
         priority: PRIORITY.cpu,
-        leading: () => <Symbol icon={CPU_ICON} tone="busy" />,
-        trailing: () => <Value text={value} tone="busy" />,
-        minimal: () => <Symbol icon={CPU_ICON} tone="busy" />,
-        expanded: () => <With value={cpu}>{(c: CpuState | null) => !c ? <box /> :
-            <Card tone="busy" icon={CPU_ICON} title="CPU busy"
-                detail={`${percent(c.load)} of all ${cores} cores, for ${minutes(c.since)}`}>
-                <Top groups={c.top} value={g => percent(g.value)} />
-            </Card>}
-        </With> as Gtk.Widget,
+        leading: () => <With value={spell(toneOf)}>{(tone: string) => <Symbol icon={CPU_ICON} tone={tone} />}</With> as Gtk.Widget,
+        trailing: () => <With value={spell(toneOf)}>{(tone: string) => <Value text={spell(shownValue)} tone={tone} />}</With> as Gtk.Widget,
+        minimal: () => <With value={spell(toneOf)}>{(tone: string) => <Symbol icon={CPU_ICON} tone={tone} />}</With> as Gtk.Widget,
+        expanded: () => <With value={cpu}>{(c: CpuState | null) => !c ? <box /> : <CpuCard spells={c.spells} />}</With> as Gtk.Widget,
     } satisfies Activity
 }))
 
