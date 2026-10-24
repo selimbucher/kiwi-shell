@@ -282,23 +282,25 @@ namespace {
     }
 
     // a full swipe, from the windows to the tiles, in the trackpad's units
-    // (240 took a brush of the fingers for one)
-    constexpr float GESTURE_DISTANCE = 300.F;
+    // (240 took a brush of the fingers for one, 300 a long push)
+    constexpr float GESTURE_DISTANCE = 275.F;
     // Let go faster than this (units per ms) and the flight goes that way;
     // slower, it goes on past this share of the way, and back short of it.
     // A Mac takes a short quick swipe as readily as a long one, and lets a
     // slow one go a little way.
-    constexpr float GESTURE_FLICK   = 0.45F;
-    constexpr float GESTURE_PAST    = 0.45F;
+    constexpr float GESTURE_FLICK   = 0.4F;
+    constexpr float GESTURE_PAST    = 0.4F;
     // and held still this long, it was no flick
     constexpr auto GESTURE_REST = std::chrono::milliseconds{80};
 
-    // How far out the windows are for how far the fingers have gone: eased a
-    // little at both ends, half smoothstep, so they set off and settle as a
-    // flight does, and a brush of the fingers barely moves them.
+    // How far out the windows are for how far the fingers have gone: eased at
+    // both ends, mostly smoothstep, so they set off and settle as a flight
+    // does, and a brush of the fingers barely moves them.
+    constexpr float GESTURE_EASE = 0.8F;
+
     float gestureShown(float progress) {
         const float P = std::clamp(progress, 0.F, 1.F);
-        return 0.5F * P + 0.5F * P * P * (3.F - 2.F * P);
+        return (1.F - GESTURE_EASE) * P + GESTURE_EASE * P * P * (3.F - 2.F * P);
     }
 
     // the fingers' progress for windows that far out

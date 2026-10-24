@@ -64,17 +64,18 @@ const CLOSE_PAD = 3
 // the pointer may cross from the picture onto the × and back without it going
 const CLOSE_LINGER_MS = 80
 
-// the windows, below the bar
-const AREA_MARGIN = 48
-// between the bar and the windows below it: macOS leaves them room
-const AREA_TOP_GAP = 32
+// the windows, below the bar: close to the screen's edges, as macOS has them
+const AREA_MARGIN = 24
+// between the bar and the windows below it
+const AREA_TOP_GAP = 16
 const WINDOW_RADIUS = 10
 // a window's frame: its highlight's border plus the gap inside it
 const FRAME = 5
 const TITLE_WIDTH_EXTRA = 120
 // an average character of the title's 12px font, for how many fit
 const TITLE_CHAR_WIDTH = 7
-const SPREAD = { columnSpacing: 36, rowSpacing: 48, maxScale: 0.9 }
+// a row's gap holds the title of the window pointed at, under it
+const SPREAD = { columnSpacing: 20, rowSpacing: 32, maxScale: 0.9 }
 
 // the compositor's name for the windows' pictures
 const WINDOWS_SET = "mission-control"
@@ -117,7 +118,7 @@ function thumbSize(monitor: Monitor, count: number) {
 const barHeight = (monitor: Monitor) =>
     BAR_TOP + thumbSize(monitor, 1).height + NAME_GAP + NAME_HEIGHT + BAR_BOTTOM
 
-function snapshot(monitorName: string): View | null {
+function snapshot(monitorName: string, open = expanded.get()): View | null {
     const monitor = monitorNamed(monitorName)
     if (!monitor) return null
     const byDesktop = windowsByDesktop()
@@ -125,13 +126,19 @@ function snapshot(monitorName: string): View | null {
     if (!ids.includes(monitor.active)) ids.push(monitor.active)
     ids.sort((a, b) => a - b)
 
-    const slots = spreadOf(monitor, byDesktop.get(monitor.active) ?? [])
+    const slots = spreadOf(monitor, byDesktop.get(monitor.active) ?? [], open)
     return { monitor, desktops: ids.map(id => ({ id, windows: byDesktop.get(id) ?? [] })), slots }
 }
 
-/** A desktop's windows spread out below the bar, none covering another. */
-function spreadOf(monitor: Monitor, windows: Window[]): Slot<Window>[] {
-    const top = barHeight(monitor)
+/**
+ * A desktop's windows spread out below the bar, none covering another: below
+ * the folded bar, its names, as Mission Control opens; below the open one,
+ * its pictures, once it has opened. As on macOS, where the windows make room
+ * for the desktops' pictures (laid out for the open bar all along, the
+ * folded one left the bar's height empty at the bottom of the screen).
+ */
+function spreadOf(monitor: Monitor, windows: Window[], open: boolean): Slot<Window>[] {
+    const top = open ? barHeight(monitor) : FOLDED_BAR
     const area = {
         x: AREA_MARGIN,
         y: top + AREA_TOP_GAP,
@@ -170,7 +177,7 @@ let scene: Scene | null = null
 export function openMissionControl() {
     if (isOpen.get()) return
     const name = shownMonitor()
-    const next = name ? snapshot(name) : null
+    const next = name ? snapshot(name, false) : null
     if (!next) return
     setSelected(null)
     setExpanded(false)
@@ -591,7 +598,7 @@ function dragTo(scene: Scene, x: number, y: number) {
     const scale = 1 + (atBar - 1) * towards
     const width = Math.max(8, Math.round(frame.slot.width * scale))
     const height = Math.max(8, Math.round(frame.slot.height * scale))
-    frame.at = { x: x - grab.x * width, y: y - grab.y * height + scene.fold(), width, height }
+    frame.at = { x: x - grab.x * width, y: y - grab.y * height, width, height }
     scene.place()
     const target = dropTargetAt(scene.stage, x, y)
     if (target !== drag.target) {
@@ -635,10 +642,9 @@ function dragWindows(scene: Scene) {
             // the press is a drag now: no click on the window, nor on the
             // background behind it
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-            const fold = scene.fold()
             drag = {
                 frame, target: null,
-                grab: { x: (sx - frame.at.x) / frame.at.width, y: (sy - (frame.at.y - fold)) / frame.at.height },
+                grab: { x: (sx - frame.at.x) / frame.at.width, y: (sy - frame.at.y) / frame.at.height },
             }
             frame.held = true
             setSelected(null)
@@ -676,8 +682,7 @@ type Frame = {
     widget: Gtk.Widget
     picture: Gtk.Widget
     title: Gtk.Widget
-    // where it is drawn, in the open bar's terms: the slots are laid out
-    // below the open bar, and with it folded everything is drawn higher
+    // where it is drawn
     at: Box
     from: Box
     // from `from` to the slot, or into a desktop's picture when leaving
@@ -805,7 +810,14 @@ class Scene {
         this.reorderOnDrag()
         this.unsubscribe.push(
             wallpaperTexture.subscribe(() => this.showWallpaper()),
-            expanded.subscribe(() => this.go(this.opening, expanded.get() ? 1 : 0, BAR_OPENING)),
+            expanded.subscribe(() => {
+                this.go(this.opening, expanded.get() ? 1 : 0, BAR_OPENING)
+                // the windows into the room left below it
+                const v = view.get()
+                if (!v || closing.get()) return
+                const windows = v.desktops.find(d => d.id === v.monitor.active)?.windows ?? []
+                setView({ ...v, slots: spreadOf(v.monitor, windows, expanded.get()) })
+            }),
             closing.subscribe(() => { if (closing.get()) this.go(this.names, 0, NAMES_COMING) }),
             selected.subscribe(() => this.showSelected()),
         )
@@ -827,11 +839,6 @@ class Scene {
         this.stage.unparent()
         this.bar.unparent()
         this.top.unparent()
-    }
-
-    // how much higher than its slot everything below the bar is drawn
-    fold(): number {
-        return (barHeight(this.v.monitor) - FOLDED_BAR) * (1 - this.opening.value)
     }
 
     /** The desktops by their new numbers (moveDesktop). */
@@ -1114,13 +1121,12 @@ class Scene {
     }
 
     // where a window is in a desktop's picture, on the windows' canvas in
-    // the open bar's terms (the slots')
     private inPicture(item: Item, window: Window, x = item.x.value): Box {
         const { monitor } = this.v
         const scale = this.size.width / monitor.width
         return {
             x: x + (window.x - monitor.x) * scale,
-            y: this.pictureTop() + (window.y - monitor.y) * scale + this.fold(),
+            y: this.pictureTop() + (window.y - monitor.y) * scale,
             width: window.width * scale,
             height: window.height * scale,
         }
@@ -1486,7 +1492,6 @@ class Scene {
         const { monitor } = this.v
         const W = monitor.width
         const open = this.opening.value
-        const fold = this.fold()
         const pitch = W + Math.round(W * SLIDE_GAP_SHARE)
 
         // the windows and the wallpaper, desktop by desktop
@@ -1499,9 +1504,9 @@ class Scene {
                 if (!frame.held) frame.at = lerpBox(frame.from, frame.leaving ?? frame.slot, frame.move.value)
                 const { x, y, width, height } = frame.at
                 frame.picture.set_size_request(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)))
-                this.stage.move(frame.widget, Math.round(x + offset) - FRAME, Math.round(y - fold) - FRAME)
+                this.stage.move(frame.widget, Math.round(x + offset) - FRAME, Math.round(y) - FRAME)
                 this.stage.move(frame.title, Math.round(x + offset + width / 2 - (frame.slot.width + TITLE_WIDTH_EXTRA) / 2),
-                    Math.round(y - fold + height + FRAME + 6))
+                    Math.round(y + height + FRAME + 6))
             }
         }
 
@@ -1579,8 +1584,9 @@ const [closeTarget, setCloseTarget] = createState<CloseTarget | null>(null)
 // where the × is drawn: the target, and for the moment it fades the one it
 // leaves (CloseButton)
 const [closeShown, setCloseShown] = createState<CloseTarget | null>(null)
-// as the desktop pictures' rings (missionControl.scss, mc-close)
-const CLOSE_FADE_MS = 110
+// slower than the desktop pictures' rings (missionControl.scss): at their
+// 110 ms a thing this small seemed to pop in and out
+const CLOSE_FADE_MS = 160
 
 // The ring a desktop's picture gets while pointed at comes and goes with its
 // ×, by the same reckoning: by GTK's own hover it went the moment the pointer
@@ -1601,7 +1607,7 @@ let closeSource = 0
 function settleClose() {
     if (closeSource) GLib.source_remove(closeSource)
     closeSource = 0
-    const wanted = () => closing.get() || reordering ? null : hovering.button ? closeTarget.get() : hovering.desktop
+    const wanted = () => closing.get() || reordering || scene?.isZooming() ? null : hovering.button ? closeTarget.get() : hovering.desktop
     const apply = () => {
         const want = wanted()
         const now = closeTarget.get()
@@ -1635,7 +1641,9 @@ function closeHoverAt(x: number, y: number) {
     const v = view.get()
     let found: CloseTarget | null = null
     // a display keeps at least one desktop; and not while dragging something
-    if (window && v && v.desktops.length > 1 && !drag && !reordering && expanded.get()) {
+    // nor while going into one: the pointer still on the picture it was
+    // clicked on brought its × back for the whole zoom
+    if (window && v && v.desktops.length > 1 && !drag && !reordering && !scene?.isZooming() && expanded.get()) {
         for (const [desktop, canvas] of dropTargets) {
             if (scene?.isMoving(desktop)) continue
             const [ok, b] = canvas.compute_bounds(window)
