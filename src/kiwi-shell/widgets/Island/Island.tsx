@@ -199,7 +199,6 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     const leading = side("leading")
     const trailing = side("trailing")
-    follow(anyPrivacy, () => { trailing.clipLeaving = anyPrivacy() })
     const body = new IslandBody({ cssClasses: ["island-body"] })
     body.hold(leading, middle, trailing, (
         <button class="island-part privacy" visible={anyPrivacy} valign={Gtk.Align.CENTER}

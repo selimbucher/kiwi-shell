@@ -260,6 +260,8 @@ export const IslandBody = GObject.registerClass(
     { GTypeName: "KiwiIslandBody" },
     class IslandBody extends Gtk.Widget {
         private parts: { leading: Gtk.Widget; middle: Gtk.Widget; trailing: Gtk.Widget; end: Gtk.Widget } | null = null
+        // where the middle begins and ends and the dots begin, as laid out last
+        private cuts = { leading: 0, trailing: 0, end: 0 }
         private readonly drift = new Spring(0, ISLAND_SPRING)
         // where the middle belongs, from the pill's middle
         private offset: number | null = null
@@ -310,15 +312,35 @@ export const IslandBody = GObject.registerClass(
             const put = (widget: Gtk.Widget, x: number, w: number) => {
                 if (widget.get_visible()) widget.allocate(w, height, -1, new Gsk.Transform().translate(at(x, 0)))
             }
-            // each side on its edge, unless that is over the middle (the pill
-            // still narrower than it will be): then against the middle, past
-            // the edge, where the pill's rounded edge cuts it off
+            // Each side on its edge, the trailing one inside the dots, which
+            // ride the edge themselves. While the pill is narrower than it
+            // will be, what doesn't fit yet is behind the middle (cut off
+            // there: vfunc_snapshot) and comes out as the pill opens; what a
+            // side lets go of fades where it was.
             const x = width / 2 + offset + this.drift.value - m / 2
-            const right = Math.max(width - e - t, x + m)
-            put(leading, Math.min(0, x - l), l)
+            put(leading, 0, l)
             put(middle, x, m)
-            put(trailing, right, t)
-            put(end, Math.max(width - e, right + t), e)
+            put(trailing, width - e - t, t)
+            put(end, width - e, e)
+            this.cuts = { leading: x, trailing: x + m, end: width - e }
+        }
+
+        // A side never shows over the middle, nor the trailing one over the
+        // dots: cut off where they begin, as the pill's edge cuts off the
+        // outer end. What a side is letting go of fades there, where it was.
+        vfunc_snapshot(snapshot: Gtk.Snapshot): void {
+            if (!this.parts) return
+            const { leading, middle, trailing, end } = this.parts
+            const height = this.get_height()
+            const within = (widget: Gtk.Widget, from: number, to: number) => {
+                snapshot.push_clip(new Graphene.Rect().init(from, -height, Math.max(0, to - from), height * 3))
+                this.snapshot_child(widget, snapshot)
+                snapshot.pop()
+            }
+            within(leading, -this.get_width(), this.cuts.leading)
+            this.snapshot_child(middle, snapshot)
+            within(trailing, this.cuts.trailing, this.cuts.end)
+            this.snapshot_child(end, snapshot)
         }
 
         vfunc_dispose(): void {
@@ -338,16 +360,13 @@ export type Edge = "start" | "end" | "center"
 /**
  * One thing at a time, the next fading in as the last fades out. It is as
  * wide as what it shows now; what is leaving stays where it was against the
- * slot's inner edge (towards the island's middle), fading as the pill closes
- * over it.
+ * slot's outer edge (the pill's, which the sides ride: IslandBody), fading
+ * as the pill closes over it.
  */
 export const Fader = GObject.registerClass(
     { GTypeName: "KiwiIslandFader" },
     class Fader extends Gtk.Widget {
         edge: Edge = "center"
-        // what's leaving cut off at its own edge, rather than running on over
-        // whatever comes after it (the privacy dots after the trailing side)
-        clipLeaving = false
         private current: Gtk.Widget | null = null
         // how far each child is shown, 0 to 1: the current one coming in,
         // the ones leaving going out
@@ -430,8 +449,8 @@ export const Fader = GObject.registerClass(
             for (const widget of this.leaving()) {
                 const [, w] = widget.measure(Gtk.Orientation.HORIZONTAL, -1)
                 const [h] = widget.measure(Gtk.Orientation.VERTICAL, w)
-                // where it was against the slot's inner edge, towards the middle
-                const x = this.edge === "start" ? width - w : this.edge === "end" ? 0 : (width - w) / 2
+                // where it was against the slot's outer edge, the pill's
+                const x = this.edge === "start" ? 0 : this.edge === "end" ? width - w : (width - w) / 2
                 const tall = Math.max(height, h)
                 this.place(widget, w, tall, x, (height - tall) / 2)
             }
@@ -441,8 +460,6 @@ export const Fader = GObject.registerClass(
             for (const [widget, tween] of this.shown) {
                 const t = Math.max(0, Math.min(1, tween.value))
                 if (t <= 0) continue
-                const clip = this.clipLeaving && widget !== this.current
-                if (clip) snapshot.push_clip(new Graphene.Rect().init(0, 0, this.get_width(), this.get_height()))
                 if (t >= 1) {
                     this.snapshot_child(widget, snapshot)
                 } else {
@@ -452,7 +469,6 @@ export const Fader = GObject.registerClass(
                     snapshot.pop()
                     snapshot.pop()
                 }
-                if (clip) snapshot.pop()
             }
         }
 
