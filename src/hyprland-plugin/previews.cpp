@@ -976,17 +976,19 @@ namespace {
                                              .bar      = BAR,
                                              .barAlpha = barAlpha});
             }
-            // Drawn bottom to top as the windows stack on screen: Hyprland
-            // draws the tiled ones first, then the floating, each in its list's
-            // order (a window brought up goes to the end). In the shell's order
-            // instead, two windows on top of each other swapped as they took
-            // off and swapped back as they landed.
+            // Drawn bottom to top as the windows stack on screen: in the list's
+            // order (a window brought up goes to the end), and as Hyprland
+            // draws them without stacking.cpp, the tiled ones under the
+            // floating. In the shell's order instead, two windows on top of
+            // each other swapped as they took off and swapped back as they
+            // landed.
             std::map<const void*, size_t> order;
             for (const auto& window : Desktop::windowState()->windows())
                 order.emplace(window.get(), order.size());
-            std::ranges::stable_sort(tiles, {}, [&order](const SDrawTile& tile) {
+            const bool LAYERED = !Kiwi::Stacking::active();
+            std::ranges::stable_sort(tiles, {}, [&order, LAYERED](const SDrawTile& tile) {
                 const auto WINDOW = tile.window.lock();
-                return std::pair{WINDOW && WINDOW->m_isFloating, WINDOW ? order[WINDOW.get()] : 0};
+                return std::pair{LAYERED && WINDOW && WINDOW->m_isFloating, WINDOW ? order[WINDOW.get()] : 0};
             });
             return tiles;
         }

@@ -225,15 +225,17 @@ export function desktopsOn(monitor: string): number[] {
 }
 
 /**
- * Every desktop's windows, bottom to top: floating ones over tiled ones,
- * the most recently focused on top. Geometry and stacking come from the
- * compositor, since Astal's client geometry goes stale after moves and
- * resizes and it has no stacking order.
+ * Every desktop's windows, bottom to top: the most recently focused on top,
+ * and without kiwi's plugin (which stacks tiled and floating windows in one
+ * order: stacking.cpp) floating ones over tiled ones. Geometry and stacking
+ * come from the compositor, since Astal's client geometry goes stale after
+ * moves and resizes and it has no stacking order.
  */
 export function windowsByDesktop(): Map<number, Window[]> {
+    const layered = !hasFeature("stacking")
     const stacked = query("clients")
         .filter(c => c.mapped && !c.hidden && (c.workspace?.id ?? 0) > 0)
-        .sort((a, b) => (Number(a.floating) - Number(b.floating)) || (b.focusHistoryID - a.focusHistoryID))
+        .sort((a, b) => (layered ? Number(a.floating) - Number(b.floating) : 0) || (b.focusHistoryID - a.focusHistoryID))
     const byDesktop = new Map<number, Window[]>()
     const bars = barsByAddress()
     for (const c of stacked) {

@@ -145,8 +145,7 @@ registerBindSetup("workspaces", registerSuperTabBinds, () => {
 })
 
 // The display's desktops, in their order (MissionControl/desktops.ts), and
-// their windows as the compositor has them: floating ones over tiled ones,
-// the most recently focused on top.
+// their windows stacked as the compositor has them (windowsByDesktop).
 function showSwitcher() {
     const monitor = hyprland.get_focused_monitor()?.get_name()
     const current = hyprland.focusedWorkspace?.id ?? 1

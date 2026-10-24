@@ -49,6 +49,18 @@ Desktops, Mission Control, their gestures and the island, as of October
 - Super+1–0 in the default Hyprland config go to workspace ids, not to the
   nth desktop of the display.
 
+## Windows
+
+- Hyprland's tiling stays: tiled and floating windows stack in one order,
+  the one brought forward on top, as every window on a Mac does. Hyprland
+  alone keeps tiled windows under floating ones.
+- A window dragged against the left or right edge of the screen is tiled
+  there, next to the tiled window at that edge (the whole desktop when it is
+  the first). macOS gives it exactly that half of the screen.
+- Dragged against the top, it fills the desktop, as on macOS (Sequoia).
+  Dragged away again, it keeps the filled size; macOS gives it back its old
+  one.
+
 ## Island
 
 The middle of the bar is iPhone's Dynamic Island, in iOS's rules (Apple's

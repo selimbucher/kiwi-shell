@@ -26,7 +26,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
     const bool PREVIEWS = Kiwi::Previews::init(handle);
     const bool GENIE    = Kiwi::Genie::init(handle);
     const bool DESKTOPS = Kiwi::Desktops::init(handle);
-    if (!GEOMETRY && !PREVIEWS && !GENIE && !DESKTOPS)
+    const bool STACKING = Kiwi::Stacking::init(handle);
+    // its shape is drawn in the stacking's pass
+    const bool SNAP = STACKING && Kiwi::Snap::init(handle);
+    if (!GEOMETRY && !PREVIEWS && !GENIE && !DESKTOPS && !STACKING)
         throw std::runtime_error("[kiwi] none of its parts could start");
 
     g_versionCommand = HyprlandAPI::registerHyprCtlCommand(handle,
@@ -40,13 +43,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
         .name        = "kiwi",
         .description = std::string{"For kiwi-shell: "} + (GEOMETRY ? "window geometry events" : "(no window geometry events)") + ", " +
             (PREVIEWS ? "window previews" : "(no window previews)") + ", " +
-            (GENIE ? "minimize and restore animation" : "(no minimize animation)") + ", " + (DESKTOPS ? "desktops" : "(no desktops)"),
+            (GENIE ? "minimize and restore animation" : "(no minimize animation)") + ", " + (DESKTOPS ? "desktops" : "(no desktops)") + ", " +
+            (STACKING ? "one stacking order" : "(tiled windows under floating ones)") + ", " + (SNAP ? "snapping to the edges" : "(no snapping)"),
         .author  = "selim",
         .version = "0.2.0",
     };
 }
 
 APICALL EXPORT void pluginExit() {
+    Kiwi::Snap::exit();
+    Kiwi::Stacking::exit();
     Kiwi::Desktops::exit();
     Kiwi::Genie::exit();
     Kiwi::Previews::exit();

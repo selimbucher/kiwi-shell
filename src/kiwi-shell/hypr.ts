@@ -292,6 +292,7 @@ const FEATURES = {
     previews: ["kiwi", "kiwi-previews"],
     genie: ["kiwi"],
     desktops: ["kiwi"],
+    stacking: ["kiwi"],
 } as const
 
 // What the shell and kiwi's plugin say to each other, numbered; the plugin
@@ -305,6 +306,7 @@ const WITHOUT = {
     previews: "the switchers capture their previews instead of showing them live",
     genie: "windows vanish into the dock and reappear instead of pouring in and out of it",
     desktops: "empty desktops last only while the shell runs, and the workspace swipe skips them",
+    stacking: "tiled windows stay under floating ones, and dragging a window to an edge doesn't snap it",
 }
 
 const loadedPlugins = new Set<string>()

@@ -7,6 +7,8 @@
 //   previews.cpp  draws the switchers' and the dock's previews from the windows themselves
 //   genie.cpp     pours a window into its dock icon and back out of it
 //   desktops.cpp  keeps the shell's desktops as workspaces, empty or not
+//   stacking.cpp  tiled and floating windows stacked in one order
+//   snap.cpp      a window dragged against an edge of the screen tiled there, or filling it
 //   layers.cpp    the moment right after a layer is drawn, for the other two
 //   requests.hpp  reading the shell's requests, shared by the parts
 //
@@ -53,6 +55,20 @@ namespace Kiwi {
 
     namespace Desktops {
         bool init(HANDLE handle);
+        void exit();
+    }
+
+    namespace Stacking {
+        bool init(HANDLE handle);
+        // whether windows are drawn in one order (or Hyprland's, tiled first)
+        bool active();
+        void exit();
+    }
+
+    namespace Snap {
+        bool init(HANDLE handle);
+        // right before `window` is drawn: what it is dragged towards, under it
+        void underWindow(const PHLWINDOW& window, const PHLMONITOR& monitor);
         void exit();
     }
 }
