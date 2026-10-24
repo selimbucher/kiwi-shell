@@ -16,7 +16,7 @@ import {
     type Rect,
 } from "./model"
 import { IslandShape, IslandBody, Fader, Bubble, CardMorph, whenDone } from "./shape"
-import { PrivacyIcons, PrivacyCard, anyPrivacy, privacyKinds } from "./sources/privacy"
+import { PrivacyIcons, PrivacyCard, anyPrivacy } from "./sources/privacy"
 import Desktops from "./center/Desktops"
 import DateCenter from "./center/DateCenter"
 import WeatherCenter from "./center/WeatherCenter"
@@ -176,29 +176,27 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // activity that isn't the first is (in the island too, it got crowded).
     // It comes out from behind the pill's edge as the pill opens for it.
     const crowded = createMemo(() => compactId() !== "" || alertShown())
-    const inIsland = createMemo(() => crowded() ? "" : privacyKinds())
-    const inBubble = createMemo(() => crowded() ? privacyKinds() : "")
+    const inIsland = createMemo(() => !crowded() && anyPrivacy())
+    const inBubble = createMemo(() => crowded() && anyPrivacy())
     const end = new Fader({ cssClasses: ["island-end"], valign: Gtk.Align.CENTER })
     end.edge = "end"
     end.grows = true
     follow(inIsland, () => {
-        const kinds = inIsland()
-        end.show(kinds ? scoped(() => (
+        end.show(inIsland() ? scoped(() => (
             <button class="island-part privacy" valign={Gtk.Align.CENTER}
                 onClicked={() => expand(PRIVACY_ID, monitor)}>
-                <PrivacyIcons kinds={kinds} parted />
+                <PrivacyIcons parted />
             </button>
         ) as Gtk.Widget) : null)
     })
     const privacyBubble = new Bubble({ valign: Gtk.Align.CENTER, halign: Gtk.Align.START })
     privacyBubble.side = "end"
     follow(inBubble, () => {
-        const kinds = inBubble()
-        privacyBubble.show(kinds ? scoped(() => (
+        privacyBubble.show(inBubble() ? scoped(() => (
             <button class="island-bubble privacy" valign={Gtk.Align.CENTER}
                 opacity={covered(c => c?.monitor === monitor && c.origin === "bubble" && c.id === PRIVACY_ID ? 0.001 : 1)}
                 onClicked={self => expand(PRIVACY_ID, monitor, { rect: boundsIn(self, win), widget: self })}>
-                <PrivacyIcons kinds={kinds} parted={false} centered />
+                <PrivacyIcons parted={false} />
             </button>
         ) as Gtk.Widget) : null)
     })

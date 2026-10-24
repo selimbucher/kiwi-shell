@@ -1,22 +1,27 @@
+import app from "ags/gtk4/app"
 import { Gtk } from "ags/gtk4"
 import { createState, type Accessor } from "ags"
 import AstalWp from "gi://AstalWp"
 import Hyprland from "gi://AstalHyprland"
 import GLib from "gi://GLib"
+import Gio from "gi://Gio"
+import GioUnix from "gi://GioUnix"
 
 import { logger } from "../../../log"
 import { capturing } from "../../AppSwitcher/clientCachingService"
+import { listDir, readText } from "../../sysfs"
+import { entryFromCmdline } from "../../appIcon"
 
 const log = logger("island")
 
 // ─── Privacy dots ─────────────────────────────────────────────────────────────
 // iOS's and macOS's: orange while an app records the microphone, green while
 // one films with the camera; macOS adds a screen icon while the screen is
-// recorded or shared, purple here. Apps are only seen through PipeWire, the
-// way GNOME and KDE see them: an app that opens the camera itself
-// (/dev/video*, as Chromium and Zoom do) goes unnoticed, as Linux tells no
-// one about it. Screen sharing comes from Hyprland too, which knows about
-// every capture, PipeWire or not.
+// recorded or shared, purple here. Apps are seen through PipeWire, the way
+// GNOME and KDE see them, and a camera opened directly (/dev/video*, as
+// Chromium and Zoom do) by the kernel's word that its device was opened
+// (below). Screen sharing comes from Hyprland too, which knows about every
+// capture, PipeWire or not.
 
 const wp = AstalWp.get_default()
 const hyprland = Hyprland.get_default()
@@ -85,10 +90,10 @@ function update() {
     const watching = (source: AstalWp.Node) =>
         videoRecorders.filter(r => r.target_serial === source.serial).map(r => ({ app: appOf(r) }))
 
-    const camera = sources.filter(s => isCamera(s) && running(s)).flatMap(s => {
+    const camera = [...sources.filter(s => isCamera(s) && running(s)).flatMap(s => {
         const apps = watching(s)
         return apps.length ? apps : [{ app: SOMEONE }]
-    })
+    }), ...directCamera]
     const shared = sources.filter(s => !isCamera(s) && running(s)).flatMap(watching)
     const screen = shared.length ? shared : casting() ? [{ app: SOMEONE }] : []
 
@@ -100,6 +105,102 @@ function dedupe(uses: Use[]): Use[] {
     const seen = new Set<string>()
     return uses.filter(u => !seen.has(u.app) && seen.add(u.app))
 }
+
+// ─── Cameras opened directly ──────────────────────────────────────────────────
+// An app that opens a camera's device itself goes round PipeWire. The kernel
+// says when a device file is opened or closed (inotify, through inotifywait,
+// one for the cameras and one for cameras coming and going, which says
+// nothing about any other device); then who has one open is read from /proc,
+// the user's own processes. PipeWire, which has the cameras it streams open,
+// is seen above.
+
+let directCamera: Use[] = []
+const SELF = Number(GLib.file_read_link("/proc/self"))
+// an open is a burst of them, the app trying each device
+const DEVICES_SETTLE_MS = 150
+
+const cameraDevices = () => listDir("/dev").filter(name => /^video\d+$/.test(name)).map(name => `/dev/${name}`).sort()
+
+/** The apps with a camera's device open, by name. */
+function openingCameras(devices: string[]): Use[] {
+    const apps: Use[] = []
+    for (const pid of listDir("/proc")) {
+        if (!/^\d+$/.test(pid) || Number(pid) === SELF) continue
+        const fds = listDir(`/proc/${pid}/fd`)
+        let holds = false
+        for (const fd of fds) {
+            try {
+                if (devices.includes(GLib.file_read_link(`/proc/${pid}/fd/${fd}`))) {
+                    holds = true
+                    break
+                }
+            } catch { /* closed meanwhile */ }
+        }
+        if (!holds) continue
+        const cmdline = readText(`/proc/${pid}/cmdline`) ?? ""
+        const program = GLib.path_get_basename(cmdline.split("\0")[0] || "").replace(/^\.(.+?)-wrapped$/, "$1")
+        if (/^(pipewire|wireplumber)$/.test(program)) continue
+        const entry = entryFromCmdline(cmdline)
+        apps.push({ app: (entry && GioUnix.DesktopAppInfo.new(entry)?.get_name()) || program || SOMEONE })
+    }
+    return apps
+}
+
+// one line per event from an inotifywait, for as long as it runs
+function inotifywait(args: string[], onEvent: () => void): Gio.Subprocess | null {
+    try {
+        const proc = Gio.Subprocess.new(["inotifywait", "-m", "-q", ...args], Gio.SubprocessFlags.STDOUT_PIPE)
+        const lines = new Gio.DataInputStream({ base_stream: proc.get_stdout_pipe()! })
+        const next = () => lines.read_line_async(GLib.PRIORITY_DEFAULT, null, (_s, result) => {
+            try {
+                const [line] = lines.read_line_finish_utf8(result)
+                if (line === null) return // ended
+                onEvent()
+                next()
+            } catch { /* ended */ }
+        })
+        next()
+        return proc
+    } catch (e) {
+        log.warn("privacy: no word of cameras opened directly (inotifywait):", e as Error)
+        return null
+    }
+}
+
+let opens: Gio.Subprocess | null = null
+let watching = ""
+let settle = 0
+
+function lookAtCameras() {
+    if (settle) GLib.source_remove(settle)
+    settle = GLib.timeout_add(GLib.PRIORITY_DEFAULT, DEVICES_SETTLE_MS, () => {
+        settle = 0
+        const now = dedupe(openingCameras(cameraDevices()))
+        if (JSON.stringify(now) === JSON.stringify(directCamera)) return GLib.SOURCE_REMOVE
+        directCamera = now
+        log.debug(`cameras opened directly: ${now.map(u => u.app).join(", ") || "none"}`)
+        update()
+        return GLib.SOURCE_REMOVE
+    })
+}
+
+// anew when the cameras change, a device file of another kind coming or going
+// leaving them be
+function watchCameras() {
+    const devices = cameraDevices()
+    if (devices.join(" ") === watching && (opens || !devices.length)) return
+    watching = devices.join(" ")
+    opens?.force_exit()
+    opens = devices.length ? inotifywait(["-e", "open", "-e", "close", ...devices], lookAtCameras) : null
+    lookAtCameras()
+}
+
+const hotplug = inotifywait(["-e", "create", "-e", "delete", "--format", "%f", "/dev"], watchCameras)
+watchCameras()
+app.connect("shutdown", () => {
+    opens?.force_exit()
+    hotplug?.force_exit()
+})
 
 // ─── What to listen to ────────────────────────────────────────────────────────
 // Nodes come and go, and a node's state and link change on their own, so
@@ -174,20 +275,31 @@ const KINDS = [
 
 export const anyPrivacy = privacy(p => p.mic.length + p.camera.length + p.screen.length > 0)
 
-/** Which are in use, as one key: the icons are built again when it changes. */
-export const privacyKinds: Accessor<string> = privacy(p => KINDS.filter(k => p[k.key].length > 0).map(k => k.key).join(","))
+// the microphone with nothing but muted ones recording, as the bar had it
+const MIC_MUTED = "audio-input-microphone-muted-symbolic"
+const iconOf = (k: typeof KINDS[number], p: Privacy) =>
+    k.key === "mic" && p.mic.length > 0 && p.mic.every(u => u.muted) ? MIC_MUTED : k.icon
 
 /**
- * The icons for `kinds` (privacyKinds), after a line parting them from
- * what's before; `centered` in what holds them (a bubble, round at least).
+ * The icons, after a line parting them from what's before, or `centered` in
+ * what holds them (a bubble, round at least). One coming while others show
+ * opens a place for itself and fades in there; the others stay.
  */
-export function PrivacyIcons({ kinds, parted, centered = false }: { kinds: string; parted: boolean; centered?: boolean }) {
-    const on = kinds.split(",")
+export function PrivacyIcons({ parted }: { parted: boolean }) {
     return (
-        <box class="island-privacy" valign={Gtk.Align.CENTER} halign={centered ? Gtk.Align.CENTER : Gtk.Align.FILL}>
+        <box class={parted ? "island-privacy" : "island-privacy bare"} valign={Gtk.Align.CENTER}
+            halign={parted ? Gtk.Align.FILL : Gtk.Align.CENTER}>
             {parted ? <box class="parting" valign={Gtk.Align.CENTER} /> : <box visible={false} />}
-            {KINDS.filter(k => on.includes(k.key)).map(k =>
-                <Gtk.Image class={`kind ${k.tone}`} iconName={k.icon} pixelSize={14} valign={Gtk.Align.CENTER} />)}
+            {KINDS.map(k => {
+                const on = privacy(p => p[k.key].length > 0)
+                return (
+                    <revealer transitionType={Gtk.RevealerTransitionType.SLIDE_RIGHT} transitionDuration={200}
+                        revealChild={on} valign={Gtk.Align.CENTER}>
+                        <Gtk.Image class={on(o => o ? `kind ${k.tone} on` : `kind ${k.tone}`)}
+                            iconName={privacy(p => iconOf(k, p))} pixelSize={14} valign={Gtk.Align.CENTER} />
+                    </revealer>
+                )
+            })}
         </box>
     )
 }
@@ -198,7 +310,7 @@ export function PrivacyCard() {
         <box class="island-card island-privacy-card" orientation={Gtk.Orientation.VERTICAL}>
             {KINDS.map(k => (
                 <box class="use" visible={privacy(p => p[k.key].length > 0)}>
-                    <Gtk.Image class={`kind ${k.tone}`} iconName={k.icon} pixelSize={16} valign={Gtk.Align.CENTER} />
+                    <Gtk.Image class={`kind-icon ${k.tone}`} iconName={privacy(p => iconOf(k, p))} pixelSize={16} valign={Gtk.Align.CENTER} />
                     <box orientation={Gtk.Orientation.VERTICAL} hexpand>
                         <label class="kind" label={k.title} xalign={0} />
                         <label class="apps" xalign={0} wrap

@@ -1,6 +1,9 @@
-import { Gtk } from "ags/gtk4"
+import { Gtk, Gdk } from "ags/gtk4"
 import { createBinding, type Accessor } from "ags"
 import AstalBattery from "gi://AstalBattery"
+import GObject from "gi://GObject"
+import Gsk from "gi://Gsk"
+import Graphene from "gi://Graphene"
 import AstalBluetooth from "gi://AstalBluetooth"
 import AstalNotifd from "gi://AstalNotifd"
 
@@ -42,19 +45,88 @@ function How({ value, visible = true }: { value: string | Accessor<string>; visi
 const enabled = (key: "charging" | "devices" | "focus") => !!conf().island[key]
 
 // ─── The charger ──────────────────────────────────────────────────────────────
+// iOS's: the charge, and a battery filled to it, in a colour for how full it
+// is: red to 20%, yellow to 40%, green above.
 
 const battery = AstalBattery.get_default()
+
+const LEVELS = [
+    { upTo: 0.2, name: "low", color: "#ff453a" },
+    { upTo: 0.4, name: "mid", color: "#ffd60a" },
+    { upTo: Infinity, name: "high", color: "#30d158" },
+] as const
+const levelOf = (charge: number) => LEVELS.find(l => charge <= l.upTo)!
+
+// A battery as iOS draws one: a white outline and its cap, filled to the
+// charge in its level's colour.
+const BatteryGlyph = GObject.registerClass(
+    { GTypeName: "KiwiBatteryGlyph" },
+    class BatteryGlyph extends Gtk.Widget {
+        charge = 1
+
+        vfunc_measure(orientation: Gtk.Orientation): [number, number, number, number] {
+            const size = orientation === Gtk.Orientation.HORIZONTAL ? 25 : 12
+            return [size, size, -1, -1]
+        }
+
+        vfunc_snapshot(snapshot: Gtk.Snapshot): void {
+            const white = new Gdk.RGBA({ red: 1, green: 1, blue: 1, alpha: 1 })
+            const rounded = (x: number, y: number, w: number, h: number, r: number) => {
+                const radius = new Graphene.Size().init(r, r)
+                return new Gsk.RoundedRect().init(new Graphene.Rect().init(x, y, w, h), radius, radius, radius, radius)
+            }
+            const fill = (rect: Gsk.RoundedRect, color: Gdk.RGBA) => {
+                snapshot.push_rounded_clip(rect)
+                snapshot.append_color(color, rect.bounds)
+                snapshot.pop()
+            }
+            snapshot.append_border(rounded(0.5, 0.5, 21.5, 11, 3.5), [1, 1, 1, 1], [white, white, white, white])
+            fill(rounded(23, 4, 2, 4, 1), new Gdk.RGBA({ red: 1, green: 1, blue: 1, alpha: 0.8 }))
+            const width = Math.max(0, Math.min(1, this.charge)) * 18.5
+            if (width <= 0) return
+            const color = new Gdk.RGBA()
+            color.parse(levelOf(this.charge).color)
+            fill(rounded(2, 2, Math.max(width, 2), 8, 2), color)
+        }
+    },
+)
+
+/** The battery and "Charging", on the leading side. */
+function Charging() {
+    const glyph = new BatteryGlyph({ valign: Gtk.Align.CENTER })
+    const update = () => {
+        glyph.charge = battery.percentage
+        glyph.queue_draw()
+    }
+    update()
+    const id = battery.connect("notify::percentage", update)
+    glyph.connect("destroy", () => battery.disconnect(id))
+    return (
+        <box class="island-alert leading" valign={Gtk.Align.CENTER} spacing={7}>
+            {glyph}
+            <label label="Charging" valign={Gtk.Align.CENTER} />
+        </box>
+    )
+}
+
+/** The charge, on the trailing side. */
+function Charge() {
+    const charge = createBinding(battery, "percentage")
+    return (
+        <label class={charge(c => `island-alert trailing charge ${levelOf(c).name}`)} label={charge(c => `${Math.round(c * 100)}%`)}
+            valign={Gtk.Align.CENTER} />
+    )
+}
 
 if (battery.get_is_present()) {
     let wasCharging = battery.charging
     battery.connect("notify::charging", () => {
         const now = battery.charging
         if (now && !wasCharging && enabled("charging")) {
-            const percent = createBinding(battery, "percentage").as(p => `${Math.round(p * 100)}%`)
             showAlert({
                 id: "charging", ms,
-                leading: () => <What title="Charging" /> as Gtk.Widget,
-                trailing: () => <How value={percent} /> as Gtk.Widget,
+                leading: () => <Charging /> as Gtk.Widget,
+                trailing: () => <Charge /> as Gtk.Widget,
             })
         }
         wasCharging = now

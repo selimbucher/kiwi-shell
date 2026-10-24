@@ -1,11 +1,14 @@
 import { Gtk } from "ags/gtk4"
-import { createComputed, createState, With, type Accessor } from "ags"
+import { createComputed, createState, type Accessor } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import GLibUnix from "gi://GLibUnix"
 import GioUnix from "gi://GioUnix"
 import Pango from "gi://Pango"
+import GObject from "gi://GObject"
+import Gsk from "gi://Gsk"
+import Graphene from "gi://Graphene"
 
 import { logger } from "../../../log"
 import { conf } from "../../config"
@@ -13,6 +16,7 @@ import { readText, readNumber, listDir } from "../../sysfs"
 import { giconForEntry, entryFromCmdline } from "../../appIcon"
 import { detectCpuTempFile } from "../../Bar/SystemMenu/tabs/hardwarePolling"
 import { addActivitySource, opened, PRIORITY, type Activity } from "../model"
+import { closeWindow, clientSelector } from "../../../hypr"
 
 const log = logger("island")
 
@@ -25,11 +29,12 @@ const log = logger("island")
 // island's place; Activity Monitor and the battery menu are where a Mac shows
 // all this, and only when asked.
 //
-// The CPU is busy when all of it is, or when an app out of sight keeps a lot
-// of it busy (one on screen works for whoever is looking at it). Either is
-// news that matters, and a burst of it is easily missed: the CPU stays in the
-// island until its card has been opened, past tense once it's over, and then
-// keeps away while the same goes on.
+// The CPU shows only at its limit, all of its cores as good as full: the
+// hardware giving all it has, which is as often a good sign (a build using
+// the whole machine) as a bad one. Opened, it has been seen, and keeps out of
+// the island until the spell is over. The cards are a small Activity
+// Monitor, live while open: what is at its limit, and the apps behind it,
+// one with a window quit from there.
 //
 // None of it needs to be on time to the second, and the laptop runs on
 // battery, so the shell looks only every 30 s (one read of /proc/stat,
@@ -38,15 +43,17 @@ const log = logger("island")
 // machine within seconds, and the kernel says so on its own — pressure stall
 // information (PSI), a trigger that fires once the tasks spend a share of
 // their time waiting for memory. Nothing runs between the looks and the
-// kernel's calls.
+// kernel's calls, but for an open card, which looks every 2 s while it shows
+// (as the Performance tab's gauges do).
 
 const CHECK_SECONDS = 30
-// The CPU counts as busy at this share of all its cores, two looks in a
-// row, and stays busy down to the second: the extreme case only, the machine
-// as good as full. One app keeping a core or two busy is significant energy
-// (below), not this.
-const BUSY = 0.9
-const STILL_BUSY = 0.7
+// The CPU is at its limit at this share of all its cores, two looks in a row
+// (a minute), and stays so down to the second. One app keeping a core or
+// two busy is significant energy (below), not this.
+const BUSY = 0.95
+const STILL_BUSY = 0.85
+// an open card's looks
+const CARD_SECONDS = 2
 // An app (one with a desktop entry) uses significant energy from this share
 // of one core, all its processes together, averaged over the last 5 minutes
 // (ten looks), and stops below half of it. A minute or two of hard work isn't enough, music
@@ -98,8 +105,8 @@ function processes(): Map<number, Proc> {
     return all
 }
 
-/** What a process is part of: its app, when its command line names one. */
-export type Group = { key: string; name: string; entry: string | null; value: number }
+/** What a process is part of: its app, when its command line names one; and its processes. */
+export type Group = { key: string; name: string; entry: string | null; value: number; pids: number[] }
 
 // the shell's own process
 const SELF = Number(GLib.file_read_link("/proc/self"))
@@ -130,8 +137,9 @@ function sumBy(items: { pid: number; comm: string; value: number }[]): Group[] {
     const groups = new Map<string, Group>()
     for (const item of items) {
         const g = groupOf(item.pid, item.comm)
-        const sum = groups.get(g.key) ?? { ...g, value: 0 }
+        const sum = groups.get(g.key) ?? { ...g, value: 0, pids: [] }
         sum.value += item.value
+        sum.pids.push(item.pid)
         groups.set(g.key, sum)
     }
     return [...groups.values()].sort((a, b) => b.value - a.value)
@@ -174,12 +182,23 @@ function readCpu(): [idle: number, total: number] | null {
     return [parts[3] + (parts[4] || 0), parts.reduce((a, b) => a + (b || 0), 0)]
 }
 
-function readMemory(): { used: number; available: number } | null {
+// each core's [idle, total]
+function readCores(): [number, number][] {
+    return (readText("/proc/stat") ?? "").split("\n").filter(l => /^cpu\d/.test(l)).map(line => {
+        const parts = line.split(/\s+/).slice(1).map(Number)
+        return [parts[3] + (parts[4] || 0), parts.reduce((a, b) => a + (b || 0), 0)] as [number, number]
+    })
+}
+
+const busyBetween = (before: [number, number] | null | undefined, after: [number, number] | null) =>
+    before && after && after[1] > before[1] ? 1 - (after[0] - before[0]) / (after[1] - before[1]) : 0
+
+function readMemory(): { used: number; available: number; total: number } | null {
     const info = readText("/proc/meminfo")
     const kb = (key: string) => Number(info?.match(new RegExp(`^${key}:\\s+(\\d+)`, "m"))?.[1])
     const total = kb("MemTotal"), available = kb("MemAvailable")
     if (!(total > 0) || !Number.isFinite(available)) return null
-    return { used: 1 - available / total, available: available / total }
+    return { used: 1 - available / total, available: available / total, total: total * 1024 }
 }
 
 let sensor: string | null | undefined
@@ -202,35 +221,22 @@ let snapshot: Map<number, Proc> | null = null
 let busyLooks = 0
 let hotLooks = 0
 
-// One spell of the CPU busy: all of it (no app), or an app out of sight.
-// `value` the load now, of all the cores or of one; `over` when it ended,
-// while it waits to be seen; `seen` once its card has been opened.
-type Spell = {
-    app: Group | null; value: number; peak: number; top: Group[]
-    since: number; over: number | null; seen: boolean
-}
-let full: Spell | null = null
-const spells = new Map<string, Spell>()
+let lastCores = readCores()
 
-// what the island shows: the spells not yet seen, all the CPU first
-type CpuState = { spells: Spell[] }
-type MemoryState = { used: number; top: Group[]; pressured: boolean; since: number }
+// The CPU at its limit: the load of all its cores and of each, its
+// temperature, the busiest apps, and since when.
+type CpuState = { load: number; perCore: number[]; degrees: number | null; top: Group[]; since: number }
+type MemoryState = { used: number; total: number; top: Group[]; pressured: boolean; since: number }
 type HeatState = { degrees: number; top: Group[]; since: number }
 
+let atLimit: CpuState | null = null
+// its card opened in this spell: out of the island until it is over
+let cpuSeen = false
+let cpuCardOpen = false
+// over while its card was open, which shows on until it closes
+let cpuOver = false
 const [cpu, setCpu] = createState<CpuState | null>(null)
-
-function showCpu() {
-    const unseen = [full, ...[...spells.values()].sort((a, b) => b.value - a.value)]
-        .filter((spell): spell is Spell => !!spell && !spell.seen)
-    setCpu(unseen.length ? { spells: unseen.map(spell => ({ ...spell })) } : null)
-}
-
-// a spell that has ended goes once seen, or is kept until it is
-function ended(spell: Spell, now: number): boolean {
-    if (spell.seen) return true
-    spell.over ??= now
-    return false
-}
+const showCpu = () => setCpu(atLimit && !cpuSeen ? atLimit : null)
 const [memory, setMemory] = createState<MemoryState | null>(null)
 const [heat, setHeat] = createState<HeatState | null>(null)
 
@@ -243,9 +249,12 @@ function look() {
     lastLookAt = now
 
     const ticks = readCpu()
-    const load = ticks && lastCpu && ticks[1] > lastCpu[1]
-        ? 1 - (ticks[0] - lastCpu[0]) / (ticks[1] - lastCpu[1]) : 0
+    const load = busyBetween(lastCpu, ticks)
     lastCpu = ticks
+    const coreTicks = readCores()
+    const perCore = coreTicks.map((core, i) => busyBetween(lastCores[i], core))
+    lastCores = coreTicks
+    const degrees = readTemperature()
 
     // apps are only looked at while the CPU does enough that one of them
     // could matter: below that, none can, and each counts nothing
@@ -260,16 +269,16 @@ function look() {
     else if (!working) weigh([])
 
     busyLooks = load >= BUSY ? busyLooks + 1 : 0
-    const going = full !== null && full.over === null
-    if (busyLooks >= 2 || (going && load >= STILL_BUSY)) {
-        if (!going) full = { app: null, value: load, peak: load, top: lastTop, since: now, over: null, seen: false }
-        else full = { ...full!, value: load, peak: Math.max(full!.peak, load), top: lastTop.length ? lastTop : full!.top }
-    } else if (going && ended(full!, now)) {
-        full = null
+    if (busyLooks >= 2 || (atLimit && load >= STILL_BUSY)) {
+        atLimit = { load, perCore, degrees, top: lastTop.length ? lastTop : atLimit?.top ?? [], since: atLimit?.since ?? now }
+    } else if (atLimit && cpuCardOpen) {
+        cpuOver = true
+    } else if (atLimit) {
+        atLimit = null
+        cpuSeen = false
     }
     showCpu()
 
-    const degrees = readTemperature()
     hotLooks = degrees !== null && degrees >= hot ? hotLooks + 1 : 0
     const stillHot = heat() !== null && degrees !== null && degrees >= hot - COOLING
     if (degrees !== null && (hotLooks >= 2 || stillHot))
@@ -295,7 +304,7 @@ function judgeMemory(mem: { used: number; available: number }, pressured = memor
         return
     }
     const top = memory()?.top.length ? memory()!.top : memoryByApp()
-    setMemory({ used: mem.used, top, pressured, since: memory()?.since ?? GLib.get_monotonic_time() })
+    setMemory({ used: mem.used, total: mem.total, top, pressured, since: memory()?.since ?? GLib.get_monotonic_time() })
 }
 
 function onPressure() {
@@ -340,9 +349,12 @@ function watchPressure(): boolean {
 
 // ─── Significant energy ───────────────────────────────────────────────────────
 // Each look adds each app's share of a core to its last ten; an app not seen
-// adds nothing, and goes once it has added nothing ten times.
+// adds nothing, and goes once it has added nothing ten times, or at once when
+// none of its processes is left: one quit is gone from the list.
 
 const hyprland = Hyprland.get_default()
+
+const running = (group: Group) => group.pids.some(pid => GLib.file_test(`/proc/${pid}`, GLib.FileTest.EXISTS))
 
 const usage = new Map<string, { group: Group; shares: number[] }>()
 const [energy, setEnergy] = createState<Group[]>([])
@@ -360,6 +372,10 @@ function weigh(apps: Group[]) {
     for (const [key, app] of usage) {
         const now = seen.get(key)
         if (now) app.group = now
+        else if (!running(app.group)) {
+            usage.delete(key)
+            continue
+        }
         app.shares.push(now?.value ?? 0)
         if (app.shares.length > ENERGY_LOOKS) app.shares.shift()
         const average = app.shares.reduce((a, b) => a + b, 0) / ENERGY_LOOKS
@@ -370,38 +386,6 @@ function weigh(apps: Group[]) {
     significant.sort((a, b) => b.value - a.value)
     const names = (groups: Group[]) => groups.map(g => `${g.key}=${g.name}`).join(";")
     if (names(significant) !== names(energy())) setEnergy(significant)
-
-    // the CPU busy, for an app out of sight; one already going on keeps on
-    // wherever it is now. Its average is over the last five minutes, so that
-    // is how long it has been at it, at least.
-    const now = GLib.get_monotonic_time()
-    const onScreen = appsOnScreen()
-    for (const app of significant) {
-        const spell = spells.get(app.key)
-        if (spell) {
-            spells.set(app.key, { ...spell, app, value: app.value, peak: Math.max(spell.peak, app.value), over: null })
-        } else if (!onScreen.has(app.key)) {
-            log.info(`performance: ${app.name} keeps the CPU busy out of sight (${percent(app.value)} of a core, averaged over 5 minutes)`)
-            spells.set(app.key, {
-                app, value: app.value, peak: app.value, top: [],
-                since: now - ENERGY_LOOKS * CHECK_SECONDS * 1e6, over: null, seen: false,
-            })
-        }
-    }
-    for (const [key, spell] of spells)
-        if (!significant.some(app => app.key === key) && ended(spell, now)) spells.delete(key)
-    showCpu()
-}
-
-// the apps with a window on a desktop that a monitor shows (minimized ones
-// are on a hidden one)
-function appsOnScreen(): Set<string> {
-    const shown = new Set(hyprland.get_monitors().map(m => m.get_active_workspace()?.get_id()))
-    const apps = new Set<string>()
-    for (const client of hyprland.get_clients()) {
-        if (shown.has(client.get_workspace()?.get_id())) apps.add(groupOf(client.get_pid(), "").key)
-    }
-    return apps
 }
 
 // ─── On and off ───────────────────────────────────────────────────────────────
@@ -427,8 +411,8 @@ function setWatching(on: boolean) {
         snapshot = null
         busyLooks = hotLooks = 0
         usage.clear()
-        full = null
-        spells.clear()
+        atLimit = null
+        cpuSeen = cpuOver = false
         setEnergy([])
         setCpu(null)
         setMemory(null)
@@ -440,45 +424,68 @@ const enabled = weighingEnergy
 enabled.subscribe(() => setWatching(enabled()))
 setWatching(enabled())
 
-// The CPU's card closed: what it showed has been seen. Spells over are done
-// with; the ones going on keep out of the island until they end.
-let cpuCardOpen = false
-opened.subscribe(() => {
-    const open = opened()?.id === "cpu"
-    if (open === cpuCardOpen) return
-    cpuCardOpen = open
-    if (open) return
-    if (full) full = full.over === null ? { ...full, seen: true } : null
-    for (const [key, spell] of spells) {
-        if (spell.over !== null) spells.delete(key)
-        else spells.set(key, { ...spell, seen: true })
-    }
-    showCpu()
-})
+// ─── An open card ─────────────────────────────────────────────────────────────
+// Live while it shows: a look of its own every CARD_SECONDS, measured from the
+// last look at first, and none once it closes. The CPU's card closing has
+// been seen: out of the island until the spell is over (or at once, over).
 
-// an open card has the latest by the time it shows: one more look at the
-// apps then, measured from the last
-opened.subscribe(() => {
-    const id = opened()?.id
-    if (id !== "cpu" && id !== "temperature" && id !== "memory") return
+let cardSource = 0
+let card: { at: number; procs: Map<number, Proc> | null; cpu: [number, number] | null; cores: [number, number][] } | null = null
+
+function cardLook(id: string) {
+    const now = GLib.get_monotonic_time()
     if (id === "memory") {
-        const state = memory()
-        if (state) setMemory({ ...state, top: memoryByApp() })
+        const state = memory(), mem = readMemory()
+        if (state && mem) setMemory({ ...state, used: mem.used, total: mem.total, top: memoryByApp() })
         return
     }
-    const now = GLib.get_monotonic_time()
-    const seconds = (now - lastLookAt) / 1e6
-    if (!snapshot || seconds < 2) return
-    const top = cpuBetween(snapshot, processes(), seconds)
-    const h = heat()
-    if (full && full.over === null) {
-        full = { ...full, top }
+    if (!card || (now - card.at) / 1e6 < 1) return
+    const procs = processes()
+    const top = card.procs ? cpuBetween(card.procs, procs, (now - card.at) / 1e6) : []
+    const ticks = readCpu(), coreTicks = readCores()
+    const load = busyBetween(card.cpu, ticks)
+    const perCore = coreTicks.map((core, i) => busyBetween(card!.cores[i], core))
+    card = { at: now, procs, cpu: ticks, cores: coreTicks }
+    const degrees = readTemperature()
+    if (atLimit) {
+        atLimit = { ...atLimit, load, perCore, degrees, top }
         showCpu()
     }
-    if (h) setHeat({ ...h, top })
+    const h = heat()
+    if (h) setHeat({ ...h, degrees: degrees ?? h.degrees, top })
+}
+
+opened.subscribe(() => {
+    const id = opened()?.id ?? ""
+    const open = id === "cpu"
+    if (open !== cpuCardOpen) {
+        cpuCardOpen = open
+        if (!open && atLimit) {
+            if (cpuOver) atLimit = null
+            cpuSeen = !cpuOver
+            cpuOver = false
+            showCpu()
+        }
+    }
+    const live = id === "cpu" || id === "temperature" || id === "memory"
+    if (cardSource) GLib.source_remove(cardSource)
+    cardSource = 0
+    if (!live) {
+        card = null
+        return
+    }
+    card = { at: lastLookAt, procs: snapshot, cpu: lastCpu, cores: lastCores }
+    cardLook(id)
+    cardSource = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, CARD_SECONDS, () => {
+        cardLook(id)
+        return GLib.SOURCE_CONTINUE
+    })
 })
 
 // ─── Views ────────────────────────────────────────────────────────────────────
+// No sentences: what is at its limit and how far, a line of figures, and the
+// apps behind it. The rows stay while the card is open and only their
+// figures change, so a pointer on one keeps it (and its quit button).
 
 const percent = (share: number) => `${Math.round(share * 100)}%`
 
@@ -487,47 +494,139 @@ function bytes(n: number): string {
     return `${Math.round(n / 1024 ** 2)} MB`
 }
 
-function minutes(since: number, until = GLib.get_monotonic_time()): string {
-    const m = Math.round((until - since) / 60e6)
-    return m < 1 ? "under a minute" : m === 1 ? "a minute" : `${m} minutes`
+function minutes(since: number): string {
+    const m = Math.round((GLib.get_monotonic_time() - since) / 60e6)
+    return m < 1 ? "<1 min" : `${m} min`
 }
 
-function ago(at: number): string {
-    const m = Math.round((GLib.get_monotonic_time() - at) / 60e6)
-    return m < 1 ? "just now" : `${minutes(at)} ago`
-}
+const stats = (...parts: (string | null | false)[]) => parts.filter(Boolean).join("  ·  ")
+
+const iconOf = (group: Group | undefined) =>
+    group?.entry ? giconForEntry(group.entry) : Gio.ThemedIcon.new("am-cpu-symbolic")
 
 export function GroupIcon({ group, size, cssClass = "" }: { group: Group | undefined; size: number; cssClass?: string }) {
-    return group?.entry
-        ? <Gtk.Image class={cssClass} gicon={giconForEntry(group.entry)} pixelSize={size} />
-        : <Gtk.Image class={cssClass} iconName="am-cpu-symbolic" pixelSize={size} />
+    return <Gtk.Image class={cssClass} gicon={iconOf(group)} pixelSize={size} />
 }
 
-function Top({ groups, value }: { groups: Group[]; value: (g: Group) => string }) {
-    return (
+// an app's windows, by the app its process is part of
+const windowsOf = (group: Group) =>
+    hyprland.get_clients().filter(client => groupOf(client.get_pid(), "").key === group.key)
+
+const TOP_ROWS = 5
+
+/**
+ * The apps behind it, busiest first; one with a window quit from its row (on
+ * hover). While the pointer is on them they keep their order, only their
+ * figures changing: re-sorted under it, a click meant for one app's quit
+ * could land on another's.
+ */
+function Top({ groups, value }: { groups: Accessor<Group[]>; value: (g: Group) => string }) {
+    const [rows, setRows] = createState<Group[]>(groups().slice(0, TOP_ROWS))
+    let pointed = false
+    const update = () => {
+        const all = groups()
+        if (!pointed) return setRows(all.slice(0, TOP_ROWS))
+        // the same apps, as they are now; one gone at nothing
+        const now = new Map(all.map(g => [g.key, g]))
+        setRows(rows().map(g => now.get(g.key) ?? { ...g, value: 0 }))
+    }
+    const list = (
         <box class="top" orientation={Gtk.Orientation.VERTICAL}>
-            {groups.slice(0, 5).map(g => (
-                <box class="app">
-                    <GroupIcon group={g} size={18} />
-                    <label class="name" label={g.name} xalign={0} hexpand ellipsize={Pango.EllipsizeMode.END} maxWidthChars={1} />
-                    <label class="value" label={value(g)} />
-                </box>
-            ))}
+            {Array.from({ length: TOP_ROWS }, (_, i) => {
+                const group = rows(all => all[i] as Group | undefined)
+                const quittable = (g: Group | undefined) => !!g?.entry && windowsOf(g).length > 0
+                return (
+                    <box class="app" visible={group(g => !!g)}>
+                        <Gtk.Image gicon={group(iconOf)} pixelSize={18} />
+                        <label class="name" label={group(g => g?.name ?? "")} xalign={0} hexpand
+                            ellipsize={Pango.EllipsizeMode.END} maxWidthChars={1} />
+                        <label class="value" label={group(g => g ? value(g) : "")} />
+                        {/* on every row, so the figures line up; usable on an app's */}
+                        <button valign={Gtk.Align.CENTER}
+                            class={group(g => quittable(g) ? "quit can" : "quit")}
+                            sensitive={group(quittable)}
+                            tooltipText={group(g => quittable(g) ? `Quit ${g!.name}` : "")}
+                            onClicked={() => {
+                                const g = rows()[i]
+                                if (g) for (const client of windowsOf(g)) closeWindow(clientSelector(client))
+                            }}>
+                            <Gtk.Image iconName="window-close-symbolic" pixelSize={10} />
+                        </button>
+                    </box>
+                )
+            })}
         </box>
-    )
+    ) as Gtk.Widget
+    const motion = new Gtk.EventControllerMotion()
+    motion.connect("enter", () => { pointed = true })
+    motion.connect("leave", () => {
+        pointed = false
+        update()
+    })
+    list.add_controller(motion)
+    const unsubscribe = groups.subscribe(update)
+    list.connect("destroy", unsubscribe)
+    return list
 }
 
-function Card({ tone, icon, title, detail, children }: {
-    tone: string; icon: string; title: string; detail: string; children?: JSX.Element
+// each core a bar, filled as far as it is busy, in the card's colour
+const CoreBars = GObject.registerClass(
+    { GTypeName: "KiwiCoreBars" },
+    class CoreBars extends Gtk.Widget {
+        loads: number[] = []
+
+        vfunc_measure(orientation: Gtk.Orientation): [number, number, number, number] {
+            return orientation === Gtk.Orientation.VERTICAL ? [26, 26, -1, -1] : [0, 0, -1, -1]
+        }
+
+        vfunc_snapshot(snapshot: Gtk.Snapshot): void {
+            const n = this.loads.length
+            if (!n) return
+            const width = this.get_width(), height = this.get_height()
+            const gap = n > 24 ? 2 : 3
+            const bar = (width - gap * (n - 1)) / n
+            const color = this.get_color()
+            const trough = color.copy()
+            trough.alpha *= 0.16
+            const radius = new Graphene.Size().init(Math.min(2, bar / 2), Math.min(2, bar / 2))
+            const rounded = (x: number, y: number, h: number) =>
+                new Gsk.RoundedRect().init(new Graphene.Rect().init(x, y, bar, h), radius, radius, radius, radius)
+            this.loads.forEach((load, i) => {
+                const x = i * (bar + gap)
+                for (const [rect, paint] of [[rounded(x, 0, height), trough], [rounded(x, height - Math.max(2, height * load), Math.max(2, height * load)), color]] as const) {
+                    snapshot.push_rounded_clip(rect)
+                    snapshot.append_color(paint, rect.bounds)
+                    snapshot.pop()
+                }
+            })
+        }
+    },
+)
+
+function Cores({ loads }: { loads: Accessor<number[]> }) {
+    const bars = new CoreBars({ cssClasses: ["cores"], hexpand: true })
+    const update = () => {
+        bars.loads = loads()
+        bars.queue_draw()
+    }
+    update()
+    const unsubscribe = loads.subscribe(update)
+    bars.connect("destroy", unsubscribe)
+    return bars
+}
+
+function Card({ tone, icon, title, value, line, children }: {
+    tone: string; icon: string; title: string; value: Accessor<string>; line: Accessor<string>; children?: JSX.Element | JSX.Element[]
 }) {
     return (
         <box class={`island-card island-performance ${tone}`} orientation={Gtk.Orientation.VERTICAL}>
             <box class="head">
-                <Gtk.Image class="symbol" iconName={icon} pixelSize={22} />
-                <box orientation={Gtk.Orientation.VERTICAL} hexpand>
+                <Gtk.Image class="symbol" iconName={icon} pixelSize={22} valign={Gtk.Align.CENTER} />
+                <box orientation={Gtk.Orientation.VERTICAL} hexpand valign={Gtk.Align.CENTER}>
                     <label class="title" label={title} xalign={0} />
-                    <label class="detail" label={detail} xalign={0} wrap />
+                    <label class="stats" label={line} xalign={0} />
                 </box>
+                <label class="big" label={value} valign={Gtk.Align.CENTER} />
             </box>
             {children}
         </box>
@@ -548,84 +647,59 @@ const cpuActivity = createComputed(get => get(cpu) ? "cpu" : null)
 const heatActivity = createComputed(get => get(heat) ? "temperature" : null)
 const memoryActivity = createComputed(get => get(memory) ? "memory" : null)
 
-// The spell the island is about: all the CPU before any app, then the app
-// keeping the most of it busy. Its load, as Activity Monitor counts: of all
-// the cores for all the CPU, of one core for an app.
-const first = (c: CpuState | null) => c?.spells[0] ?? null
-const shownValue = (spell: Spell | null) => spell ? percent(spell.over === null ? spell.value : spell.peak) : ""
-// a spell over is greyed until seen
-const toneOf = (spell: Spell | null) => spell?.over === null ? "busy" : "was"
-
-function CpuCard({ spells }: { spells: Spell[] }) {
-    const [spell] = spells
-    const over = spell.over !== null
-    if (!spell.app) return (
-        <Card tone={toneOf(spell)} icon={CPU_ICON} title={over ? "CPU was busy" : "CPU busy"}
-            detail={over
-                ? `Up to ${percent(spell.peak)} of all ${cores} cores for ${minutes(spell.since, spell.over!)}, until ${ago(spell.over!)}`
-                : `${percent(spell.value)} of all ${cores} cores, for ${minutes(spell.since)}`}>
-            <Top groups={spell.top} value={g => percent(g.value)} />
-        </Card>
-    )
-    const apps = spells.filter(s => s.app)
-    const name = spell.app.name
-    return (
-        <Card tone={toneOf(spell)} icon={CPU_ICON} title={over ? `${name} was busy` : `${name} is busy`}
-            detail={over
-                ? `It kept up to ${percent(spell.peak)} of a core busy out of sight for ${minutes(spell.since, spell.over!)}, until ${ago(spell.over!)}. 100% is one core.`
-                : `It has kept ${percent(spell.value)} of a core busy out of sight for ${minutes(spell.since)}. 100% is one core.`}>
-            {apps.length > 1
-                ? <Top groups={apps.map(s => ({ ...s.app!, value: s.over === null ? s.value : s.peak }))} value={g => percent(g.value)} />
-                : <box />}
-        </Card>
-    )
-}
+// apps' CPU as shares of all of it, as the load is
+const ofAll = (g: Group) => percent(g.value / cores)
 
 addActivitySource(createComputed(get => {
     if (!get(cpuActivity)) return null
-    const spell = cpu(first)
     return {
         id: "cpu",
         priority: PRIORITY.cpu,
-        leading: () => <With value={spell(toneOf)}>{(tone: string) => <Symbol icon={CPU_ICON} tone={tone} />}</With> as Gtk.Widget,
-        trailing: () => <With value={spell(toneOf)}>{(tone: string) => <Value text={spell(shownValue)} tone={tone} />}</With> as Gtk.Widget,
-        minimal: () => <With value={spell(toneOf)}>{(tone: string) => <Symbol icon={CPU_ICON} tone={tone} />}</With> as Gtk.Widget,
-        expanded: () => <With value={cpu}>{(c: CpuState | null) => !c ? <box /> : <CpuCard spells={c.spells} />}</With> as Gtk.Widget,
+        leading: () => <Symbol icon={CPU_ICON} tone="busy" />,
+        trailing: () => <Value text={cpu(c => c ? percent(c.load) : "")} tone="busy" />,
+        minimal: () => <Symbol icon={CPU_ICON} tone="busy" />,
+        expanded: () => (
+            <Card tone="busy" icon={CPU_ICON} title="CPU" value={cpu(c => c ? percent(c.load) : "")}
+                line={cpu(c => c ? stats(`${cores} cores`, c.degrees !== null && `${Math.round(c.degrees)}°`, minutes(c.since)) : "")}>
+                <Cores loads={cpu(c => c?.perCore ?? [])} />
+                <Top groups={cpu(c => c?.top ?? [])} value={ofAll} />
+            </Card>
+        ) as Gtk.Widget,
     } satisfies Activity
 }))
 
 addActivitySource(createComputed(get => {
     if (!get(heatActivity)) return null
+    const degrees = heat(h => h ? `${Math.round(h.degrees)}°` : "")
     return {
         id: "temperature",
         priority: PRIORITY.temperature,
         leading: () => <Symbol icon={HEAT_ICON} tone="hot" />,
-        trailing: () => <Value text={heat(h => h ? `${Math.round(h.degrees)}°` : "")} tone="hot" />,
+        trailing: () => <Value text={degrees} tone="hot" />,
         minimal: () => <Symbol icon={HEAT_ICON} tone="hot" />,
-        expanded: () => <With value={heat}>{(h: HeatState | null) => !h ? <box /> :
-            <Card tone="hot" icon={HEAT_ICON} title="CPU running hot"
-                detail={`${Math.round(h.degrees)} °C for ${minutes(h.since)}. It slows itself down to cool off.`}>
-                {h.top.length ? <Top groups={h.top} value={g => percent(g.value)} /> : <box />}
-            </Card>}
-        </With> as Gtk.Widget,
+        expanded: () => (
+            <Card tone="hot" icon={HEAT_ICON} title="CPU temperature" value={degrees}
+                line={heat(h => h ? stats("slowing down", minutes(h.since)) : "")}>
+                <Top groups={heat(h => h?.top ?? [])} value={ofAll} />
+            </Card>
+        ) as Gtk.Widget,
     } satisfies Activity
 }))
 
 addActivitySource(createComputed(get => {
     if (!get(memoryActivity)) return null
+    const used = memory(m => m ? percent(m.used) : "")
     return {
         id: "memory",
         priority: PRIORITY.memory,
         leading: () => <Symbol icon={MEMORY_ICON} tone="full" />,
-        trailing: () => <Value text={memory(m => m ? percent(m.used) : "")} tone="full" />,
+        trailing: () => <Value text={used} tone="full" />,
         minimal: () => <Symbol icon={MEMORY_ICON} tone="full" />,
-        expanded: () => <With value={memory}>{(m: MemoryState | null) => !m ? <box /> :
-            <Card tone="full" icon={MEMORY_ICON} title="Memory almost full"
-                detail={m.pressured
-                    ? `${percent(m.used)} used, and apps are waiting for memory: things slow down until some is freed.`
-                    : `${percent(m.used)} used. Quitting an app frees its memory.`}>
-                <Top groups={m.top} value={g => bytes(g.value)} />
-            </Card>}
-        </With> as Gtk.Widget,
+        expanded: () => (
+            <Card tone="full" icon={MEMORY_ICON} title="Memory" value={used}
+                line={memory(m => m ? stats(`${bytes(m.used * m.total)} of ${bytes(m.total)}`, m.pressured && "apps waiting", minutes(m.since)) : "")}>
+                <Top groups={memory(m => m?.top ?? [])} value={g => bytes(g.value)} />
+            </Card>
+        ) as Gtk.Widget,
     } satisfies Activity
 }))

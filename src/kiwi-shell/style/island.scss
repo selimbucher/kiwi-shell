@@ -290,8 +290,6 @@ window.IslandBar {
 
 .island-symbol, .island-value {
     &.busy { color: $orange; }
-    // the CPU's spell over, waiting to be seen (performance.tsx)
-    &.was { color: var(--k-fg-3); }
     &.hot { color: $red; }
     &.full { color: $yellow; }
 }
@@ -307,14 +305,24 @@ window.IslandBar {
         min-width: 1px;
         min-height: 14px;
         background-color: var(--k-divider);
-        margin: 0 7px 0 4px;
+        margin: 0 1px 0 4px;
     }
-    .kind + .kind {
+    // each icon in its own place (a revealer), fading in as that opens
+    .kind {
         margin-left: 6px;
+        opacity: 0;
+        transition: opacity 200ms ease-out;
+        &.on {
+            opacity: 1;
+        }
+    }
+    // in a bubble: no line, the first icon's gap given back
+    &.bare {
+        margin-left: -6px;
     }
 }
 
-.kind {
+.kind, .kind-icon {
     &.mic { color: $orange; }
     &.camera { color: $green; }
     &.screen { color: $purple; }
@@ -329,6 +337,14 @@ window.IslandBar {
 .island-alert.trailing {
     color: var(--k-fg-2);
     font-feature-settings: "tnum";
+}
+
+// the charger's: the charge in its level's colour (alerts.tsx)
+.island-alert.charge {
+    font-weight: 700;
+    &.low { color: $red; }
+    &.mid { color: $yellow; }
+    &.high { color: $green; }
 }
 
 // ─── The open card ────────────────────────────────────────────────────────────
@@ -370,17 +386,20 @@ window.IslandCardWindow {
             color: var(--k-fg-3);
             font-weight: 600;
         }
-        // as iOS's: the bar the card's width, the times under its ends
+        // as iOS's: the bar the card's width, from the cover's edge to the
+        // bars', the times under its ends
         .progress {
             .time {
                 color: var(--k-fg-3);
                 font-size: 11px;
                 font-feature-settings: "tnum";
             }
-            // under the bar's very ends: a scale keeps 4px either side of
-            // its bar (global.scss)
+            // a scale keeps 4px either side of its bar (global.scss)
+            scale {
+                margin: 0 -4px;
+            }
             .times {
-                margin: 2px 4px 0;
+                margin-top: 3px;
             }
         }
         .controls {
@@ -401,19 +420,30 @@ window.IslandCardWindow {
                 font-weight: 700;
                 font-size: 14px;
             }
-            .detail {
+            .stats {
                 color: var(--k-fg-3);
                 font-weight: 600;
+                font-feature-settings: "tnum";
+            }
+            .big {
+                font-size: 22px;
+                font-weight: 700;
+                font-feature-settings: "tnum";
+                margin-left: 12px;
             }
         }
-        &.busy .head .symbol { color: $orange; }
-        &.was .head .symbol { color: var(--k-fg-3); }
-        &.hot .head .symbol { color: $red; }
-        &.full .head .symbol { color: $yellow; }
+        &.busy .head .symbol, &.busy .head .big, &.busy .cores { color: $orange; }
+        &.hot .head .symbol, &.hot .head .big { color: $red; }
+        &.full .head .symbol, &.full .head .big { color: $yellow; }
+
+        // each core's bar (performance.tsx, CoreBars)
+        .cores {
+            margin-bottom: 10px;
+        }
 
         .top .app {
             min-height: 26px;
-            image {
+            > image {
                 margin-right: 10px;
             }
             .name {
@@ -423,6 +453,25 @@ window.IslandCardWindow {
                 color: var(--k-fg-2);
                 font-feature-settings: "tnum";
             }
+            // quit, on the row the pointer is on
+            button.quit {
+                @include flat-button;
+                min-width: 18px;
+                min-height: 18px;
+                margin-left: 8px;
+                border-radius: 99px;
+                color: var(--k-fg-2);
+                background-color: var(--k-trough);
+                opacity: 0;
+                transition: opacity 110ms ease-out, background-color 90ms ease-out;
+                &:hover {
+                    background-color: $red;
+                    color: #ffffff;
+                }
+            }
+            &:hover button.quit.can {
+                opacity: 1;
+            }
         }
     }
 
@@ -430,7 +479,7 @@ window.IslandCardWindow {
         min-width: 280px;
         .use {
             min-height: 34px;
-            .kind {
+            .kind-icon {
                 margin-right: 12px;
             }
             .kind {

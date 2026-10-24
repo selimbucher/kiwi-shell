@@ -215,6 +215,7 @@
                     pkgs.libpulseaudio
                     pkgs.psmisc
                     pkgs.glib.bin
+                    pkgs.inotify-tools
                   ]
                 }" \
                 --prefix GI_TYPELIB_PATH : "${app-capture}/lib/girepository-1.0" \

@@ -67,10 +67,10 @@ Activities as menu bar items.
   them; macOS shows none of them and chimes for the charger.
 - Memory running out, a hot CPU and a busy CPU are activities. A Mac shows
   these only in Activity Monitor.
-- The CPU is busy when it is as good as full (90% of all its cores), or when
-  an app out of sight keeps 40% of a core busy (averaged over 5 minutes). It
-  stays in the island until its card has been opened, greyed once it's over,
-  and then keeps away while the same goes on. A Mac never says.
+- The CPU is an activity only at its limit (95% of all its cores for a
+  minute); opening its card keeps it out of the island until that's over. A
+  Mac never says. The cards are a small Activity Monitor, live while open,
+  an app with a window quit from its row.
 - Apps using significant energy are listed in the system menu's Performance
   tab; a Mac lists them in its battery menu, which kiwi doesn't have. kiwi
   goes by CPU time alone; macOS's energy counts the GPU, wake-ups and the
@@ -79,8 +79,9 @@ Activities as menu bar items.
   screen), not iOS's dots, which are a phone's lack of room: after a line at
   the island's end, or in a bubble of their own beside it while it shows
   something else. macOS shows them in the menu bar.
-- The camera indicator sees only apps that use the camera through PipeWire,
-  as GNOME and KDE do. macOS sees every app.
+- The camera indicator sees apps using the camera through PipeWire and ones
+  opening its device themselves, the user's own processes. macOS sees every
+  app.
 - The weather is Open-Meteo's, for a city set in the settings. macOS's comes
   from Apple Weather, for where the Mac is.
 - The island is the bar's glass, like the other pills. iOS's is black, as
