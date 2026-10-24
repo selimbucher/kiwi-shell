@@ -157,7 +157,7 @@ namespace {
         PHLWINDOWREF        window;
         CBox                box, clip;
         std::string         badge;
-        bool                selected = false;
+        float               outline = 0.F; // how far the chosen tile's outline is shown, 0 to 1
         std::optional<CBox> bar; // the window's bar in the bar canvas ("Bars"), if it has one and the set shows it
     };
 
@@ -180,12 +180,16 @@ namespace {
         return TOP >= BAR_MIN ? TOP : 0.0;
     }
 
-    // the bar on top of a window, in the monitor's pixels; none without one
+    // The bar on top of a window, in the monitor's pixels, where hyprbars
+    // draws it: moved with its desktop as that slides, and so off the canvas
+    // (empty in its tile) for a desktop not on screen. None without one.
     std::optional<CBox> barOf(const PHLWINDOW& window, const PHLMONITOR& monitor) {
         const double TOP = barHeight(window);
         if (TOP <= 0)
             return std::nullopt;
-        const auto POS  = window->position(IGeometric::GEOMETRIC_CURRENT);
+        const auto WORKSPACE = window->m_workspace;
+        const auto POS       = window->position(IGeometric::GEOMETRIC_CURRENT) +
+            (WORKSPACE && !window->m_pinned ? WORKSPACE->m_renderOffset->value() : Vector2D{});
         const auto SIZE = window->size(IGeometric::GEOMETRIC_CURRENT);
         return CBox{POS.x, POS.y - TOP, SIZE.x, TOP}.translate(-monitor->m_position).scale(monitor->m_scale).round();
     }
@@ -312,6 +316,8 @@ namespace {
     constexpr float SHADOW_ALPHA  = 0.32F;
     constexpr int   OUTLINE_GAP   = 1;
     constexpr int   OUTLINE_WIDTH = 4;
+    // the outline coming onto a window pointed at, and off the one before
+    constexpr auto  OUTLINE_FADE  = std::chrono::milliseconds{150};
     // how far past a picture these reach
     constexpr int DECOR_REACH = SHADOW_RANGE + SHADOW_DROP;
 
@@ -391,10 +397,10 @@ namespace {
 
                 // With its bar the tile is the whole window, the bar at its
                 // top (as the shell sized it, "bars" in its request): the
-                // window drawn below the bar. In a set that shows bars every
-                // tile is rounded as its window is, made smaller, as hyprbars
-                // rounds the bar: a window with one and a window without
-                // (Brave draws its own) then match.
+                // window drawn below the bar, as on screen. In a set that
+                // shows bars every tile is rounded as its window is, made
+                // smaller, as hyprbars rounds the bar: a window with one and a
+                // window without (Brave draws its own) then match.
                 const bool   BARRED = tile.bar && m_bars;
                 const double BAR    = BARRED ? tile.bar->h / SCALE : 0.0; // logical
 
@@ -413,14 +419,25 @@ namespace {
                     g_pHyprOpenGL->renderRoundedShadow(SHADE, ROUND, 2.F, std::round(SHADOW_RANGE * SCALE), CHyprColor(0.F, 0.F, 0.F, SHADOW_ALPHA), m_decor);
                 }
 
+                // the bar first: the window goes over the corners it fills in
+                if (BARRED)
+                    drawBar(tile, CBox{tile.box.x, tile.box.y, tile.box.w, (BAR + WINDOW->rounding()) * FACTOR}.round(), FACTOR / SCALE, MONITOR);
+
                 g_pHyprRenderer->m_renderData.clipBox = tile.clip;
+
+                // An X11 window Hyprland doesn't scale (xwayland:force_zero_scaling)
+                // has its surfaces in the display's own pixels: the window's
+                // size times m_X11SurfaceScaledBy, as Hyprland's own surface
+                // boxes have it (WLSurface.cpp). Taken as they were, Spotify's
+                // picture came out twice its tile, its top-left quarter shown.
+                const double PIXELS = WINDOW->m_isX11 ? 1.0 / WINDOW->m_X11SurfaceScaledBy : 1.0;
 
                 SURFACE->resource()->breadthfirst(
                     [&](SP<CWLSurfaceResource> surface, const Vector2D& offset, void*) {
                         if (!surface->m_current.texture || surface->m_current.size.x < 1 || surface->m_current.size.y < 1)
                             return;
 
-                        CBox box{OFFSET + offset * FACTOR, surface->m_current.size * FACTOR};
+                        CBox box{OFFSET + offset * PIXELS * FACTOR, surface->m_current.size * PIXELS * FACTOR};
                         box.round();
 
                         // The window itself carries the tile's rounded
@@ -441,7 +458,7 @@ namespace {
                         // left out by its texture coordinates: rounding
                         // applies to the box drawn. Square top corners are
                         // rounded out of sight, above the clip.
-                        if (m_squareTop || BARRED) {
+                        if (m_squareTop) {
                             SHOWN.y -= ROUND;
                             SHOWN.h += ROUND;
                         }
@@ -458,20 +475,17 @@ namespace {
                     },
                     nullptr);
 
-                if (BARRED)
-                    drawBar(tile, CBox{tile.box.x, tile.box.y, tile.box.w, BAR * FACTOR}.round(), FACTOR / SCALE, MONITOR);
-
                 if (!tile.badge.empty())
                     drawBadge(tile, MONITOR->m_scale);
 
-                if (tile.selected && m_outline && m_decor > 0.F) {
+                if (tile.outline > 0.F && m_outline && m_decor > 0.F) {
                     const int GAP   = std::round(OUTLINE_GAP * SCALE);
                     const int WIDTH = std::round(OUTLINE_WIDTH * SCALE);
                     g_pHyprRenderer->m_renderData.clipBox = reach(tile, GAP + WIDTH);
                     // the width logical (Hyprland scales it), the box and rounding
                     // physical; the outer corner is concentric with the inner
                     g_pHyprOpenGL->renderBorder(tile.box.copy().expand(GAP).round(), Config::CGradientValueData(*m_outline),
-                                                {.round = ROUND + GAP, .roundingPower = 2.F, .borderSize = OUTLINE_WIDTH, .a = m_decor});
+                                                {.round = ROUND + GAP, .roundingPower = 2.F, .borderSize = OUTLINE_WIDTH, .a = m_decor * tile.outline});
                 }
 
                 g_pHyprRenderer->m_renderData.clipBox = {};
@@ -508,7 +522,11 @@ namespace {
             return (LEFT || RIGHT) && (TOP || BOTTOM);
         }
 
-        // the window's bar from the canvas into `target`, `scale` times its size
+        // The window's bar from the canvas into `target`, `scale` times its
+        // size; `target` reaches the window's rounding below the bar too:
+        // Hyprland rounds all four of a window's corners, and hyprbars fills
+        // in behind the top two, under the bar. Drawn under the window, the
+        // tile has them as the screen does.
         void drawBar(const SDrawTile& tile, const CBox& target, double scale, const PHLMONITOR& monitor) {
             const auto& BAR = *tile.bar;
             const CBox  CANVAS{target.x - BAR.x * scale, target.y - BAR.y * scale, monitor->m_transformedSize.x * scale, monitor->m_transformedSize.y * scale};
@@ -618,11 +636,32 @@ namespace {
         bool        bars      = false;
 
         // the tile outlined as chosen, if any, and in what
+        // The outline comes and goes over OUTLINE_FADE: on the window pointed
+        // at, off the one before.
         void select(const PHLWINDOWREF& window, const CHyprColor& color) {
-            damageTilesOf(m_selected); // where the outline was
-            m_selected    = window;
             m_selectColor = color;
+            if (window == m_selected)
+                return;
+            const auto NOW = Time::steadyNow();
+            damageTilesOf(m_previous);
+            // still coming in, it goes from as far as it got
+            m_previous      = m_selected;
+            m_previousSince = NOW - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(OUTLINE_FADE) * (1.F - outlineIn()));
+            m_selected      = window;
+            m_selectedSince = NOW;
+            damageTilesOf(m_previous);
             damageTilesOf(m_selected);
+        }
+
+        // how far the outline is in on the chosen window, and still on the one before
+        float outlineIn() const {
+            return std::clamp(std::chrono::duration<float>(Time::steadyNow() - m_selectedSince).count() / std::chrono::duration<float>(OUTLINE_FADE).count(), 0.F, 1.F);
+        }
+        float outlineOut() const {
+            return 1.F - std::clamp(std::chrono::duration<float>(Time::steadyNow() - m_previousSince).count() / std::chrono::duration<float>(OUTLINE_FADE).count(), 0.F, 1.F);
+        }
+        bool outlineFading() const {
+            return outlineIn() < 1.F || (m_previous.lock() && outlineOut() > 0.F);
         }
 
         void apply(std::vector<STile>&& tiles) {
@@ -769,7 +808,13 @@ namespace {
         // frame, and with nothing else on screen moving there would be no
         // next one — the flight stood still until the pointer moved.
         void afterFrame(const PHLMONITOR& monitor) {
-            if (!m_flying || !monitor || !anchorOn(monitor))
+            if (!monitor || !anchorOn(monitor))
+                return;
+            if (outlineFading()) {
+                damageTilesOf(m_selected);
+                damageTilesOf(m_previous);
+            }
+            if (!m_flying)
                 return;
             if (m_closing || std::chrono::duration<float>(Time::steadyNow() - m_since) < std::chrono::duration<float>(FLY_DURATION) + std::chrono::milliseconds{50})
                 g_pHyprRenderer->damageMonitor(monitor);
@@ -872,11 +917,12 @@ namespace {
                     clip            = box;
                 }
                 const auto SELECTED = m_selected.lock();
+                const auto PREVIOUS = m_previous.lock();
                 tiles.emplace_back(SDrawTile{.window   = tile.window,
                                              .box      = box,
                                              .clip     = clip,
                                              .badge    = tile.badge,
-                                             .selected = SELECTED && SELECTED == WINDOW,
+                                             .outline  = SELECTED == WINDOW ? outlineIn() : PREVIOUS == WINDOW ? outlineOut() : 0.F,
                                              .bar      = bars ? barOf(WINDOW, monitor) : std::nullopt});
             }
             // Drawn bottom to top as the windows stack on screen: Hyprland
@@ -915,7 +961,7 @@ namespace {
             // is round them comes and goes with the flight
             const float ALPHA = fly ? 1.F : ANCHOR->alpha;
             const float DECOR = fly ? shown() : ANCHOR->alpha;
-            const auto  OUTLINE = m_selected.lock() ? std::optional<CHyprColor>{m_selectColor} : std::nullopt;
+            const auto  OUTLINE = m_selected.lock() || m_previous.lock() ? std::optional<CHyprColor>{m_selectColor} : std::nullopt;
             g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), squareTop, ALPHA, m_badges, shadow,
                                                                               DECOR, OUTLINE, bars, bars ? barsOn(monitor) : nullptr));
         }
@@ -967,12 +1013,13 @@ namespace {
       private:
         // how far past its picture a tile draws, logical
         double decorReach() const {
-            return shadow || m_selected.lock() ? DECOR_REACH : 0.0;
+            return shadow || m_selected.lock() || m_previous.lock() ? DECOR_REACH : 0.0;
         }
 
         SCounters&                          m_counters;
         BadgeTextures&                      m_badges;
-        PHLWINDOWREF                        m_selected;
+        PHLWINDOWREF                        m_selected, m_previous;
+        Time::steady_tp                     m_selectedSince, m_previousSince;
         CHyprColor                          m_selectColor;
         std::vector<STile>                  m_tiles;
         // new tiles are held back until the shell's surface next commits;

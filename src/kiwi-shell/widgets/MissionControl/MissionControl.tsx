@@ -233,7 +233,10 @@ hyprland.connect("event", (_h: unknown, event: string, args: string) => {
 
 export function closeMissionControl(then?: () => void) {
     if (!isOpen.get() || closing.get()) return
-    // the chosen window keeps its outline on the way home, fading with it
+    // the outline and the title are off the chosen window at once, quickly
+    // (OUTLINE_FADE): carried along on the way home they were there a moment
+    // only to be gone the moment it landed
+    setSelected(null)
     afterLanding = then ?? null
     closedAt = Date.now()
     setClosing(true)
@@ -956,7 +959,7 @@ class Scene {
             const widget = new Gtk.Box({ cssClasses: ["mc-window", "mc-target", ...livePreviews() ? ["mc-live"] : []] })
             widget.append(picture)
             const motion = new Gtk.EventControllerMotion()
-            const point = () => { if (!drag && !fingersHold && selected.get() !== address) setSelected(address) }
+            const point = () => { if (!drag && !fingersHold && !closing.get() && selected.get() !== address) setSelected(address) }
             motion.connect("enter", point)
             // and once the pointer moves again after the fingers let go
             motion.connect("motion", point)
@@ -966,7 +969,7 @@ class Scene {
 
             // as wide as the title, up to a little wider than the window
             const title = (
-                <box widthRequest={slot.width + TITLE_WIDTH_EXTRA} canTarget={false} visible={false}>
+                <box class="mc-title-box" widthRequest={slot.width + TITLE_WIDTH_EXTRA} canTarget={false}>
                     <label
                         class="mc-title"
                         hexpand
@@ -1022,7 +1025,7 @@ class Scene {
         for (const page of this.pages.values()) for (const [a, frame] of page.frames) {
             const on = a === address && !frame.leaving
             on ? frame.widget.add_css_class("selected") : frame.widget.remove_css_class("selected")
-            frame.title.set_visible(on)
+            on ? frame.title.add_css_class("shown") : frame.title.remove_css_class("shown")
         }
         selectPreview(WINDOWS_SET, address, conf.get().primary_color)
     }
@@ -1522,9 +1525,12 @@ class Scene {
             box.set_size_request(Math.round(at.width), Math.round(at.height))
             this.top.move(box, Math.round(at.x), Math.round(at.y))
             const scale = at.width / W
+            // each window with its bar, as windowTiles shows them: placed by
+            // the window alone, the bar pushed it down, and the desktop
+            // corrected it upwards as it took over
             for (const { window, picture } of windows) {
-                picture.set_size_request(Math.max(1, Math.round(window.width * scale)), Math.max(1, Math.round(window.height * scale)))
-                canvas.move(picture, Math.round((window.x - monitor.x) * scale), Math.round((window.y - monitor.y) * scale))
+                picture.set_size_request(Math.max(1, Math.round(window.width * scale)), Math.max(1, Math.round((window.height + window.bar) * scale)))
+                canvas.move(picture, Math.round((window.x - monitor.x) * scale), Math.round((window.y - window.bar - monitor.y) * scale))
             }
         }
     }
@@ -1541,6 +1547,17 @@ class Scene {
 
 type CloseTarget = { desktop: number; x: number; y: number }
 const [closeTarget, setCloseTarget] = createState<CloseTarget | null>(null)
+
+// The ring a desktop's picture gets while pointed at comes and goes with its
+// ×, by the same reckoning: by GTK's own hover it went the moment the pointer
+// left the picture, while the × stayed for the way to it.
+closeTarget.subscribe(() => {
+    const desktop = closeTarget.get()?.desktop
+    for (const [id, canvas] of dropTargets) {
+        if (id === desktop) canvas.add_css_class("pointed")
+        else canvas.remove_css_class("pointed")
+    }
+})
 const hovering: { desktop: CloseTarget | null; button: boolean } = { desktop: null, button: false }
 let closeSource = 0
 
@@ -1570,11 +1587,11 @@ function forgetClose() {
     if (closeTarget.get()) setCloseTarget(null)
 }
 
-// How far around a desktop's picture the pointer still counts as on it. The ×
-// sits half outside the picture's corner, and on the way there the pointer
-// leaves the picture: going by the picture alone, the × went before the
-// pointer got to it.
-const CLOSE_REACH = 16
+// The × sits half outside the picture's top-left corner: the pointer counts as
+// on the desktop over its picture and over the × with this much round it, so
+// it gets there without the × going. Only there: round every side, leaving
+// the picture any other way kept the × up after its ring had gone.
+const CLOSE_REACH = 6
 
 // Which desktop the pointer is on, from wherever it is over Mission Control.
 // Leaving Mission Control's surface is going onto the ×, the only thing over
@@ -1589,9 +1606,9 @@ function closeHoverAt(x: number, y: number) {
             if (scene?.isMoving(desktop)) continue
             const [ok, b] = canvas.compute_bounds(window)
             if (!ok) continue
-            const reach = CLOSE_REACH
-            if (x < b.get_x() - reach || x >= b.get_x() + b.get_width() + reach ||
-                y < b.get_y() - reach || y >= b.get_y() + b.get_height() + reach) continue
+            const inPicture = x >= b.get_x() && x < b.get_x() + b.get_width() && y >= b.get_y() && y < b.get_y() + b.get_height()
+            const nearClose = Math.hypot(x - b.get_x(), y - b.get_y()) <= CLOSE_SIZE / 2 + CLOSE_REACH
+            if (!inPicture && !nearClose) continue
             // the × is placed on the window's surface, which starts outside
             // its CSS padding
             const [dx, dy] = window.get_surface_transform()
@@ -1627,6 +1644,19 @@ function CloseButton({ monitor }: { monitor: Accessor<Gdk.Monitor> }) {
                 motion.connect("enter", () => { hovering.button = true; settleClose() })
                 motion.connect("leave", () => { hovering.button = false; settleClose() })
                 self.add_controller(motion)
+                // out of nothing each time it shows, a frame after it is drawn
+                // so (the first comes before it is styled at all)
+                self.connect("map", () => {
+                    const button = self.get_child()
+                    if (!button) return
+                    button.add_css_class("coming")
+                    let frames = 0
+                    button.add_tick_callback(() => {
+                        if (++frames < 2) return GLib.SOURCE_CONTINUE
+                        button.remove_css_class("coming")
+                        return GLib.SOURCE_REMOVE
+                    })
+                })
             }}
         >
             <button
