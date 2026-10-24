@@ -2,7 +2,7 @@ import Hyprland from "gi://AstalHyprland"
 import GLib from "gi://GLib"
 
 import { logger } from "../../log"
-import { focusWorkspace, moveWindowToWorkspace, keepDesktops, pluginsReady, evalLua, dialect, registerBindSetup } from "../../hypr"
+import { focusWorkspace, moveWindowToWorkspace, keepDesktops, pluginsReady, evalLua, dialect, registerBindSetup, hasFeature } from "../../hypr"
 import { isValidClient } from "../Dock/dock-state"
 
 const log = logger("desktops")
@@ -43,6 +43,25 @@ export type Window = {
     focusHistory: number
     // where it is in its desktop's stack, 0 at the bottom
     stack: number
+    // the height of its title bar (hyprbars', or another plugin's), above
+    // `y`; 0 without one, or without kiwi's plugin to draw it in a preview
+    bar: number
+}
+
+// Each window's bar, from kiwi's plugin, which draws them in Mission
+// Control's pictures (previews.cpp, "Bars"): by address, with the 0x.
+function barsByAddress(): Map<string, number> {
+    const bars = new Map<string, number>()
+    if (!hasFeature("previews")) return bars
+    try {
+        for (const line of hyprland.message("kiwi-previews bars").split("\n")) {
+            const [address, height] = line.trim().split(" ")
+            if (address?.startsWith("0x") && Number(height) > 0) bars.set(address, Number(height))
+        }
+    } catch (e) {
+        log.warn("reading the windows' bars:", e as Error)
+    }
+    return bars
 }
 
 function query(what: string): any[] {
@@ -216,6 +235,7 @@ export function windowsByDesktop(): Map<number, Window[]> {
         .filter(c => c.mapped && !c.hidden && (c.workspace?.id ?? 0) > 0)
         .sort((a, b) => (Number(a.floating) - Number(b.floating)) || (b.focusHistoryID - a.focusHistoryID))
     const byDesktop = new Map<number, Window[]>()
+    const bars = barsByAddress()
     for (const c of stacked) {
         // Astal strips the 0x prefix from addresses
         const client = hyprland.get_client(String(c.address).replace("0x", ""))
@@ -233,6 +253,7 @@ export function windowsByDesktop(): Map<number, Window[]> {
             floating: c.floating,
             focusHistory: c.focusHistoryID,
             stack: below.length,
+            bar: bars.get(c.address) ?? 0,
         }])
     }
     return byDesktop

@@ -25,7 +25,7 @@ namespace Kiwi {
     // with `hyprctl kiwi-version` and won't use a plugin that says otherwise:
     // on Arch the plugin is built by hyprpm from the repository, the shell by
     // the AUR package from a release, and the two need not be the same.
-    constexpr int PROTOCOL = 8; // 8: previews' shadow and select (previews.cpp), kiwigesture>>close
+    constexpr int PROTOCOL = 9; // 9: previews' bars, and the bars request (previews.cpp)
 
     // right after a layer surface (or, with popups, its popups) is drawn
     namespace Layers {

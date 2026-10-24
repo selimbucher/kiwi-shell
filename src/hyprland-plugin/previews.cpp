@@ -14,7 +14,8 @@
 // back, and a client that talked to this plugin could only make windows
 // appear on the screen, which it can already see.
 //
-//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
+//     hyprctl kiwi-previews bars
+//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] [bars] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
 //     hyprctl kiwi-previews clear [<set>]
 //     hyprctl kiwi-previews raise <set> <address>
 //     hyprctl kiwi-previews select <set> <address>|- [<rrggbb>]
@@ -114,6 +115,9 @@
 #include <render/OpenGL.hpp>
 #include <render/Renderer.hpp>
 #include <render/pass/PassElement.hpp>
+#include <render/Framebuffer.hpp>
+#include <render/decorations/DecorationPositioner.hpp>
+#include <render/decorations/IHyprWindowDecoration.hpp>
 #include <hyprgraphics/image/Image.hpp>
 #include <cairo/cairo.h>
 
@@ -150,11 +154,87 @@ namespace {
     // The tiles of one monitor, in its own scaled pixels, as handed to the
     // render pass.
     struct SDrawTile {
-        PHLWINDOWREF window;
-        CBox         box, clip;
-        std::string  badge;
-        bool         selected = false;
+        PHLWINDOWREF        window;
+        CBox                box, clip;
+        std::string         badge;
+        bool                selected = false;
+        std::optional<CBox> bar; // the window's bar in the bar canvas ("Bars"), if it has one and the set shows it
     };
+
+    // ─── Bars ───────────────────────────────────────────────────────────────
+    // A window's title bar is a decoration (hyprbars', or another plugin's),
+    // drawn by that plugin at the window's place on screen and nowhere else:
+    // it cuts itself out with the GL's own scissor and stencil, which
+    // Hyprland's render modifiers don't move. So a set that shows bars has
+    // them drawn, before each frame, where they are, into one canvas the size
+    // of the monitor, and each tile copies its window's from there, scaled,
+    // above the window's picture. Only the bars plugins add: a window's border
+    // and shadow are Hyprland's, and a tile has its own.
+
+    // What a window keeps free above it for its bar, logical; 0 without one. A
+    // window whose bar is switched off (hyprbars:no_bar) still keeps a pixel,
+    // which is no bar.
+    constexpr double BAR_MIN = 4;
+    double barHeight(const PHLWINDOW& window) {
+        const double TOP = g_pDecorationPositioner->getWindowDecorationReserved(PHLWINDOWREF{window}).topLeft.y;
+        return TOP >= BAR_MIN ? TOP : 0.0;
+    }
+
+    // the bar on top of a window, in the monitor's pixels; none without one
+    std::optional<CBox> barOf(const PHLWINDOW& window, const PHLMONITOR& monitor) {
+        const double TOP = barHeight(window);
+        if (TOP <= 0)
+            return std::nullopt;
+        const auto POS  = window->position(IGeometric::GEOMETRIC_CURRENT);
+        const auto SIZE = window->size(IGeometric::GEOMETRIC_CURRENT);
+        return CBox{POS.x, POS.y - TOP, SIZE.x, TOP}.translate(-monitor->m_position).scale(monitor->m_scale).round();
+    }
+
+    bool isBar(IHyprWindowDecoration* decoration) {
+        const auto TYPE = decoration->getDecorationType();
+        return TYPE == DECORATION_CUSTOM || TYPE == DECORATION_GROUPBAR;
+    }
+
+    struct SBarCanvas {
+        SP<Render::IFramebuffer> fb;
+        Vector2D         size;
+        bool             drawn = false; // this frame
+    };
+    std::map<const void*, SBarCanvas> g_barCanvases;
+
+    // the windows' bars drawn into the monitor's canvas, where they are
+    void drawBars(const PHLMONITOR& monitor, const std::vector<PHLWINDOW>& windows) {
+        if (windows.empty()) {
+            // nothing shows bars now: the canvas (a whole screen's worth) goes
+            g_barCanvases.erase(monitor.get());
+            return;
+        }
+        auto& canvas = g_barCanvases[monitor.get()];
+        canvas.drawn = false;
+        if (!canvas.fb)
+            canvas.fb = g_pHyprRenderer->createFB("kiwi bars");
+        if (!canvas.fb->isAllocated() || canvas.size != monitor->m_pixelSize) {
+            canvas.fb->alloc(monitor->m_pixelSize.x, monitor->m_pixelSize.y, DRM_FORMAT_ABGR8888);
+            canvas.size = monitor->m_pixelSize;
+        }
+        canvas.fb->setImageDescription(monitor->workBufferImageDescription());
+        CRegion damage{0, 0, monitor->m_transformedSize.x, monitor->m_transformedSize.y};
+        if (!g_pHyprRenderer->beginFullFakeRender(monitor, damage, canvas.fb))
+            return;
+        g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
+        g_pHyprRenderer->startRenderPass();
+        for (const auto& window : windows)
+            for (const auto& decoration : window->m_windowDecorations)
+                if (isBar(decoration.get()))
+                    decoration->draw(monitor, 1.F);
+        g_pHyprRenderer->endRender();
+        canvas.drawn = true;
+    }
+
+    SP<Render::ITexture> barsOn(const PHLMONITOR& monitor) {
+        const auto IT = g_barCanvases.find(monitor.get());
+        return IT != g_barCanvases.end() && IT->second.drawn ? IT->second.fb->getTexture() : nullptr;
+    }
 
     // ─── Flying ─────────────────────────────────────────────────────────────
     // macOS's Mission Control, measured off screen recordings (a window
@@ -285,9 +365,9 @@ namespace {
         // `decor`: how far the shadow and the outline are shown, `outline` the
         // chosen tile's colour (see "Around a picture")
         CPreviewPassElement(std::vector<SDrawTile>&& tiles, int rounding, bool squareTop, float alpha, BadgeTextures& badges, bool shadow = false, float decor = 0.F,
-                            std::optional<CHyprColor> outline = std::nullopt) :
+                            std::optional<CHyprColor> outline = std::nullopt, bool barred = false, SP<Render::ITexture> bars = nullptr) :
             m_tiles(std::move(tiles)), m_rounding(rounding), m_squareTop(squareTop), m_alpha(alpha), m_badges(badges), m_shadow(shadow), m_decor(decor),
-            m_outline(outline) {}
+            m_outline(outline), m_barred(barred), m_bars(bars) {}
 
         std::vector<UP<IPassElement>> draw() override {
             const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
@@ -307,18 +387,30 @@ namespace {
                 if (SIZE.x <= 0 || SIZE.y <= 0)
                     continue;
 
+                const double SCALE = MONITOR->m_scale;
+
+                // With its bar the tile is the whole window, the bar at its
+                // top (as the shell sized it, "bars" in its request): the
+                // window drawn below the bar. In a set that shows bars every
+                // tile is rounded as its window is, made smaller, as hyprbars
+                // rounds the bar: a window with one and a window without
+                // (Brave draws its own) then match.
+                const bool   BARRED = tile.bar && m_bars;
+                const double BAR    = BARRED ? tile.bar->h / SCALE : 0.0; // logical
+
                 // the shell sizes a tile to the window's aspect, but a window
                 // it had to clamp (very wide, very narrow) doesn't match:
                 // fill the tile and let the clip take the rest, as the shell
                 // does with its own captures
-                const double FACTOR = std::max(tile.box.w / SIZE.x, tile.box.h / SIZE.y);
-                const Vector2D OFFSET{tile.box.x + (tile.box.w - SIZE.x * FACTOR) / 2, tile.box.y + (tile.box.h - SIZE.y * FACTOR) / 2};
+                const double   FACTOR = std::max(tile.box.w / SIZE.x, tile.box.h / (SIZE.y + BAR));
+                const CBox     BODY{tile.box.x, tile.box.y + BAR * FACTOR, tile.box.w, tile.box.h - BAR * FACTOR};
+                const Vector2D OFFSET{BODY.x + (BODY.w - SIZE.x * FACTOR) / 2, BODY.y + (BODY.h - SIZE.y * FACTOR) / 2};
+                const int      ROUND = m_barred ? std::round(WINDOW->rounding() * FACTOR) : m_rounding;
 
-                const double SCALE = MONITOR->m_scale;
                 if (m_shadow && m_decor > 0.F) {
                     g_pHyprRenderer->m_renderData.clipBox = reach(tile, DECOR_REACH * SCALE);
                     const CBox SHADE = tile.box.copy().expand(SHADOW_RANGE * SCALE).translate(Vector2D{0.0, SHADOW_DROP * SCALE}).round();
-                    g_pHyprOpenGL->renderRoundedShadow(SHADE, m_rounding, 2.F, std::round(SHADOW_RANGE * SCALE), CHyprColor(0.F, 0.F, 0.F, SHADOW_ALPHA), m_decor);
+                    g_pHyprOpenGL->renderRoundedShadow(SHADE, ROUND, 2.F, std::round(SHADOW_RANGE * SCALE), CHyprColor(0.F, 0.F, 0.F, SHADOW_ALPHA), m_decor);
                 }
 
                 g_pHyprRenderer->m_renderData.clipBox = tile.clip;
@@ -337,10 +429,10 @@ namespace {
                         // all they show in one that covers the window, as
                         // Hyprland rounds every surface of a window. Anything
                         // else inside is drawn square, and cut off by the clip.
-                        CBox SHOWN = box.intersection(tile.box);
+                        CBox SHOWN = box.intersection(BODY);
                         if (SHOWN.empty())
                             return;
-                        if (surface != SURFACE->resource() && !reachesCorner(SHOWN, tile.box)) {
+                        if (surface != SURFACE->resource() && !reachesCorner(SHOWN, BODY)) {
                             g_pHyprOpenGL->renderTexture(surface->m_current.texture, box, {.surface = surface, .a = m_alpha});
                             return;
                         }
@@ -349,15 +441,15 @@ namespace {
                         // left out by its texture coordinates: rounding
                         // applies to the box drawn. Square top corners are
                         // rounded out of sight, above the clip.
-                        if (m_squareTop) {
-                            SHOWN.y -= m_rounding;
-                            SHOWN.h += m_rounding;
+                        if (m_squareTop || BARRED) {
+                            SHOWN.y -= ROUND;
+                            SHOWN.h += ROUND;
                         }
                         g_pHyprOpenGL->renderTexture(surface->m_current.texture, SHOWN,
                                                      {
                                                          .surface                     = surface,
                                                          .a                           = m_alpha,
-                                                         .round                       = m_rounding,
+                                                         .round                       = ROUND,
                                                          .roundingPower               = 2.F,
                                                          .allowCustomUV               = true,
                                                          .primarySurfaceUVTopLeft     = (SHOWN.pos() - box.pos()) / box.size(),
@@ -365,6 +457,9 @@ namespace {
                                                      });
                     },
                     nullptr);
+
+                if (BARRED)
+                    drawBar(tile, CBox{tile.box.x, tile.box.y, tile.box.w, BAR * FACTOR}.round(), FACTOR / SCALE, MONITOR);
 
                 if (!tile.badge.empty())
                     drawBadge(tile, MONITOR->m_scale);
@@ -376,7 +471,7 @@ namespace {
                     // the width logical (Hyprland scales it), the box and rounding
                     // physical; the outer corner is concentric with the inner
                     g_pHyprOpenGL->renderBorder(tile.box.copy().expand(GAP).round(), Config::CGradientValueData(*m_outline),
-                                                {.round = m_rounding + GAP, .roundingPower = 2.F, .borderSize = OUTLINE_WIDTH, .a = m_decor});
+                                                {.round = ROUND + GAP, .roundingPower = 2.F, .borderSize = OUTLINE_WIDTH, .a = m_decor});
                 }
 
                 g_pHyprRenderer->m_renderData.clipBox = {};
@@ -411,6 +506,17 @@ namespace {
             const bool       RIGHT  = shown.x + shown.w >= tile.x + tile.w - SLACK;
             const bool       BOTTOM = shown.y + shown.h >= tile.y + tile.h - SLACK;
             return (LEFT || RIGHT) && (TOP || BOTTOM);
+        }
+
+        // the window's bar from the canvas into `target`, `scale` times its size
+        void drawBar(const SDrawTile& tile, const CBox& target, double scale, const PHLMONITOR& monitor) {
+            const auto& BAR = *tile.bar;
+            const CBox  CANVAS{target.x - BAR.x * scale, target.y - BAR.y * scale, monitor->m_transformedSize.x * scale, monitor->m_transformedSize.y * scale};
+            g_pHyprRenderer->m_renderData.clipBox = target.intersection(tile.clip);
+            g_pHyprRenderer->pushMonitorTransformEnabled(true);
+            g_pHyprOpenGL->renderTexture(m_bars, CANVAS, {.a = m_alpha});
+            g_pHyprRenderer->popMonitorTransformEnabled();
+            g_pHyprRenderer->m_renderData.clipBox = tile.clip;
         }
 
         // in the picture's bottom-right corner, still cut off by the clip
@@ -465,6 +571,8 @@ namespace {
         std::vector<SDrawTile> m_tiles;
         int                    m_rounding  = 0;
         bool                   m_squareTop = false;
+        bool                   m_barred = false; // the set shows bars
+        SP<Render::ITexture>   m_bars;
         float                  m_alpha     = 1.F;
         BadgeTextures&         m_badges;
         bool                   m_shadow = false;
@@ -507,6 +615,7 @@ namespace {
         bool        squareTop = false;
         bool        fly       = false;
         bool        shadow    = false;
+        bool        bars      = false;
 
         // the tile outlined as chosen, if any, and in what
         void select(const PHLWINDOWREF& window, const CHyprColor& color) {
@@ -752,14 +861,46 @@ namespace {
                 auto       clip       = ON_MONITOR(tile.clip);
                 if (SHOWN < 1.F) {
                     // on the way between the window and its tile
-                    const auto FROM = WINDOW->geometricBox(IGeometric::GEOMETRIC_CURRENT).translate(-monitor->m_position).scale(monitor->m_scale);
+                    auto FROM = WINDOW->geometricBox(IGeometric::GEOMETRIC_CURRENT);
+                    if (bars) {
+                        const double TOP = barHeight(WINDOW);
+                        FROM.y -= TOP;
+                        FROM.h += TOP;
+                    }
+                    FROM.translate(-monitor->m_position).scale(monitor->m_scale);
                     box             = between(FROM, box, SHOWN).round();
                     clip            = box;
                 }
                 const auto SELECTED = m_selected.lock();
-                tiles.emplace_back(SDrawTile{.window = tile.window, .box = box, .clip = clip, .badge = tile.badge, .selected = SELECTED && SELECTED == WINDOW});
+                tiles.emplace_back(SDrawTile{.window   = tile.window,
+                                             .box      = box,
+                                             .clip     = clip,
+                                             .badge    = tile.badge,
+                                             .selected = SELECTED && SELECTED == WINDOW,
+                                             .bar      = bars ? barOf(WINDOW, monitor) : std::nullopt});
             }
+            // Drawn bottom to top as the windows stack on screen: Hyprland
+            // draws the tiled ones first, then the floating, each in its list's
+            // order (a window brought up goes to the end). In the shell's order
+            // instead, two windows on top of each other swapped as they took
+            // off and swapped back as they landed.
+            std::map<const void*, size_t> order;
+            for (const auto& window : Desktop::windowState()->windows())
+                order.emplace(window.get(), order.size());
+            std::ranges::stable_sort(tiles, {}, [&order](const SDrawTile& tile) {
+                const auto WINDOW = tile.window.lock();
+                return std::pair{WINDOW && WINDOW->m_isFloating, WINDOW ? order[WINDOW.get()] : 0};
+            });
             return tiles;
+        }
+
+        // the windows whose bars this set shows on the monitor
+        void barredOn(const PHLMONITOR& monitor, std::vector<PHLWINDOW>& windows) const {
+            if (!bars || m_tiles.empty() || !anchorOn(monitor))
+                return;
+            for (const auto& tile : m_tiles)
+                if (const auto WINDOW = tile.window.lock(); WINDOW && barOf(WINDOW, monitor))
+                    windows.emplace_back(WINDOW);
         }
 
         // just after the layer (or its popups) has been added to the frame
@@ -775,8 +916,8 @@ namespace {
             const float ALPHA = fly ? 1.F : ANCHOR->alpha;
             const float DECOR = fly ? shown() : ANCHOR->alpha;
             const auto  OUTLINE = m_selected.lock() ? std::optional<CHyprColor>{m_selectColor} : std::nullopt;
-            g_pHyprRenderer->m_renderPass.add(
-                makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), squareTop, ALPHA, m_badges, shadow, DECOR, OUTLINE));
+            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), squareTop, ALPHA, m_badges, shadow,
+                                                                              DECOR, OUTLINE, bars, bars ? barsOn(monitor) : nullptr));
         }
 
         // A window nobody can see is suspended and never drawn, so it would
@@ -1031,6 +1172,11 @@ namespace {
                 for (auto& [_, set] : m_sets)
                     set->keepAlive(monitor);
                 std::erase_if(m_sets, [](const auto& entry) { return entry.second->done(); });
+                // the bars before the frame begins: drawing them is a render of its own
+                std::vector<PHLWINDOW> barred;
+                for (auto& [_, set] : m_sets)
+                    set->barredOn(monitor, barred);
+                drawBars(monitor, barred);
             });
             // damage from here on is the next frame's (as the genie has it)
             m_stageListener = Event::bus()->m_events.render.stage.listen([this](eRenderStage stage) {
@@ -1222,6 +1368,19 @@ namespace {
                 return std::format("sets:{}; commits {}, damages {}, keepalives {}\n", sets.empty() ? " none" : sets, m_counters.commits, m_counters.damages,
                                    m_counters.keepAlives);
             }
+            // the height of each window's bar (hyprbars', or another plugin's),
+            // logical: the shell sizes a tile shown with bars to the window and it
+            if (WORDS.size() == 1 && WORDS[0] == "bars") {
+                std::string out;
+                for (const auto& window : Desktop::windowState()->windows()) {
+                    if (!window->m_isMapped)
+                        continue;
+                    const double TOP = barHeight(window);
+                    if (TOP > 0)
+                        out += std::format("0x{:x} {}\n", reinterpret_cast<uintptr_t>(window.get()), TOP);
+                }
+                return out.empty() ? "none\n" : out;
+            }
             if (WORDS.size() == 3 && WORDS[0] == "gesture") {
                 size_t fingers = 0;
                 if (!parse(WORDS[2], fingers))
@@ -1289,7 +1448,7 @@ namespace {
                 return "rounding must be a number";
 
             size_t first = 3;
-            bool   live = false, popup = false, squareTop = false, fly = false, shadow = false;
+            bool   live = false, popup = false, squareTop = false, fly = false, shadow = false, bars = false;
             for (; first < WORDS.size(); ++first) {
                 if (WORDS[first] == "live")
                     live = true;
@@ -1301,6 +1460,8 @@ namespace {
                     fly = true;
                 else if (WORDS[first] == "shadow")
                     shadow = true;
+                else if (WORDS[first] == "bars")
+                    bars = true;
                 else if (WORDS[first] != "still")
                     break;
             }
@@ -1348,6 +1509,7 @@ namespace {
             set->squareTop  = squareTop;
             set->fly        = fly;
             set->shadow     = shadow;
+            set->bars       = bars;
             set->name       = NAME;
 
             const auto COUNT = tiles.size();

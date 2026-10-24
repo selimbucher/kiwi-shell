@@ -34,8 +34,9 @@ Desktops, Mission Control, their gestures and the island, as of October
   while pointed at.
 - The title of the window under the pointer is a dark pill under the
   window. macOS centres a light pill with dark text on the window itself.
-- Windows in flight, and in the desktops' pictures, are drawn without their
-  title bars, which appear once they have landed.
+- Windows keep their title bars (hyprbars', or another plugin's) in Mission
+  Control and in flight, as on a Mac; in the desktops' small pictures at the
+  top they are drawn without them.
 - While the windows move (the bar opening, desktops closing), their shadows
   can be a frame ahead of their pictures: the compositor takes the pictures'
   new places with the frame after.

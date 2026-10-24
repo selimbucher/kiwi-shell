@@ -93,13 +93,13 @@ export function showPreviews(
     namespace: string,
     rounding: number,
     tiles: PreviewTile[],
-    options: { motion?: "live" | "still", popup?: boolean, squareTop?: boolean, fly?: boolean, shadow?: boolean } = {},
+    options: { motion?: "live" | "still", popup?: boolean, squareTop?: boolean, fly?: boolean, shadow?: boolean, bars?: boolean } = {},
     taken?: (ok: boolean) => void,
 ) {
     if (!livePreviews()) return
     const request = tiles.length === 0 && !options.fly
         ? `kiwi-previews clear ${set}`
-        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""}${options.squareTop ? " square-top" : ""}${options.fly ? " fly" : ""}${options.shadow ? " shadow" : ""} `
+        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""}${options.squareTop ? " square-top" : ""}${options.fly ? " fly" : ""}${options.shadow ? " shadow" : ""}${options.bars ? " bars" : ""} `
             + tiles.map(t => {
                 // a badge needs the clip in front of it; the tile's own rectangle will do
                 const clip = t.clip ?? (t.badge ? t : undefined)
@@ -281,6 +281,8 @@ type Options = {
     // the compositor draws a shadow under each picture, and selectPreview's
     // outline: they go with the pictures, in flight too
     shadow?: boolean
+    // each window's title bar (a decoration plugin's: hyprbars) over its picture
+    bars?: boolean
 }
 
 /**
@@ -347,11 +349,11 @@ export class LiveTiles {
      * `then` once the compositor has them back.
      */
     giveBack(then: () => void) {
-        const { set, namespace, radius, motion, popup, squareTop, fly, shadow } = this.options
+        const { set, namespace, radius, motion, popup, squareTop, fly, shadow, bars } = this.options
         this.tiles.clear()
         ++this.generation
         if (!livePreviews() || !fly) return then()
-        showPreviews(set, namespace, radius, [], { motion, popup, squareTop, fly, shadow }, () => then())
+        showPreviews(set, namespace, radius, [], { motion, popup, squareTop, fly, shadow, bars }, () => then())
     }
 
     /** Measure the tiles and send them; after every layout. */
@@ -389,8 +391,8 @@ export class LiveTiles {
         if (pane.waiting && tiles.length === 0 && this.tiles.size > 0) return
 
         const measured = ++this.generation
-        const { set, namespace, motion, popup, squareTop, fly, shadow } = this.options
-        showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly, shadow }, () => {
+        const { set, namespace, motion, popup, squareTop, fly, shadow, bars } = this.options
+        showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly, shadow, bars }, () => {
             if (measured === this.generation) this.pane?.show()
         })
     }

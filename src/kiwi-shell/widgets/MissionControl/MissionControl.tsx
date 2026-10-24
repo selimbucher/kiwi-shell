@@ -139,7 +139,8 @@ function spreadOf(monitor: Monitor, windows: Window[]): Slot<Window>[] {
         height: monitor.height - top - AREA_TOP_GAP - AREA_MARGIN,
     }
     return spread(
-        windows.map(w => ({ item: w, box: { x: w.x - monitor.x, y: w.y - monitor.y, width: w.width, height: w.height } })),
+        // each window with its bar, which its picture shows (windowTiles, bars)
+        windows.map(w => ({ item: w, box: { x: w.x - monitor.x, y: w.y - w.bar - monitor.y, width: w.width, height: w.height + w.bar } })),
         area, monitor, SPREAD)
 }
 
@@ -381,6 +382,7 @@ const windowTiles = new LiveTiles({
     // the shadow under each window and the chosen one's outline are the
     // compositor's, so they fly with the windows (.mc-live in the CSS)
     shadow: true,
+    bars: true,
     // the windows of a desktop being zoomed into, cut off at its picture
     clipOf: tile => {
         let picture = tile.get_parent()
