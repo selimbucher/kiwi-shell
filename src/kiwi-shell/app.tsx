@@ -21,6 +21,7 @@ import steamDesktopPatcher from "./widgets/services/steamDesktopPatcher";
 import nightShiftService from "./widgets/services/nightShiftSchedule"
 import { loadPlugins } from "./hypr"
 import "./widgets/services/gestures"
+import "./widgets/services/focusTrail"
 
 logger("kiwi").info("kiwi-shell starting")
 
