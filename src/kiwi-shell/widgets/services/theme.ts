@@ -43,6 +43,7 @@ export const LAYER = {
     dock: "kiwi-dock",
     cards: "kiwi-cards",
     switcher: "kiwi-switcher",
+    switcherClose: "kiwi-switcher-close",
     missionControl: "kiwi-mission-control",
     missionControlClose: "kiwi-mission-control-close",
     scrim: "kiwi-scrim",
@@ -86,6 +87,7 @@ type Rule = { name: string, namespace: string, noAnim?: boolean, solid?: boolean
 const RULES: Rule[] = [
     { name: "kiwi-panels", namespace: LAYER.panel },
     { name: "kiwi-switchers", namespace: LAYER.switcher, noAnim: true },
+    { name: "kiwi-switcher-close", namespace: LAYER.switcherClose, noAnim: true, solid: true },
     { name: "kiwi-dock", namespace: LAYER.dock },
     { name: "kiwi-cards", namespace: LAYER.cards },
     { name: "kiwi-scrim", namespace: LAYER.scrim },

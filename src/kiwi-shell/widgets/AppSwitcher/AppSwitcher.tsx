@@ -5,6 +5,8 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, createBinding, onCleanup } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
+import GLib from "gi://GLib"
+import Cairo from "gi://cairo"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { playSound } from "../sound"
@@ -178,7 +180,7 @@ function closeClientFromSwitcher(client: any) {
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
-    return (
+    return [
         <window
             namespace={LAYER.switcher}
             css={conf(conf => `--primary: ${conf.primary_color};`)}
@@ -200,6 +202,178 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
             }}
         >
             <Windows gdkmonitor={gdkmonitor} />
+        </window>,
+        <SwitcherClose gdkmonitor={gdkmonitor} />,
+    ]
+}
+
+// ─── The × that closes a window ───────────────────────────────────────────────
+// On the top-left corner of the window's picture while the pointer is on it,
+// as macOS has it in Mission Control. The compositor draws the picture over
+// the switcher and would hide anything the switcher put there, so the × is
+// in a window of its own one layer up: over the same free part of the display
+// as the switcher, which is centred in it, and taking the pointer only on the
+// × (Mission Control's has the same reason: MissionControl.tsx, CloseButton).
+
+// where the picture's top-left corner is, on the switcher's surface
+type CloseTarget = { address: string; x: number; y: number }
+const [closeTarget, setCloseTarget] = createState<CloseTarget | null>(null)
+const hoveringClose: { tile: CloseTarget | null; button: boolean } = { tile: null, button: false }
+let closeLinger = 0
+// a moment after the pointer has left the picture: on its way to the ×
+const CLOSE_LINGER_MS = 80
+const CLOSE_FADE_MS = 160
+const CLOSE_SIZE = 20
+const CLOSE_PAD = 3
+
+function settleClose() {
+    if (closeLinger) GLib.source_remove(closeLinger)
+    closeLinger = 0
+    const wanted = () => !isVisible() ? null : hoveringClose.button ? closeTarget.get() : hoveringClose.tile
+    const apply = () => {
+        const want = wanted(), now = closeTarget.get()
+        if (want?.address !== now?.address || want?.x !== now?.x || want?.y !== now?.y) setCloseTarget(want)
+    }
+    if (wanted()) return apply()
+    closeLinger = GLib.timeout_add(GLib.PRIORITY_DEFAULT, CLOSE_LINGER_MS, () => {
+        closeLinger = 0
+        apply()
+        return GLib.SOURCE_REMOVE
+    })
+}
+
+isVisible.subscribe(() => {
+    if (isVisible()) return
+    hoveringClose.tile = null
+    hoveringClose.button = false
+    settleClose()
+})
+
+/** The pointer on a window's picture, or off it (`picture` null). */
+function pointAtPicture(address: string, picture: Gtk.Widget | null) {
+    const window = live.window
+    if (picture && window) {
+        const [ok, b] = picture.compute_bounds(window)
+        const [dx, dy] = window.get_surface_transform()
+        hoveringClose.tile = ok ? { address, x: b.get_x() + dx, y: b.get_y() + dy } : null
+    } else if (hoveringClose.tile?.address === address) {
+        hoveringClose.tile = null
+    }
+    settleClose()
+}
+
+function SwitcherClose({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
+    const button = (
+        <button class="switcher-close" focusable={false} valign={Gtk.Align.START} halign={Gtk.Align.START}
+            marginTop={CLOSE_PAD} marginBottom={CLOSE_PAD} marginStart={CLOSE_PAD} marginEnd={CLOSE_PAD}
+            onClicked={() => {
+                const address = closeTarget.get()?.address
+                const client = displayedClients().find(c => c.get_address() === address)
+                hoveringClose.tile = null
+                hoveringClose.button = false
+                settleClose()
+                if (client) closeClientFromSwitcher(client)
+            }}>
+            <Gtk.Image iconName="window-close-symbolic" pixelSize={11} />
+        </button>
+    ) as Gtk.Button
+    const fixed = new Gtk.Fixed({ hexpand: true, vexpand: true })
+    fixed.put(button, 0, 0)
+    let twin: Gtk.Window | null = null
+    let shown: CloseTarget | null = null
+    let fade = 0
+
+    // only the × takes the pointer, and nothing while it is gone
+    const region = (rect: number[] | null) => {
+        const surface = twin?.get_surface()
+        if (!surface) return
+        const r = new Cairo.Region()
+        if (rect) {
+            const box = new Cairo.RectangleInt()
+            ;[box.x, box.y, box.width, box.height] = rect
+            r.unionRectangle(box)
+        }
+        surface.set_input_region(r)
+    }
+
+    // the switcher's place on its surface is the twin's, down by half of
+    // what the twin is taller (both centred in the same free part)
+    const place = (t: CloseTarget) => {
+        const switcher = live.window
+        if (!twin || !switcher) return
+        const [dx, dy] = twin.get_surface_transform()
+        const below = Math.round((twin.get_height() - switcher.get_height()) / 2)
+        const size = CLOSE_SIZE + 2 * CLOSE_PAD
+        const x = Math.round(t.x - size / 2), y = Math.round(t.y + below - size / 2)
+        fixed.move(button, x - dx, y - dy)
+        region([x, y, size, size])
+    }
+
+    const fadeTo = (to: number, then?: () => void) => {
+        if (fade) button.remove_tick_callback(fade)
+        const from = button.get_opacity()
+        let start = -1
+        fade = button.add_tick_callback((_w, clock) => {
+            const now = clock.get_frame_time() / 1000
+            if (start < 0) start = now
+            const t = Math.min(1, (now - start) / CLOSE_FADE_MS)
+            button.set_opacity(from + (to - from) * (1 - Math.pow(1 - t, 3)))
+            if (t < 1) return GLib.SOURCE_CONTINUE
+            fade = 0
+            then?.()
+            return GLib.SOURCE_REMOVE
+        })
+    }
+
+    const follow = () => {
+        const want = closeTarget.get()
+        if (want) {
+            const anew = !shown || shown.address !== want.address
+            shown = want
+            place(want)
+            button.set_visible(true)
+            if (anew) button.set_opacity(0)
+            fadeTo(1)
+            return
+        }
+        if (!shown) return
+        fadeTo(0, () => {
+            shown = null
+            button.set_visible(false)
+            region(null)
+        })
+    }
+
+    return (
+        <window
+            namespace={LAYER.switcherClose}
+            name="ags-app-switcher-close"
+            class={themeClasses(t => `AppSwitcherClose ${t}`)}
+            visible={isVisible}
+            gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
+            exclusivity={Astal.Exclusivity.NORMAL}
+            anchor={Astal.WindowAnchor.TOP | Astal.WindowAnchor.BOTTOM | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}
+            application={app}
+            layer={Astal.Layer.OVERLAY}
+            keymode={Astal.Keymode.NONE}
+            $={(self) => {
+                twin = self
+                button.set_visible(false)
+                // over the whole free area: it takes no pointer until the × shows
+                self.connect("map", () => shown ? place(shown) : region(null))
+                const motion = new Gtk.EventControllerMotion()
+                motion.connect("enter", () => { hoveringClose.button = true; settleClose() })
+                motion.connect("leave", () => { hoveringClose.button = false; settleClose() })
+                button.add_controller(motion)
+                const unsubscribe = closeTarget.subscribe(follow)
+                onCleanup(() => {
+                    unsubscribe()
+                    if (twin === self) twin = null
+                    destroyWindow(self)
+                })
+            }}
+        >
+            {fixed}
         </window>
     )
 }
@@ -212,7 +386,7 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
 // the picture alone, its title under it: rounded all round
 const live = new LiveTiles({
     set: "app-switcher", namespace: LAYER.switcher, motion: "live",
-    radius: 10, squareTop: false,
+    radius: 6, squareTop: false,
 })
 
 // Uniform height, width hugs the window's aspect ratio — the tile IS the
@@ -387,8 +561,16 @@ export function WindowPreview({ client, height }: { client: any, height: number 
             xalign={0.5}
         />
     )
+    // the picture, for the × on its corner (SwitcherClose)
+    let picture: Gtk.Widget | null = null
     const tile = (
-        <button class="app-preview" onclicked={activate}>
+        <button class="app-preview" onclicked={activate}
+            $={(self: Gtk.Widget) => {
+                const motion = new Gtk.EventControllerMotion()
+                motion.connect("enter", () => pointAtPicture(address, picture))
+                motion.connect("leave", () => pointAtPicture(address, null))
+                self.add_controller(motion)
+            }}>
             <box orientation={Gtk.Orientation.VERTICAL} spacing={0}>
             {/* the outline goes round the picture, not its title */}
             <box class="app-preview-frame">
@@ -399,6 +581,7 @@ export function WindowPreview({ client, height }: { client: any, height: number 
                 <Gtk.ScrolledWindow
                     class="window-preview-container"
                     $={(self: Gtk.Widget) => {
+                        picture = self
                         live.tiles.set(address, self)
                         // thumbnails of same-app windows look alike: the app's
                         // icon in the picture's corner says which app at a
@@ -468,24 +651,5 @@ export function WindowPreview({ client, height }: { client: any, height: number 
         }
     })
 
-    return (
-        <overlay class="preview-tile">
-            {tile}
-            {/* hover-revealed, floating over the end of the title under the
-                picture so it reserves no layout space there — not over the
-                picture, which the compositor draws over the shell */}
-            <button
-                $type="overlay"
-                class="switcher-preview-close"
-                halign={Gtk.Align.END}
-                valign={Gtk.Align.END}
-                marginTop={10}
-                marginBottom={9}
-                marginEnd={8}
-                onclicked={() => closeClientFromSwitcher(client)}
-            >
-                <Gtk.Image iconName="window-close-symbolic" pixelSize={12} />
-            </button>
-        </overlay>
-    )
+    return <box class="preview-tile">{tile}</box>
 }

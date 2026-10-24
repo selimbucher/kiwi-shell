@@ -3,7 +3,7 @@
 .app-switch-container {
     @include panel;
     padding: 18px;
-    border-radius: 22px;
+    border-radius: 18px;
 }
 
 // joined with the screenshot below into one window-like block
@@ -13,48 +13,40 @@
     padding: 4px 8px;
 }
 
-// A GTK button, so the GTK theme styles it too: WhiteSur gives every button a
-// border, a 6px radius, box-shadows and a hover fill. Each of those is set
-// here, in every state, with selectors that outrank the theme's button:hover.
-// Hidden by colour rather than opacity, which would draw it through an
-// offscreen for nothing.
-button.switcher-preview-close {
+// The × on a window's picture, in a window of its own over the switcher
+// (AppSwitcher.tsx, SwitcherClose): Mission Control's, a little smaller. A
+// GTK button, so every bit of the theme's button look is set here.
+window.AppSwitcherClose {
+    background: none;
+}
+
+button.switcher-close {
     background: none;
     background-image: none;
     border: none;
-    box-shadow: none;
     outline: none;
-    // fixed square + Align.CENTER in the widget — FILL alignment would
-    // stretch it to the title bar and turn the radius into an oval
-    border-radius: 9999px;
-    min-width: 16px;
-    min-height: 16px;
     padding: 0;
-    margin-right: 3px;
-    background-color: transparent;
-    color: transparent;
-    transition: background-color 150ms ease, color 150ms ease;
-
-    &:hover, &:active {
-        box-shadow: none;
-        background-image: none;
-    }
-}
-
-.preview-tile:hover button.switcher-preview-close {
-    background-color: var(--k-close);
-    color: var(--k-fg-3);
+    min-width: 20px;
+    min-height: 20px;
+    border-radius: 9999px;
+    color: rgb(96, 96, 98);
+    background-color: rgb(225, 225, 227);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    transition: background-color 90ms ease-out;
 
     &:hover {
-        color: var(--k-fg);
-        background-image: linear-gradient(var(--k-fill-hover), var(--k-fill-hover));
+        background-image: none;
+        background-color: rgb(238, 238, 240);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+
+    &:active {
+        background-image: none;
+        background-color: rgb(205, 205, 207);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     }
 }
 
-
-.preview-title {
-    margin-right: 11px;
-}
 
 // a button so the whole tile is clickable — flattened, the tile look
 // comes from its content and the selection border
@@ -112,11 +104,11 @@ button.app-preview {
     }
 }
 
-// the picture's radius (10) plus the gap and the outline
+// the picture's radius (6) plus the gap and the outline
 .app-preview-frame {
     padding: 3px;
     border: 3px solid transparent;
-    border-radius: 16px;
+    border-radius: 12px;
 }
 
 .app-preview.chosen .app-preview-frame {
@@ -140,7 +132,7 @@ button.app-preview {
     }
 
     .window-preview-container {
-        border-radius: 10px;
+        border-radius: 6px;
     }
 }
 
