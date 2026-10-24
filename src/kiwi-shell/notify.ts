@@ -9,6 +9,8 @@ type Options = {
     icon?: string
     // 0 low, 1 normal, 2 critical
     urgency?: 0 | 1 | 2
+    // the id it was shown with, to close it by (closeNotification)
+    shown?: (id: number) => void
 }
 
 // A desktop notification, sent over D-Bus to whoever shows them — kiwi
@@ -25,13 +27,31 @@ export function notify(summary: string, body: string, options: Options = {}, ret
         null, Gio.DBusCallFlags.NONE, -1, null,
         (_connection, result) => {
             try {
-                Gio.DBus.session.call_finish(result)
+                const [id] = Gio.DBus.session.call_finish(result).deepUnpack() as [number]
+                options.shown?.(id)
             } catch (e) {
                 if (!retry) return log.warn(`could not show "${summary}":`, e as Error)
                 GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
                     notify(summary, body, options, false)
                     return GLib.SOURCE_REMOVE
                 })
+            }
+        },
+    )
+}
+
+/** Takes a notification `notify` showed off the screen again. */
+export function closeNotification(id: number) {
+    Gio.DBus.session.call(
+        "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+        "org.freedesktop.Notifications", "CloseNotification",
+        new GLib.Variant("(u)", [id]),
+        null, Gio.DBusCallFlags.NONE, -1, null,
+        (_connection, result) => {
+            try {
+                Gio.DBus.session.call_finish(result)
+            } catch (e) {
+                log.warn(`could not close notification ${id}:`, e as Error)
             }
         },
     )
