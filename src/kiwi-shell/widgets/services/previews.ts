@@ -45,6 +45,8 @@ export type PreviewTile = Rect & {
     // an image file the compositor draws in the picture's bottom-right corner:
     // the app's icon, which the shell cannot put over a picture itself
     badge?: string
+    // how far it is shown: its widget's opacity, and its parents'
+    alpha?: number
 }
 
 // resolves whether the compositor took it: it answers errors as text too
@@ -103,7 +105,8 @@ export function showPreviews(
             + tiles.map(t => {
                 // a badge needs the clip in front of it; the tile's own rectangle will do
                 const clip = t.clip ?? (t.badge ? t : undefined)
-                return `${t.address},${numbers(t)}${clip ? `,${numbers(clip)}` : ""}${t.badge ? `,${encodeURIComponent(t.badge)}` : ""}`
+                const alpha = t.alpha !== undefined && t.alpha < 0.999 ? `@${Math.max(0, t.alpha).toFixed(3)}` : ""
+                return `${t.address}${alpha},${numbers(t)}${clip ? `,${numbers(clip)}` : ""}${t.badge ? `,${encodeURIComponent(t.badge)}` : ""}`
             }).join(" ")
     // the tiles only move when their surface is laid out again
     if (request === showing.get(set)) {
@@ -384,7 +387,10 @@ export class LiveTiles {
             // narrowed to nothing: not drawn
             if (clip && (clip.width < 1 || clip.height < 1)) continue
             const badge = this.badges.get(address)
-            tiles.push({ address, ...rect, clip, badge })
+            // a widget the shell fades fades its picture too
+            let alpha = 1
+            for (let w: Gtk.Widget | null = widget; w && w !== window; w = w.get_parent()) alpha *= w.get_opacity()
+            tiles.push({ address, ...rect, clip, badge, alpha })
         }
         // a first layout can come before the tiles are on screen; showing the
         // pane on it would show them empty until the next

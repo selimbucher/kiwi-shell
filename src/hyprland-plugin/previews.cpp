@@ -15,7 +15,7 @@
 // appear on the screen, which it can already see.
 //
 //     hyprctl kiwi-previews bars
-//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] [bars] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
+//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] [bars] <address>[@<alpha>],<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
 //     hyprctl kiwi-previews clear [<set>]
 //     hyprctl kiwi-previews raise <set> <address>
 //     hyprctl kiwi-previews select <set> <address>|- [<rrggbb>]
@@ -148,6 +148,7 @@ namespace {
         CBox                rect; // logical, from the surface's top-left
         CBox                clip; // where the picture is cut off; the rect if the shell named none
         std::string         badge; // the app icon's file, or empty
+        float               alpha = 1.F; // how far it is shown, as the shell has it fading
         CHyprSignalListener commit;
     };
 
@@ -157,8 +158,10 @@ namespace {
         PHLWINDOWREF        window;
         CBox                box, clip;
         std::string         badge;
+        float               alpha   = 1.F;
         float               outline = 0.F; // how far the chosen tile's outline is shown, 0 to 1
         std::optional<CBox> bar; // the window's bar in the bar canvas ("Bars"), if it has one and the set shows it
+        float               barAlpha = 1.F; // a bar come since the tile was drawn without one fades in
     };
 
     // ─── Bars ───────────────────────────────────────────────────────────────
@@ -279,15 +282,34 @@ namespace {
     }
 
     // a full swipe, from the windows to the tiles, in the trackpad's units
-    constexpr float GESTURE_DISTANCE = 240.F;
+    // (240 took a brush of the fingers for one)
+    constexpr float GESTURE_DISTANCE = 300.F;
     // Let go faster than this (units per ms) and the flight goes that way;
     // slower, it goes on past this share of the way, and back short of it.
     // A Mac takes a short quick swipe as readily as a long one, and lets a
     // slow one go a little way.
-    constexpr float GESTURE_FLICK   = 0.3F;
-    constexpr float GESTURE_PAST    = 0.35F;
+    constexpr float GESTURE_FLICK   = 0.45F;
+    constexpr float GESTURE_PAST    = 0.45F;
     // and held still this long, it was no flick
     constexpr auto GESTURE_REST = std::chrono::milliseconds{80};
+
+    // How far out the windows are for how far the fingers have gone: eased a
+    // little at both ends, half smoothstep, so they set off and settle as a
+    // flight does, and a brush of the fingers barely moves them.
+    float gestureShown(float progress) {
+        const float P = std::clamp(progress, 0.F, 1.F);
+        return 0.5F * P + 0.5F * P * P * (3.F - 2.F * P);
+    }
+
+    // the fingers' progress for windows that far out
+    float gestureProgress(float shown) {
+        float lo = 0.F, hi = 1.F;
+        for (int i = 0; i < 24; ++i) {
+            const float MID = (lo + hi) / 2.F;
+            (gestureShown(MID) < shown ? lo : hi) = MID;
+        }
+        return (lo + hi) / 2.F;
+    }
 
     CBox between(const CBox& from, const CBox& to, float t) {
         return CBox{from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, from.w + (to.w - from.w) * t, from.h + (to.h - from.h) * t};
@@ -317,7 +339,11 @@ namespace {
     constexpr int   OUTLINE_GAP   = 1;
     constexpr int   OUTLINE_WIDTH = 4;
     // the outline coming onto a window pointed at, and off the one before
-    constexpr auto  OUTLINE_FADE  = std::chrono::milliseconds{150};
+    constexpr auto  OUTLINE_FADE  = std::chrono::milliseconds{110};
+    // A window's bar is only drawn on a desktop shown: a tile drawn while
+    // its desktop wasn't gets it the moment it is (Mission Control's zoom
+    // into a desktop), and fades it in rather than have it there at once.
+    constexpr auto  BAR_FADE      = std::chrono::milliseconds{150};
     // how far past a picture these reach
     constexpr int DECOR_REACH = SHADOW_RANGE + SHADOW_DROP;
 
@@ -384,6 +410,10 @@ namespace {
                 const auto WINDOW = tile.window.lock();
                 if (!WINDOW || !WINDOW->m_isMapped)
                     continue;
+                // the set's alpha, and the tile's own fade
+                const float ALPHA = m_alpha * tile.alpha;
+                if (ALPHA <= 0.F)
+                    continue;
 
                 const auto SURFACE = WINDOW->wlSurface();
                 if (!SURFACE || !SURFACE->resource())
@@ -416,12 +446,12 @@ namespace {
                 if (m_shadow && m_decor > 0.F) {
                     g_pHyprRenderer->m_renderData.clipBox = reach(tile, DECOR_REACH * SCALE);
                     const CBox SHADE = tile.box.copy().expand(SHADOW_RANGE * SCALE).translate(Vector2D{0.0, SHADOW_DROP * SCALE}).round();
-                    g_pHyprOpenGL->renderRoundedShadow(SHADE, ROUND, 2.F, std::round(SHADOW_RANGE * SCALE), CHyprColor(0.F, 0.F, 0.F, SHADOW_ALPHA), m_decor);
+                    g_pHyprOpenGL->renderRoundedShadow(SHADE, ROUND, 2.F, std::round(SHADOW_RANGE * SCALE), CHyprColor(0.F, 0.F, 0.F, SHADOW_ALPHA), m_decor * tile.alpha);
                 }
 
                 // the bar first: the window goes over the corners it fills in
                 if (BARRED)
-                    drawBar(tile, CBox{tile.box.x, tile.box.y, tile.box.w, (BAR + WINDOW->rounding()) * FACTOR}.round(), FACTOR / SCALE, MONITOR);
+                    drawBar(tile, CBox{tile.box.x, tile.box.y, tile.box.w, (BAR + WINDOW->rounding()) * FACTOR}.round(), FACTOR / SCALE, MONITOR, ALPHA * tile.barAlpha);
 
                 g_pHyprRenderer->m_renderData.clipBox = tile.clip;
 
@@ -450,7 +480,7 @@ namespace {
                         if (SHOWN.empty())
                             return;
                         if (surface != SURFACE->resource() && !reachesCorner(SHOWN, BODY)) {
-                            g_pHyprOpenGL->renderTexture(surface->m_current.texture, box, {.surface = surface, .a = m_alpha});
+                            g_pHyprOpenGL->renderTexture(surface->m_current.texture, box, {.surface = surface, .a = ALPHA});
                             return;
                         }
 
@@ -465,7 +495,7 @@ namespace {
                         g_pHyprOpenGL->renderTexture(surface->m_current.texture, SHOWN,
                                                      {
                                                          .surface                     = surface,
-                                                         .a                           = m_alpha,
+                                                         .a                           = ALPHA,
                                                          .round                       = ROUND,
                                                          .roundingPower               = 2.F,
                                                          .allowCustomUV               = true,
@@ -476,7 +506,7 @@ namespace {
                     nullptr);
 
                 if (!tile.badge.empty())
-                    drawBadge(tile, MONITOR->m_scale);
+                    drawBadge(tile, MONITOR->m_scale, ALPHA);
 
                 if (tile.outline > 0.F && m_outline && m_decor > 0.F) {
                     const int GAP   = std::round(OUTLINE_GAP * SCALE);
@@ -485,7 +515,7 @@ namespace {
                     // the width logical (Hyprland scales it), the box and rounding
                     // physical; the outer corner is concentric with the inner
                     g_pHyprOpenGL->renderBorder(tile.box.copy().expand(GAP).round(), Config::CGradientValueData(*m_outline),
-                                                {.round = ROUND + GAP, .roundingPower = 2.F, .borderSize = OUTLINE_WIDTH, .a = m_decor * tile.outline});
+                                                {.round = ROUND + GAP, .roundingPower = 2.F, .borderSize = OUTLINE_WIDTH, .a = m_decor * tile.outline * tile.alpha});
                 }
 
                 g_pHyprRenderer->m_renderData.clipBox = {};
@@ -527,18 +557,18 @@ namespace {
         // Hyprland rounds all four of a window's corners, and hyprbars fills
         // in behind the top two, under the bar. Drawn under the window, the
         // tile has them as the screen does.
-        void drawBar(const SDrawTile& tile, const CBox& target, double scale, const PHLMONITOR& monitor) {
+        void drawBar(const SDrawTile& tile, const CBox& target, double scale, const PHLMONITOR& monitor, float alpha) {
             const auto& BAR = *tile.bar;
             const CBox  CANVAS{target.x - BAR.x * scale, target.y - BAR.y * scale, monitor->m_transformedSize.x * scale, monitor->m_transformedSize.y * scale};
             g_pHyprRenderer->m_renderData.clipBox = target.intersection(tile.clip);
             g_pHyprRenderer->pushMonitorTransformEnabled(true);
-            g_pHyprOpenGL->renderTexture(m_bars, CANVAS, {.a = m_alpha});
+            g_pHyprOpenGL->renderTexture(m_bars, CANVAS, {.a = alpha});
             g_pHyprRenderer->popMonitorTransformEnabled();
             g_pHyprRenderer->m_renderData.clipBox = tile.clip;
         }
 
         // in the picture's bottom-right corner, still cut off by the clip
-        void drawBadge(const SDrawTile& tile, double scale) {
+        void drawBadge(const SDrawTile& tile, double scale, float alpha) {
             const int  PX      = std::round(BADGE_SIZE * scale);
             const auto TEXTURE = loadBadge(m_badges, tile.badge, PX, scale);
             if (!TEXTURE)
@@ -547,7 +577,7 @@ namespace {
             const double EDGE = (BADGE_SIZE + BADGE_MARGIN) * scale;
             CBox         box{tile.clip.x + tile.clip.w - EDGE - PAD, tile.clip.y + tile.clip.h - EDGE - PAD, PX + 2 * PAD, PX + 2 * PAD};
             box.round();
-            g_pHyprOpenGL->renderTexture(TEXTURE, box, {.a = m_alpha, .allowDim = false});
+            g_pHyprOpenGL->renderTexture(TEXTURE, box, {.a = alpha, .allowDim = false});
         }
 
         bool needsLiveBlur() override {
@@ -700,6 +730,8 @@ namespace {
             suspendWoken();
             showWindows();
             m_flying = false;
+            m_barless.clear();
+            m_barFrom.clear();
             if (m_tiles.empty())
                 return;
             damageAll();
@@ -814,6 +846,8 @@ namespace {
                 damageTilesOf(m_selected);
                 damageTilesOf(m_previous);
             }
+            if (!m_barFrom.empty())
+                damageAll();
             if (!m_flying)
                 return;
             if (m_closing || std::chrono::duration<float>(Time::steadyNow() - m_since) < std::chrono::duration<float>(FLY_DURATION) + std::chrono::milliseconds{50})
@@ -918,12 +952,29 @@ namespace {
                 }
                 const auto SELECTED = m_selected.lock();
                 const auto PREVIOUS = m_previous.lock();
+                const auto BAR      = bars ? barOf(WINDOW, monitor) : std::nullopt;
+                float      barAlpha = 1.F;
+                if (bars) {
+                    // drawn only where its desktop is shown (barOf has a place for it all the same)
+                    const bool SHOWN_BAR = BAR && WINDOW->m_workspace && WINDOW->m_workspace->isVisible();
+                    if (!SHOWN_BAR)
+                        m_barless.insert(WINDOW.get());
+                    else if (m_barless.erase(WINDOW.get()))
+                        m_barFrom[WINDOW.get()] = Time::steadyNow();
+                    if (const auto IT = m_barFrom.find(WINDOW.get()); IT != m_barFrom.end()) {
+                        barAlpha = std::clamp(std::chrono::duration<float>(Time::steadyNow() - IT->second).count() / std::chrono::duration<float>(BAR_FADE).count(), 0.F, 1.F);
+                        if (barAlpha >= 1.F)
+                            m_barFrom.erase(IT);
+                    }
+                }
                 tiles.emplace_back(SDrawTile{.window   = tile.window,
                                              .box      = box,
                                              .clip     = clip,
                                              .badge    = tile.badge,
+                                             .alpha    = tile.alpha,
                                              .outline  = SELECTED == WINDOW ? outlineIn() : PREVIOUS == WINDOW ? outlineOut() : 0.F,
-                                             .bar      = bars ? barOf(WINDOW, monitor) : std::nullopt});
+                                             .bar      = BAR,
+                                             .barAlpha = barAlpha});
             }
             // Drawn bottom to top as the windows stack on screen: Hyprland
             // draws the tiled ones first, then the floating, each in its list's
@@ -1020,6 +1071,11 @@ namespace {
         BadgeTextures&                      m_badges;
         PHLWINDOWREF                        m_selected, m_previous;
         Time::steady_tp                     m_selectedSince, m_previousSince;
+        // the windows drawn here without their bar, and the ones whose bar
+        // has come since, from when (BAR_FADE)
+        // (kept as the tiles are laid out for drawing, which changes nothing else)
+        mutable std::unordered_set<const void*>                  m_barless;
+        mutable std::unordered_map<const void*, Time::steady_tp> m_barFrom;
         CHyprColor                          m_selectColor;
         std::vector<STile>                  m_tiles;
         // new tiles are held back until the shell's surface next commits;
@@ -1333,8 +1389,8 @@ namespace {
                 m_swipe.opening = true;
                 g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("open,{}", m_gestureSet)});
             } else if (!up && OPEN) {
-                m_swipe.progress = SET->shown();
-                SET->hold(m_swipe.progress);
+                m_swipe.progress = gestureProgress(SET->shown());
+                SET->hold(gestureShown(m_swipe.progress));
             } else if (!up && SET && SET->isOutEmpty()) {
                 // nothing to take home under the fingers: the shell just closes it
                 g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("close,{}", m_gestureSet)});
@@ -1357,7 +1413,7 @@ namespace {
             m_swipe.lastMs   = ms;
             m_swipe.lastAt   = Time::steadyNow();
             if (const auto SET = gestureSet(); SET && SET->hasTiles())
-                SET->hold(m_swipe.progress);
+                SET->hold(gestureShown(m_swipe.progress));
         }
 
         void swipeEnd(bool cancelled) {
@@ -1391,11 +1447,11 @@ namespace {
             if (!SET || !SET->hasTiles() || SET->isHeld())
                 return;
             if (m_swipe.active && m_swipe.opening)
-                SET->hold(m_swipe.progress);
+                SET->hold(gestureShown(m_swipe.progress));
             else if (m_swipe.decided) {
                 // a swipe given up on long ago isn't this opening's
                 if (Time::steadyNow() - m_swipe.decidedAt < std::chrono::seconds{1}) {
-                    SET->hold(m_swipe.progress);
+                    SET->hold(gestureShown(m_swipe.progress));
                     SET->letGo(*m_swipe.decided);
                 }
                 m_swipe.decided.reset();
@@ -1527,8 +1583,17 @@ namespace {
                 }
                 const std::string BADGE = FIELDS.size() == 10 ? unescape(FIELDS[9]) : "";
 
+                // <address>[@<alpha>]: a tile fading as the shell has it
+                std::string_view ADDRESS = FIELDS[0];
+                double           alpha   = 1.0;
+                if (const auto AT = ADDRESS.find('@'); AT != std::string_view::npos) {
+                    if (!parse(ADDRESS.substr(AT + 1), alpha))
+                        return "a tile's alpha must be a number";
+                    ADDRESS = ADDRESS.substr(0, AT);
+                }
+
                 // closed, or closing, between the shell's list and this call
-                const auto WINDOW = windowFrom(FIELDS[0]);
+                const auto WINDOW = windowFrom(ADDRESS);
                 if (!WINDOW || !WINDOW->m_isMapped || !WINDOW->wlSurface() || !WINDOW->wlSurface()->resource())
                     continue;
 
@@ -1537,7 +1602,7 @@ namespace {
                 if (RECT.w < 1 || RECT.h < 1 || CLIP.w < 1 || CLIP.h < 1)
                     continue;
 
-                tiles.emplace_back(STile{.window = WINDOW, .rect = RECT, .clip = CLIP, .badge = BADGE});
+                tiles.emplace_back(STile{.window = WINDOW, .rect = RECT, .clip = CLIP, .badge = BADGE, .alpha = static_cast<float>(std::clamp(alpha, 0.0, 1.0))});
                 // the window's own frames are what its tile follows
                 tiles.back().commit = WINDOW->wlSurface()->resource()->m_events.commit.listen([this, NAME, ref = PHLWINDOWREF{WINDOW}] {
                     ++m_counters.commits;

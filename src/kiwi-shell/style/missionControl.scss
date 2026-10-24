@@ -61,7 +61,7 @@ window.MissionControl {
     border-radius: 6px;
     background-color: rgba(0, 0, 0, 0.3);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-    transition: box-shadow 160ms ease-out;
+    transition: box-shadow 110ms ease-out;
 
     // pointed at: with its × (MissionControl.tsx, closeTarget), not by GTK's hover
     &.pointed {
@@ -112,12 +112,8 @@ button.mc-close {
     color: rgb(96, 96, 98);
     background-color: rgb(225, 225, 227);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-    transition: background-color 120ms ease-out, opacity 140ms ease-out;
+    transition: background-color 90ms ease-out;
 
-    // just shown: out of nothing (CloseButton)
-    &.coming {
-        opacity: 0;
-    }
 
     &:hover {
         background-color: rgb(238, 238, 240);
@@ -180,7 +176,7 @@ button.mc-add {
     padding: 1px;
     border: 4px solid transparent;
     border-radius: 15px;
-    transition: border-color 150ms ease-out;
+    transition: border-color 110ms ease-out;
 
     &.selected {
         border-color: var(--primary);
@@ -220,7 +216,7 @@ button.mc-add {
 // the title under the window pointed at, coming and going with its outline
 .mc-title-box {
     opacity: 0;
-    transition: opacity 150ms ease-out;
+    transition: opacity 110ms ease-out;
 
     &.shown {
         opacity: 1;

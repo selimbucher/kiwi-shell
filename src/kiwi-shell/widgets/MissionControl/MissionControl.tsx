@@ -175,6 +175,8 @@ export function openMissionControl() {
     setSelected(null)
     setExpanded(false)
     setView(next)
+    // faded off the last desktop it zoomed into (Scene.zoomed)
+    mcWindow?.get_child()?.set_opacity(1)
     setOpen(true)
 }
 
@@ -731,6 +733,10 @@ const PEEK_SHOWN = 63
 const SLIDE_GAP_SHARE = 0.05
 // the desktops making room for one dragged along the bar
 const MAKING_ROOM: Timing = { ms: 200, curve: easeOutCubic }
+// the share of a zoom by which the windows spread out are gone under it, and
+// how long Mission Control takes to fade off the desktop zoomed into
+const ZOOM_COVERS = 0.6
+const ZOOM_FADE_MS = 150
 
 // the paintable every page's wallpaper shows (MissionControl, loadWallpaper)
 const [wallpaperTexture, setWallpaperTexture] = createState<Gdk.Paintable | null>(null)
@@ -1318,11 +1324,26 @@ class Scene {
         return true
     }
 
+    // The desktop is under Mission Control now, where the zoom shows it:
+    // Mission Control fades off it, the bar, the Dock and the windows' title
+    // bars coming in as it goes, rather than all at once as it went.
     private async zoomed(zoom: Zoom) {
         if (zoom.done) return
         zoom.done = true
         await goToDesktopAtOnce(zoom.id)
-        closeAtOnce()
+        // its content: GTK has no opacity for a window itself
+        const content = mcWindow?.get_child()
+        if (!content) return closeAtOnce()
+        let start = -1
+        content.add_tick_callback((_w, clock) => {
+            const now = clock.get_frame_time() / 1000
+            if (start < 0) start = now
+            const t = Math.min(1, (now - start) / ZOOM_FADE_MS)
+            content.set_opacity(1 - easeOutCubic(t))
+            if (t < 1) return GLib.SOURCE_CONTINUE
+            closeAtOnce()
+            return GLib.SOURCE_REMOVE
+        })
     }
 
     // ─── Reordering the desktops ──────────────────────────────────────────────
@@ -1522,6 +1543,14 @@ class Scene {
         if (this.zoom) {
             const { box, canvas, windows, from, growing } = this.zoom
             const at = lerpBox(from, { x: 0, y: 0, width: W, height: monitor.height }, growing.value)
+            // The windows spread out are under it, but the compositor draws
+            // them over Mission Control: they go as it grows over them. Left
+            // up, they were drawn on the desktop just left for a frame or
+            // two once it was gone, cut off.
+            const zoomed = new Set(windows.map(w => w.window.address))
+            const left = Math.max(0, 1 - growing.value / ZOOM_COVERS)
+            for (const page of this.pages.values()) for (const [address, frame] of page.frames)
+                frame.widget.set_opacity(zoomed.has(address) ? 1 : left)
             box.set_size_request(Math.round(at.width), Math.round(at.height))
             this.top.move(box, Math.round(at.x), Math.round(at.y))
             const scale = at.width / W
@@ -1547,6 +1576,11 @@ class Scene {
 
 type CloseTarget = { desktop: number; x: number; y: number }
 const [closeTarget, setCloseTarget] = createState<CloseTarget | null>(null)
+// where the × is drawn: the target, and for the moment it fades the one it
+// leaves (CloseButton)
+const [closeShown, setCloseShown] = createState<CloseTarget | null>(null)
+// as the desktop pictures' rings (missionControl.scss, mc-close)
+const CLOSE_FADE_MS = 110
 
 // The ring a desktop's picture gets while pointed at comes and goes with its
 // ×, by the same reckoning: by GTK's own hover it went the moment the pointer
@@ -1629,12 +1663,12 @@ function CloseButton({ monitor }: { monitor: Accessor<Gdk.Monitor> }) {
             namespace={LAYER.missionControlClose}
             name="ags-mission-control-close"
             class="MissionControlClose"
-            visible={closeTarget(t => t !== null)}
+            visible={closeShown(t => t !== null)}
             gdkmonitor={monitor}
             exclusivity={Astal.Exclusivity.IGNORE}
             anchor={Astal.WindowAnchor.TOP | Astal.WindowAnchor.LEFT}
-            marginLeft={closeTarget(t => corner(t, "x"))}
-            marginTop={closeTarget(t => corner(t, "y"))}
+            marginLeft={closeShown(t => corner(t, "x"))}
+            marginTop={closeShown(t => corner(t, "y"))}
             application={app}
             layer={Astal.Layer.OVERLAY}
             keymode={Astal.Keymode.NONE}
@@ -1644,19 +1678,48 @@ function CloseButton({ monitor }: { monitor: Accessor<Gdk.Monitor> }) {
                 motion.connect("enter", () => { hovering.button = true; settleClose() })
                 motion.connect("leave", () => { hovering.button = false; settleClose() })
                 self.add_controller(motion)
-                // out of nothing each time it shows, a frame after it is drawn
-                // so (the first comes before it is styled at all)
-                self.connect("map", () => {
+                // It comes out of nothing and goes back into it as the
+                // desktop's ring does, and on another desktop out of nothing
+                // anew. Faded in code: a CSS class's change of opacity is
+                // eased by the transition before it, so it couldn't be gone
+                // at once for the next desktop.
+                let fade = 0
+                const fadeTo = (to: number, then?: () => void) => {
                     const button = self.get_child()
                     if (!button) return
-                    button.add_css_class("coming")
-                    let frames = 0
-                    button.add_tick_callback(() => {
-                        if (++frames < 2) return GLib.SOURCE_CONTINUE
-                        button.remove_css_class("coming")
+                    if (fade) button.remove_tick_callback(fade)
+                    const from = button.get_opacity()
+                    let start = -1
+                    fade = button.add_tick_callback((_w, clock) => {
+                        const now = clock.get_frame_time() / 1000
+                        if (start < 0) start = now
+                        const t = Math.min(1, (now - start) / CLOSE_FADE_MS)
+                        button.set_opacity(from + (to - from) * easeOutCubic(t))
+                        if (t < 1) return GLib.SOURCE_CONTINUE
+                        fade = 0
+                        then?.()
                         return GLib.SOURCE_REMOVE
                     })
-                })
+                }
+                const fadeIn = () => {
+                    self.get_child()?.set_opacity(0)
+                    fadeTo(1)
+                }
+                const follow = () => {
+                    const want = closeTarget.get()
+                    const shown = closeShown.get()
+                    if (want) {
+                        setCloseShown(want)
+                        // showing already: on another desktop anew, else back
+                        // (the map fades a new one in)
+                        if (shown && shown.desktop !== want.desktop) fadeIn()
+                        else if (shown) fadeTo(1)
+                        return
+                    }
+                    if (shown) fadeTo(0, () => setCloseShown(null))
+                }
+                self.connect("map", fadeIn)
+                onCleanup(closeTarget.subscribe(follow))
             }}
         >
             <button
