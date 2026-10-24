@@ -1,10 +1,14 @@
 import { Gtk } from "ags/gtk4"
 import { onCleanup } from "ags"
 import GLib from "gi://GLib"
+import GObject from "gi://GObject"
+import Gsk from "gi://Gsk"
+import Graphene from "gi://Graphene"
 import Hyprland from "gi://AstalHyprland"
 
 import { desktopsOn, goToDesktop, watchDesktops } from "../../MissionControl/desktops"
 import { toggleMissionControl } from "../../MissionControl/MissionControl"
+import { Tween, cubicBezier, type Timing } from "../../MissionControl/motion"
 
 const hyprland = Hyprland.get_default()
 
@@ -32,21 +36,120 @@ function marksOn(monitor: string): Mark[] {
     })
 }
 
-// A desktop more grows a mark at the row's end out of nothing, one fewer
-// shrinks the last away (the marks before it take on what the desktops now
-// are): the row, and with it the island, changes width on the marks' own
-// transition rather than at once (island.scss).
-const LEAVE_MS = 300
+// ─── The row ──────────────────────────────────────────────────────────────────
+// Laid out here rather than by a box and the marks' own CSS transitions: GTK
+// rounds each mark's width up to a whole pixel on its own, so one mark
+// narrowing while another widened (an empty desktop to an empty one) made
+// the row, and the island with it, a pixel wider for as long as it lasted.
+// Here the widths are counted together, in fractions. A desktop more grows a
+// mark at the row's end out of nothing, one fewer shrinks the last into
+// nothing (the marks before it take on what the desktops now are).
+
+const MARK = 14 // a mark, the colour across its width
+const WIDE = 20 // the current desktop's, or one with windows
+const GAP = 3 // either side of each
+const GROW: Timing = { ms: 260, curve: cubicBezier(0.25, 0.1, 0.25, 1) }
+
+type Slot = { button: Gtk.Button; width: Tween; leaving: boolean }
+
+const MarksRow = GObject.registerClass(
+    { GTypeName: "KiwiIslandMarks" },
+    class MarksRow extends Gtk.Widget {
+        private slots: Slot[] = []
+        private ticking = 0
+
+        /** A mark at the end, grown out of nothing unless `now`. */
+        add(button: Gtk.Button, now: boolean) {
+            button.set_parent(this)
+            const width = new Tween(0)
+            if (now) width.jump(MARK)
+            else width.to(MARK, GROW)
+            this.slots.push({ button, width, leaving: false })
+            this.animate()
+        }
+
+        /** Wide or not, at once if `now`. */
+        widen(button: Gtk.Button, wide: boolean, now: boolean) {
+            const slot = this.slots.find(s => s.button === button && !s.leaving)
+            if (!slot) return
+            if (now) slot.width.jump(wide ? WIDE : MARK)
+            else slot.width.to(wide ? WIDE : MARK, GROW)
+            this.animate()
+        }
+
+        /** Shrunk into nothing, then gone. */
+        drop(button: Gtk.Button) {
+            const slot = this.slots.find(s => s.button === button)
+            if (!slot) return
+            slot.leaving = true
+            button.set_can_target(false)
+            slot.width.to(0, GROW)
+            this.animate()
+        }
+
+        private animate() {
+            this.queue_resize()
+            if (this.ticking) return
+            this.ticking = this.add_tick_callback((_w, clock) => {
+                const now = clock.get_frame_time()
+                let running = false
+                for (const slot of this.slots) if (slot.width.step(now) || slot.width.running) running = true
+                for (const slot of this.slots.filter(s => s.leaving && !s.width.running)) {
+                    slot.button.unparent()
+                    this.slots.splice(this.slots.indexOf(slot), 1)
+                }
+                this.queue_resize()
+                if (running) return GLib.SOURCE_CONTINUE
+                this.ticking = 0
+                return GLib.SOURCE_REMOVE
+            })
+        }
+
+        // the gaps grow and shrink with a mark coming or going
+        private static gap(width: number): number {
+            return GAP * Math.min(1, width / MARK)
+        }
+
+        vfunc_measure(orientation: Gtk.Orientation, _forSize: number): [number, number, number, number] {
+            if (orientation === Gtk.Orientation.VERTICAL) {
+                const sizes = this.slots.map(s => s.button.measure(orientation, -1))
+                return [Math.max(0, ...sizes.map(([min]) => min)), Math.max(0, ...sizes.map(([, nat]) => nat)), -1, -1]
+            }
+            const total = this.slots.reduce((sum, s) => sum + s.width.value + 2 * MarksRow.gap(s.width.value), 0)
+            const width = Math.round(total)
+            return [width, width, -1, -1]
+        }
+
+        vfunc_size_allocate(_width: number, height: number, _baseline: number): void {
+            let x = 0
+            for (const { button, width } of this.slots) {
+                const gap = MarksRow.gap(width.value)
+                button.measure(Gtk.Orientation.HORIZONTAL, height)
+                button.allocate(Math.max(0, Math.round(width.value)), height, -1,
+                    new Gsk.Transform().translate(new Graphene.Point({ x: x + gap, y: 0 })))
+                x += width.value + 2 * gap
+            }
+        }
+
+        vfunc_dispose(): void {
+            if (this.ticking) this.remove_tick_callback(this.ticking)
+            this.ticking = 0
+            for (const { button } of this.slots) button.unparent()
+            this.slots = []
+            super.vfunc_dispose()
+        }
+    },
+)
 
 export default function Desktops({ monitor }: { monitor: string }) {
-    const row = new Gtk.Box({ cssClasses: ["island-desktops"], valign: Gtk.Align.CENTER })
+    const row = new MarksRow({ cssClasses: ["island-desktops"], valign: Gtk.Align.CENTER })
     // the marks, in order; not the ones on their way out
     const buttons: Gtk.Button[] = []
     let ids: number[] = []
-    const leaving = new Set<number>()
+    let built = false
 
     const make = () => {
-        const button = new Gtk.Button({ cssClasses: ["desktop", "arriving"], valign: Gtk.Align.CENTER })
+        const button = new Gtk.Button({ cssClasses: ["desktop"], valign: Gtk.Align.CENTER })
         button.set_child(new Gtk.Box({ cssClasses: ["tile"], valign: Gtk.Align.CENTER }))
         // the id at the time of the click: a reordered row keeps its buttons
         button.connect("clicked", () => {
@@ -56,34 +159,15 @@ export default function Desktops({ monitor }: { monitor: string }) {
             if (marksOn(monitor)[index]?.current) toggleMissionControl()
             else void goToDesktop(id)
         })
-        // from nothing once it has been drawn so (a frame later: the first
-        // comes before it is styled at all), or there's no start to go from
-        let frames = 0
-        button.add_tick_callback(() => {
-            if (++frames < 2) return GLib.SOURCE_CONTINUE
-            button.remove_css_class("arriving")
-            return GLib.SOURCE_REMOVE
-        })
-        row.insert_child_after(button, buttons.at(-1) ?? null)
+        // the row as it is when the island first shows: no growing in
+        row.add(button, !built)
         buttons.push(button)
-    }
-
-    const drop = () => {
-        const button = buttons.pop()!
-        button.add_css_class("leaving")
-        button.set_can_target(false)
-        const timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LEAVE_MS, () => {
-            leaving.delete(timer)
-            row.remove(button)
-            return GLib.SOURCE_REMOVE
-        })
-        leaving.add(timer)
     }
 
     const update = () => {
         const marks = marksOn(monitor)
         while (buttons.length < marks.length) make()
-        while (buttons.length > marks.length) drop()
+        while (buttons.length > marks.length) row.drop(buttons.pop()!)
         ids = marks.map(m => m.id)
         marks.forEach((mark, i) => {
             const b = buttons[i]
@@ -91,8 +175,10 @@ export default function Desktops({ monitor }: { monitor: string }) {
                 if (mark[name]) b.add_css_class(name)
                 else b.remove_css_class(name)
             }
+            row.widen(b, mark.current || mark.filled, !built)
             b.set_tooltip_text(`Desktop ${i + 1}`)
         })
+        built = true
     }
 
     // events come in bursts (a window moved is several), and Astal's own
@@ -115,7 +201,6 @@ export default function Desktops({ monitor }: { monitor: string }) {
         hyprland.disconnect(id)
         unwatch()
         if (pending) GLib.source_remove(pending)
-        leaving.forEach(timer => GLib.source_remove(timer))
     })
     update()
 
