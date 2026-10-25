@@ -272,17 +272,25 @@ function rebuildOnNewest(
     changes?: Accessor<unknown>,
 ) {
     let shown: Notifd.Notification | undefined
+    // each set of parts in a scope of its own (a rebuild runs from a
+    // subscription, outside the card's), ended with the next or the card
+    let dispose: (() => void) | null = null
     const rebuild = () => {
         const n = newest()
         if (!n || n === shown) return
         shown = n
         for (let c = box.get_first_child(); c; c = box.get_first_child()) box.remove(c)
-        const parts = build(n)
+        dispose?.()
+        const parts = createRoot(d => {
+            dispose = d
+            return build(n)
+        })
         for (const part of parts) box.append(part)
         box.set_visible(parts.length > 0)
     }
     rebuild()
     if (changes) onCleanup(changes.subscribe(rebuild))
+    onCleanup(() => dispose?.())
 }
 
 // ─── Icons / images ───────────────────────────────────────────────────────────

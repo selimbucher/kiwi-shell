@@ -150,7 +150,11 @@
             network
             hyprland
             wireplumber
-            mpris
+            # the position asked of a player only while shown (poll-position:
+            # the island's card), not every second as long as it's there
+            (mpris.overrideAttrs (old: {
+              patches = (old.patches or [ ]) ++ [ ./patches/astal-mpris-poll-position.patch ];
+            }))
             powerprofiles
             bluetooth
             tray

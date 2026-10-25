@@ -8,7 +8,8 @@ import { execAsync } from "ags/process"
 import { logger } from "../../log"
 import { mapVersion } from "../desktopEntries"
 import { entryForClient, giconForEntry } from "../appIcon"
-import { clientSelector, focusWindow, exitSession } from "../../hypr"
+import { clientSelector, focusWindow } from "../../hypr"
+import { lock, logOut, restart, shutDown } from "../power"
 import { conf } from "../config"
 
 const log = logger("launcher")
@@ -178,7 +179,7 @@ type Action = {
 const ACTIONS: Action[] = [
     {
         name: "Lock Screen", icon: "system-lock-screen-symbolic",
-        keywords: ["lock"], activate: () => run("hyprlock"),
+        keywords: ["lock"], activate: lock,
     },
     {
         name: "Sleep", icon: "weather-clear-night-symbolic",
@@ -186,15 +187,16 @@ const ACTIONS: Action[] = [
     },
     {
         name: "Log Out", icon: "system-log-out-symbolic",
-        keywords: ["logout", "sign out", "exit"], activate: () => { exitSession() },
+        // the three that end everything ask first, as from the power menu
+        keywords: ["logout", "sign out", "exit"], activate: logOut,
     },
     {
         name: "Restart", icon: "system-reboot-symbolic",
-        keywords: ["reboot"], activate: () => run("reboot"),
+        keywords: ["reboot"], activate: restart,
     },
     {
         name: "Shut Down", icon: "system-shutdown-symbolic",
-        keywords: ["poweroff", "power off"], activate: () => run("poweroff"),
+        keywords: ["poweroff", "power off"], activate: shutDown,
     },
     {
         name: "Light Appearance", icon: "weather-clear-symbolic",

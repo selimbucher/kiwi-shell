@@ -299,7 +299,7 @@ const FEATURES = {
 // says its own with `hyprctl kiwi-version` (src/hyprland-plugin/kiwi.hpp).
 // One that says another number, or nothing, isn't used: its requests or
 // events differ, and what it would do is guesswork.
-const PLUGIN_PROTOCOL = 10
+const PLUGIN_PROTOCOL = 11
 
 const WITHOUT = {
     geometry: "the dock won't see windows moved by hand",
@@ -345,6 +345,19 @@ export function keepDesktops(byMonitor: ReadonlyMap<string, readonly number[]>):
     if (!hasFeature("desktops")) return Promise.resolve(false)
     const words = [...byMonitor].filter(([, ids]) => ids.length > 0).map(([name, ids]) => `${name}:${ids.join(",")}`)
     return send(`kiwi-desktops ${words.join(" ")}`.trim(), "keep desktops", true)
+}
+
+/**
+ * The window put where a snap against `zone` of its display's edges puts
+ * one (src/hyprland-plugin/snap.cpp: left, right, top, top-left, …), brought
+ * forward and focused; `from` (global, logical) is where it comes from
+ * there, a picture of it say, rather than where it is.
+ */
+export function snapWindow(address: string, zone: string,
+    from?: { x: number, y: number, width: number, height: number }): Promise<boolean> {
+    if (!hasFeature("stacking")) return Promise.resolve(false)
+    const box = from ? ` ${[from.x, from.y, from.width, from.height].map(Math.round).join(",")}` : ""
+    return send(`kiwi-snap 0x${address} ${zone}${box}`, `snap 0x${address} ${zone}`)
 }
 
 /** Whether the compositor can do this for the shell. Answers after loadPlugins(). */

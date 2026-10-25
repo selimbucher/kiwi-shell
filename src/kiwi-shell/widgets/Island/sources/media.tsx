@@ -14,6 +14,7 @@ import { conf } from "../../config"
 import { giconForEntry } from "../../appIcon"
 import { loadThumbnail } from "../../services/wallpaper"
 import { coverFile, fetchedCover, isWebCover } from "../../services/covers"
+import { screenSeen } from "../../services/screen"
 import { easeOutCubic } from "../../MissionControl/motion"
 import { addActivitySource, collapse, opened, PRIORITY, type Activity } from "../model"
 import { focusClient, isMinimized, restoreClient } from "../../Dock/dock-state"
@@ -40,6 +41,18 @@ const named = (p: Mpris.Player) => p.bus_name !== PROXY && !!p.title?.trim()
 // when each player last started playing, by bus name
 const startedAt = new Map<string, number>()
 const watched = new Map<Mpris.Player, number[]>()
+// the process behind each player's bus name (below: not over its own app)
+const [playerPids, setPlayerPids] = createState(new Map<string, number>())
+
+// A name's process is asked again once it has gone: a player that quits and
+// comes back (Spotify restarted) is another process under the same name.
+function forgetPids(players: Mpris.Player[]) {
+    const gone = [...playerPids().keys()].filter(name => !players.some(p => p.bus_name === name))
+    if (!gone.length) return
+    const pids = new Map(playerPids())
+    for (const name of gone) pids.delete(name)
+    setPlayerPids(pids)
+}
 
 const [current, setCurrent] = createState<Mpris.Player | null>(null)
 let lingerTimer = 0
@@ -50,7 +63,9 @@ function choose() {
     const players = mpris.get_players().filter(p => p.bus_name !== PROXY)
     for (const p of players)
         if (playing(p) && !startedAt.has(p.bus_name)) startedAt.set(p.bus_name, GLib.get_monotonic_time())
-    for (const p of players) if (!playing(p)) startedAt.delete(p.bus_name)
+    // a player gone while playing starts afresh when it's back
+    for (const name of startedAt.keys())
+        if (!players.some(p => p.bus_name === name && playing(p))) startedAt.delete(name)
 
     const latest = players.filter(p => playing(p) && (named(p) || p === current()))
         .sort((a, b) => startedAt.get(b.bus_name)! - startedAt.get(a.bus_name)!)[0] ?? null
@@ -93,11 +108,16 @@ function watch() {
     }
     for (const p of players) {
         if (watched.has(p)) continue
+        // its position only while its card shows it (Expanded): asked every
+        // second, it woke the player and the shell all day (kiwi's patch to
+        // AstalMpris, patches/astal-mpris-poll-position.patch)
+        p.poll_position = false
         watched.set(p, [
             p.connect("notify::playback-status", choose),
             p.connect("notify::title", choose),
         ])
     }
+    forgetPids(players)
     choose()
 }
 
@@ -131,7 +151,6 @@ function lookAtFocus() {
 hyprland.connect("notify::focused-client", lookAtFocus)
 lookAtFocus()
 
-const [playerPids, setPlayerPids] = createState(new Map<string, number>())
 
 function askPid(busName: string) {
     if (playerPids().has(busName)) return
@@ -298,8 +317,9 @@ function Cover({ player, size }: { player: Mpris.Player; size: number }) {
 // (AstalCava) listening to what the speakers play. It listens only while
 // bars are on screen and their player plays; switched off, cava stops
 // listening altogether, its thread and timer gone. Paused, the bars settle
-// into a row of dots. Its stream is a capture of the speakers, which the
-// privacy dots leave out (privacy.tsx).
+// into a row of dots. Nor does it listen while nothing is seen: the session
+// locked, the displays switched off (services/screen.ts). Its stream is a
+// capture of the speakers, which the privacy dots leave out (privacy.tsx).
 
 const BAR_COUNT = 4
 const BAR_WIDTH = 3
@@ -338,9 +358,15 @@ cava.connect("notify::values", () => {
 function listen(bars: { hear(levels: number[]): void }, on: boolean) {
     if (on) listening.add(bars)
     else listening.delete(bars)
-    const active = listening.size > 0
+    hearIfSeen()
+}
+
+// (bars on screen, but the screen locked or off: cava stops all the same)
+function hearIfSeen() {
+    const active = listening.size > 0 && screenSeen.get()
     if (cava.active !== active) cava.active = active
 }
+screenSeen.subscribe(hearIfSeen)
 
 const MusicBars = GObject.registerClass(
     { GTypeName: "KiwiIslandMusicBars" },
@@ -540,6 +566,9 @@ function time(seconds: number): string {
 }
 
 function Expanded({ player }: { player: Mpris.Player }) {
+    // the position kept up while the card is open (watch)
+    player.poll_position = true
+    onCleanup(() => { player.poll_position = false })
     const title = createBinding(player, "title").as(t => String(t ?? ""))
     const artist = createBinding(player, "artist").as(a => String(a ?? ""))
     const position = createBinding(player, "position")

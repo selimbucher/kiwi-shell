@@ -1,5 +1,6 @@
 import { Gtk, Gdk } from "ags/gtk4"
-import { createState, createComputed, createBinding, createEffect, For } from "ags"
+import type { MenuSlot } from "./dock-state"
+import { createState, createComputed, createBinding, createEffect, For, onCleanup } from "ags"
 import Pango from "gi://Pango"
 import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient, registerDockIcon, clientsBinding as windowsBinding } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
@@ -17,7 +18,7 @@ const log = logger("dock")
 
 const MAX_DOTS = 4
 
-export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v: boolean) => void }) {
+export function AppIcon({ entry, menuSlot }: { entry: string, menuSlot: MenuSlot }) {
     const application = (() => {
         const GioUnix = imports.gi.GioUnix
         return GioUnix.DesktopAppInfo.new(entry)
@@ -51,8 +52,9 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
         saveList()
     }
 
-    const menu = AppContextMenu(entry, clientsBinding, application, name, pinned, onPinChange, setMenuOpen)
-    const previews = WindowPreviews(clientsBinding, setMenuOpen)
+    const menuOpen = menuSlot(), previewsOpen = menuSlot()
+    const menu = AppContextMenu(entry, clientsBinding, application, name, pinned, onPinChange, menuOpen)
+    const previews = WindowPreviews(clientsBinding, previewsOpen)
 
     // hover lifecycle, taskbar style: linger to open, stays while the
     // pointer is over the icon or flyout. Enter/leave only *trigger* the
@@ -153,7 +155,10 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     clickedEntry = entry
                     const clients = clientsBinding()
                     if (clients.length === 0) {
-                        launchBounce(setHop)
+                        // (a window of no installed app — a script's, a
+                        // Wine game's — has nothing to start again)
+                        if (!application) return
+                        launchBounce(setHop, client => entryForClient(client) === canonicalEntry(entry))
                         application.launch([], null)
                         return
                     }
@@ -166,8 +171,11 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     previews.popdown()
                     const client = clients[0]
                     if (isClientVisible(client)) {
-                        // visible → stash in the minimized scratchpad
-                        minimizeClient(client)
+                        // in front → stash in the minimized scratchpad;
+                        // on screen but behind another window → brought
+                        // forward, as the click was surely for
+                        if (hyprland.get_focused_client()?.get_address() === client.get_address()) minimizeClient(client)
+                        else focusClient(client)
                     } else if (isMinimized(client)) {
                         // bring it back to the current workspace
                         restoreClient(client)
@@ -181,10 +189,16 @@ export function AppIcon({ entry, setMenuOpen }: { entry: string, setMenuOpen: (v
                     const unregister = registerDockIcon(canonicalEntry(entry), self)
                     // an icon removed mid-hover must not open or close
                     // the picker of an icon that's gone
-                    self.connect("destroy", () => {
+                    onCleanup(() => {
                         unregister()
                         cancelOpen()
                         cancelClose()
+                        // its menu and picker go with it, open or not (a
+                        // popover whose parent goes says nothing of it)
+                        menu.popdown()
+                        previews.popdown()
+                        menuOpen(false)
+                        previewsOpen(false)
                     })
                     const gesture = new Gtk.GestureClick()
                     gesture.set_button(3)
@@ -447,7 +461,7 @@ function WindowPreviewItem({ client, pickerOpen, popdown, tiles }: {
                 class="dock-preview-shot"
                 $={(self: Gtk.Widget) => {
                     tiles.set(address, self)
-                    self.connect("destroy", () => {
+                    onCleanup(() => {
                         if (tiles.get(address) === self) tiles.delete(address)
                     })
                 }}
@@ -525,7 +539,8 @@ function AppContextMenu(entry, clientsBinding, application, name, pinned, onPinC
             // dock's hover lift and its icon-size drop shadow, and the menu
             // lives inside the very button that triggers them
             icon: <AppIconImage entry={entry} pixelSize={20} cssClass="context-menu-icon" /> as Gtk.Widget,
-            onClick: () => application.launch([], null),
+            sensitive: !!application,
+            onClick: () => application?.launch([], null),
         },
         ...(actions.length ? [{ separator: true } as ContextMenuItem, ...actions] : []),
         { separator: true },

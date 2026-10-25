@@ -5,12 +5,14 @@ import IndicatorBar from "./widgets/IndicatorBar/IndicatorBar"
 import { IslandCard } from "./widgets/Island/Island"
 import AppSwitcher from "./widgets/AppSwitcher/AppSwitcher"
 import MissionControl from "./widgets/MissionControl/MissionControl"
+import SnapAssist from "./widgets/SnapAssist/SnapAssist"
 import WorkspaceSwitcher from "./widgets/WorkspaceSwitcher/WorkspaceSwitcher"
 import Dock from "./widgets/Dock/Dock"
 import Desktop from "./widgets/Desktop/Desktop"
 import Launcher from "./widgets/Launcher/Launcher"
 import Prompt from "./widgets/prompts"
-import { For, This, createBinding } from "ags"
+import { For, This, createBinding, createRoot } from "ags"
+import type { Gdk } from "ags/gtk4"
 import NotificationCenter, {
   toggleNc,
 } from "./widgets/Notifications/NotificationCenter"
@@ -37,25 +39,52 @@ app.start({
 
     const monitors = createBinding(app, "monitors")
 
-    return (
+    // The windows there is one of (popups follow popupGdkMonitor) are the
+    // first display's, whichever that is: when it goes, they're built again
+    // for the next one, rather than going with it. Built in a scope of their
+    // own, outside any effect: in one (gnim's With), whatever state they read
+    // as they were built became the effect's, and its next change built them
+    // all again — Mission Control and the rest lost mid-use.
+    let builtFor: Gdk.Monitor | null = null
+    let dispose: (() => void) | null = null
+    const buildSingles = () => {
+      const first = app.get_monitors()[0] ?? null
+      if (first === builtFor) return
+      dispose?.()
+      dispose = null
+      builtFor = first
+      if (!first) return
+      createRoot(end => {
+        dispose = end
+        return (
+          <This this={app}>
+            <NotificationCenter gdkmonitor={first} />
+            <Desktop gdkmonitor={first} />
+            <IndicatorBar gdkmonitor={first} />
+            <IslandCard />
+            <AppSwitcher gdkmonitor={first} />
+            <MissionControl gdkmonitor={first} />
+            <SnapAssist />
+            <WorkspaceSwitcher gdkmonitor={first} />
+            <Launcher gdkmonitor={first} />
+            <Prompt gdkmonitor={first} />
+          </This>
+        )
+      })
+    }
+    // each display's bar and dock first, as it always was
+    const perDisplay = (
       <For each={monitors}>
-        {(gdkmonitor, index) => (
+        {(gdkmonitor) => (
           <This this={app}>
             <Bar gdkmonitor={gdkmonitor} toggleNc={toggleNc} />
             <Dock gdkmonitor={gdkmonitor} />
-            {/* popups follow popupGdkMonitor — one instance is enough */}
-            {index() === 0 && <NotificationCenter gdkmonitor={gdkmonitor} />}
-            {index() === 0 && <Desktop gdkmonitor={gdkmonitor} />}
-            {index() === 0 && <IndicatorBar gdkmonitor={gdkmonitor} />}
-            {index() === 0 && <IslandCard />}
-            {index() === 0 && <AppSwitcher gdkmonitor={gdkmonitor} />}
-            {index() === 0 && <MissionControl gdkmonitor={gdkmonitor} />}
-            {index() === 0 && <WorkspaceSwitcher gdkmonitor={gdkmonitor} />}
-            {index() === 0 && <Launcher gdkmonitor={gdkmonitor} />}
-            {index() === 0 && <Prompt gdkmonitor={gdkmonitor} />}
           </This>
         )}
       </For>
     )
+    buildSingles()
+    monitors.subscribe(buildSingles)
+    return perDisplay
   },
 })

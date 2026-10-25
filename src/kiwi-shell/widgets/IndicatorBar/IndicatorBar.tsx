@@ -9,7 +9,7 @@ import Gtk4LayerShell from "gi://Gtk4LayerShell"
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../iconNames"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
-import { dockOverlap, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance } from "../Dock/dock-state"
+import { dockOverlaps, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance } from "../Dock/dock-state"
 import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessWritable, refreshKbdBrightness } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
 import { watchIndicatorKeys } from "../inputWatcher"
@@ -103,9 +103,8 @@ const EDGE_GAP = 20
 const DOCK_GAP = 8
 
 // the margin while the dock is out, and the one while it is away
-function margins(): { withDock: number, alone: number } {
+function margins(overlap: number): { withDock: number, alone: number } {
   if (conf().indicator_bar_position === "left") return { withDock: 0, alone: 0 }
-  const overlap = dockOverlap()
   return { withDock: (overlap > 0 ? overlap : bandGuess()) + DOCK_GAP, alone: EDGE_GAP }
 }
 
@@ -129,7 +128,9 @@ function ease(x: number): number {
   return bezier(t, 0.1, 1)
 }
 
-function followDock(self: Astal.Window) {
+// the dock of the display it is on, not another's
+function followDock(self: Astal.Window, display: () => Gdk.Monitor) {
+  const dockOverlap = () => dockOverlaps.peek()[display().get_connector() ?? ""] ?? 0
   let margin = EDGE_GAP
   let tick = 0
   const place = (px: number) => {
@@ -144,7 +145,7 @@ function followDock(self: Astal.Window) {
   const glide = () => {
     const overlap = dockOverlap()
     if (overlap > 0) lastBand = overlap
-    const { withDock, alone } = margins()
+    const { withDock, alone } = margins(overlap)
     const shown = overlap > 0
     const to = shown ? withDock : alone
     stop()
@@ -155,8 +156,10 @@ function followDock(self: Astal.Window) {
     // less far to go. Its own distance eased over the same time would be the
     // same length at a different speed, and the two would read as two
     // animations; waiting for the pill to reach it would read as a delay.
+    // From where it is: turned round halfway, it goes back from there.
     const distance = dockSlideDistance(conf().dock_icon_size)
     const duration = (shown ? DOCK_SLIDE_DURATION : DOCK_SLIDE_OUT_DURATION) * 1000
+    const from = Math.max(alone, Math.min(withDock, margin))
     let start = -1
     tick = self.add_tick_callback((_widget, clock) => {
       const now = clock.get_frame_time()
@@ -164,16 +167,16 @@ function followDock(self: Astal.Window) {
       const progress = Math.min(1, (now - start) / duration)
       const travelled = distance * ease(progress)
       place(shown
-        ? Math.min(withDock, alone + travelled)
-        : Math.max(alone, withDock - travelled))
+        ? Math.min(withDock, from + travelled)
+        : Math.max(alone, from - travelled))
       if (progress < 1 && (shown ? margin < withDock : margin > alone)) return GLib.SOURCE_CONTINUE
       tick = 0
       return GLib.SOURCE_REMOVE
     })
   }
 
-  place(margins().alone)
-  const unsubscribe = [dockOverlap.subscribe(glide), conf.subscribe(glide)]
+  place(margins(dockOverlap()).alone)
+  const unsubscribe = [dockOverlaps.subscribe(glide), conf.subscribe(glide), popupGdkMonitor.subscribe(glide)]
   onCleanup(() => {
     stop()
     unsubscribe.forEach(u => u())
@@ -188,7 +191,7 @@ export default function IndicatorBar({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }
       css={conf(c => `--primary: ${c.primary_color};`)}
       $={ self => {
         onCleanup(() => destroyWindow(self))
-        followDock(self)
+        followDock(self, () => popupGdkMonitor.peek() ?? gdkmonitor)
         timeout(1000, () => {
           waiting = false
         })
@@ -205,7 +208,9 @@ export default function IndicatorBar({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }
         conf.indicator_bar_position == "left" ? Astal.WindowAnchor.LEFT : Astal.WindowAnchor.BOTTOM
       )}
       application={app}
-      layer={Astal.Layer.TOP}
+      // over a fullscreen window too, which Hyprland draws over the top layer:
+      // the volume keys during a fullscreen video show what they did
+      layer={Astal.Layer.OVERLAY}
     >
       <Indicator />
     </window>

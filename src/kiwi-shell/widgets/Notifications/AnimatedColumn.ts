@@ -358,11 +358,13 @@ export const AnimatedColumn = GObject.registerClass(
 
         vfunc_snapshot(snapshot: Gtk.Snapshot) {
             // entries folding behind their head go underneath; entries sliding
-            // in go on top of the ones moving aside to make room for them
+            // in go on top of the ones moving aside to make room for them, the
+            // newest (the list's first) over one still coming in before it
             const layer = (item: Item<any>) =>
                 item.foldKey ? 0 : !item.exiting && item.x.running ? 2 : 1
             for (const z of [0, 1, 2]) {
-                for (const item of this.items) {
+                const items = z === 2 ? [...this.items].reverse() : this.items
+                for (const item of items) {
                     if (layer(item) === z) this.snapshot_child(item.widget, snapshot)
                 }
             }

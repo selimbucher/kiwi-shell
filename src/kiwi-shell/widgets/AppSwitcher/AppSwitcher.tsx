@@ -18,6 +18,7 @@ import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { applyBinds, registerBindSetup, closeWindow, clientSelector, type BindOp } from "../../hypr"
 import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
+import { isOpen as missionControlOpen } from "../MissionControl/MissionControl"
 
 export const [isVisible, setVisibility] = createState(false)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)
@@ -46,10 +47,18 @@ hyprland.connect("notify::focused-client", () => {
 
 let registered: Shortcut | null = null
 
-const NEXT = globalShortcut("apps-next", "App switcher: open, or the next window", "press", () => {
-    if (!isVisible()) showAppSwitcher()
-    selectNextClient()
-})
+const openAndStep = (step: 1 | -1) => {
+    if (!isVisible()) {
+        // under Mission Control it would be chosen from blind
+        if (missionControlOpen.get()) return
+        showAppSwitcher()
+    }
+    stepSelection(step)
+}
+const NEXT = globalShortcut("apps-next", "App switcher: open, or the next window", "press", () => openAndStep(1))
+// Shift with the shortcut goes backwards, as on a Mac; opened that way the
+// selection starts at the last window
+const PREVIOUS = globalShortcut("apps-previous", "App switcher: open, or the previous window", "press", () => openAndStep(-1))
 const CONFIRM = globalShortcut("apps-confirm", "App switcher: switch to the selected window",
     "release", executeSelectedAndClose)
 const CLOSE = globalShortcut("apps-close", "App switcher: close", "release", hideAppSwitcher)
@@ -59,10 +68,14 @@ function appSwitcherUnbinds(s: Shortcut): BindOp[] {
     const release = `${s.mods[0]} + ${heldModifierKey(s)}`
     return [
         { unbind: combo(s) },
+        { unbind: combo(s, "SHIFT") },
         { unbind: release },
         { submap: "app_switcher", ops: [
             { unbind: combo(s) },
+            { unbind: combo(s, "SHIFT") },
             { unbind: release },
+            { unbind: `${s.mods[0]} + left` },
+            { unbind: `${s.mods[0]} + right` },
             { unbind: "escape" },
             { unbind: `${s.mods[0]} + escape` },
         ] },
@@ -72,6 +85,7 @@ function appSwitcherUnbinds(s: Shortcut): BindOp[] {
 async function registerAltTabBinds() {
     const s = shortcut("app_switcher")
     const entry = combo(s)
+    const back = combo(s, "SHIFT")
     const release = `${s.mods[0]} + ${heldModifierKey(s)}`
 
     // applied atomically and in order. Submap definitions append on
@@ -82,6 +96,8 @@ async function registerAltTabBinds() {
         // root: entry, and the modifier-release confirm (see comment above)
         { bind: entry, action: NEXT, description: "kiwi: apps open" },
         { bind: entry, action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
+        { bind: back, action: PREVIOUS, description: "kiwi: apps open backwards" },
+        { bind: back, action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
         { bind: release, action: CONFIRM, description: "kiwi: apps confirm",
             flags: { release: true, transparent: true } },
         { bind: release, action: { submap: "reset" }, description: "kiwi: apps submap reset",
@@ -89,6 +105,13 @@ async function registerAltTabBinds() {
         // submap: cycling while held, escape failsafes
         { submap: "app_switcher", ops: [
             { bind: entry, action: NEXT, description: "kiwi: apps cycle",
+                flags: { repeating: true } },
+            { bind: back, action: PREVIOUS, description: "kiwi: apps cycle back",
+                flags: { repeating: true } },
+            // the arrows move the selection too while the modifier is held
+            { bind: `${s.mods[0]} + left`, action: PREVIOUS, description: "kiwi: apps cycle back",
+                flags: { repeating: true } },
+            { bind: `${s.mods[0]} + right`, action: NEXT, description: "kiwi: apps cycle",
                 flags: { repeating: true } },
             { bind: "escape", action: CLOSE, description: "kiwi: apps close",
                 flags: { release: true } },
@@ -136,12 +159,12 @@ isVisible.subscribe(() => {
     else live.hidden()
 })
 
-function selectNextClient() {
+function stepSelection(step: 1 | -1) {
     if (!isVisible()) return
     const clients = displayedClients()
     if (clients.length === 0) return
     const idx = clients.findIndex(c => c.get_address() === selectedAddress())
-    setSelectedAddress(clients[(idx + 1) % clients.length].get_address())
+    setSelectedAddress(clients[(idx + step + clients.length) % clients.length].get_address())
 }
 
 function executeSelectedAndClose() {
@@ -361,10 +384,22 @@ function SwitcherClose({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 button.set_visible(false)
                 // over the whole free area: it takes no pointer until the × shows
                 self.connect("map", () => shown ? place(shown) : region(null))
+                // gone with the switcher, not fading on a surface that no
+                // longer draws, to come back where it was the next time
+                self.connect("unmap", () => {
+                    if (fade) button.remove_tick_callback(fade)
+                    fade = 0
+                    shown = null
+                    hoveringClose.button = false
+                    button.set_opacity(0)
+                    button.set_visible(false)
+                })
+                // the pointer anywhere the window takes it, which is the ×
+                // and the room round it, as the tile it is on gives it up
                 const motion = new Gtk.EventControllerMotion()
                 motion.connect("enter", () => { hoveringClose.button = true; settleClose() })
                 motion.connect("leave", () => { hoveringClose.button = false; settleClose() })
-                button.add_controller(motion)
+                self.add_controller(motion)
                 const unsubscribe = closeTarget.subscribe(follow)
                 onCleanup(() => {
                     unsubscribe()
@@ -479,8 +514,11 @@ function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // previews wrap into centered rows instead of shrinking. Chunked by
     // hand: card widths are known upfront, and GtkFlowBox is a grid in
     // disguise — it stretches cards to uniform column widths.
+    // Laid out as it opens, for the display it opens on (displayedClients
+    // is set then): the display focused or a setting changed while it was
+    // hidden rebuilt every picture for nothing.
     const layout = createComputed(get => {
-        const monitor = get(popupGdkMonitor) ?? gdkmonitor
+        const monitor = popupGdkMonitor.peek() ?? gdkmonitor
         const { width, height } = monitor.get_geometry()
         // rows wrap well before the screen edge so the panel never reads
         // as a full-width band

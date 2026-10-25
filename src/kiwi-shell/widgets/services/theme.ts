@@ -46,6 +46,8 @@ export const LAYER = {
     switcherClose: "kiwi-switcher-close",
     missionControl: "kiwi-mission-control",
     missionControlClose: "kiwi-mission-control-close",
+    missionControlCarried: "kiwi-mission-control-carried",
+    snapAssist: "kiwi-snap-assist",
     scrim: "kiwi-scrim",
     island: "kiwi-island",
     plain: "kiwi-plain",
@@ -87,6 +89,7 @@ type Rule = { name: string, namespace: string, noAnim?: boolean, solid?: boolean
 const RULES: Rule[] = [
     { name: "kiwi-panels", namespace: LAYER.panel },
     { name: "kiwi-switchers", namespace: LAYER.switcher, noAnim: true },
+    { name: "kiwi-snap-assist", namespace: LAYER.snapAssist, noAnim: true },
     { name: "kiwi-switcher-close", namespace: LAYER.switcherClose, noAnim: true, solid: true },
     { name: "kiwi-dock", namespace: LAYER.dock },
     { name: "kiwi-cards", namespace: LAYER.cards },
@@ -94,6 +97,7 @@ const RULES: Rule[] = [
     { name: "kiwi-island", namespace: LAYER.island, noAnim: true },
     { name: "kiwi-mission-control", namespace: LAYER.missionControl, noAnim: true, solid: true },
     { name: "kiwi-mission-control-close", namespace: LAYER.missionControlClose, noAnim: true, solid: true },
+    { name: "kiwi-mission-control-carried", namespace: LAYER.missionControlCarried, noAnim: true, solid: true },
 ]
 
 // Granite is solid and blurring it would only cost frames — except for

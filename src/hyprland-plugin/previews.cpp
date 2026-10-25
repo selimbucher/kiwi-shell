@@ -48,10 +48,9 @@
 // fly is Mission Control's: the tiles leave their windows as the set appears,
 // from where each window is on screen to its tile, and go back into them when
 // the set is cleared, after which a `kiwipreviews>>flown,<set>` event says
-// the shell can take its surface down. Meanwhile the windows themselves fade
-// out early in the flight, and back in late on the way home, under their
-// pictures — the title bars and shadows the pictures lack go with them — and
-// the layer the tiles are on fades in and out with the flight, its other
+// the shell can take its surface down. Meanwhile the windows themselves are
+// hidden, from the frame their pictures leave them to the frame they land,
+// and the layer the tiles are on fades in and out with the flight, its other
 // sets with it. Should the layer go away first, the flight ends there.
 // raise puts a window's tile on top of the others: the window clicked in
 // Mission Control flies home over the rest, as it is about to be.
@@ -186,13 +185,25 @@ namespace {
     // The bar on top of a window, in the monitor's pixels, where hyprbars
     // draws it: moved with its desktop as that slides, and so off the canvas
     // (empty in its tile) for a desktop not on screen. None without one.
+    // A desktop out of sight and at rest (Mission Control's others, one being
+    // zoomed into): its windows' bars are drawn as if it were on screen
+    // (drawBars), its offset held at nothing meanwhile.
+    bool heldStill(const PHLWORKSPACE& workspace) {
+        return workspace && !workspace->isVisible() && !workspace->m_renderOffset->isBeingAnimated();
+    }
+
     std::optional<CBox> barOf(const PHLWINDOW& window, const PHLMONITOR& monitor) {
         const double TOP = barHeight(window);
         if (TOP <= 0)
             return std::nullopt;
+        // where hyprbars draws it: with the workspace's offset and the
+        // window's floating offset, the one Hyprland gives a window past the
+        // display's edge while its workspace slides (none while held still,
+        // which drawBars works out afresh for the drawing)
         const auto WORKSPACE = window->m_workspace;
-        const auto POS       = window->position(IGeometric::GEOMETRIC_CURRENT) +
-            (WORKSPACE && !window->m_pinned ? WORKSPACE->m_renderOffset->value() : Vector2D{});
+        const bool HELD      = heldStill(WORKSPACE);
+        const auto POS       = window->position(IGeometric::GEOMETRIC_CURRENT) + (HELD ? Vector2D{} : window->m_floatingOffset) +
+            (WORKSPACE && !window->m_pinned && !HELD ? WORKSPACE->m_renderOffset->value() : Vector2D{});
         const auto SIZE = window->size(IGeometric::GEOMETRIC_CURRENT);
         return CBox{POS.x, POS.y - TOP, SIZE.x, TOP}.translate(-monitor->m_position).scale(monitor->m_scale).round();
     }
@@ -228,6 +239,30 @@ namespace {
         CRegion damage{0, 0, monitor->m_transformedSize.x, monitor->m_transformedSize.y};
         if (!g_pHyprRenderer->beginFullFakeRender(monitor, damage, canvas.fb))
             return;
+
+        // The bars of windows on a desktop out of sight too: a bar is drawn
+        // where its workspace is, slid off the screen, so the workspace is
+        // held where it would be on screen for the drawing, as the genie
+        // holds one to picture a window (genie.cpp, pictureLeaving), its
+        // floating windows' offsets put back after. Without, those windows
+        // went without bars in Mission Control until their desktop was the
+        // one in view, and a desktop zoomed into had its windows' bars come
+        // only once it was there.
+        std::vector<std::pair<PHLWORKSPACEREF, Vector2D>> held;
+        std::vector<std::pair<PHLWINDOWREF, Vector2D>>    floating;
+        for (const auto& window : windows) {
+            const auto WORKSPACE = window->m_workspace;
+            if (window->m_pinned || !heldStill(WORKSPACE) || WORKSPACE->m_renderOffset->value() == Vector2D{} ||
+                std::ranges::any_of(held, [&](const auto& h) { return h.first == WORKSPACE; }))
+                continue;
+            held.emplace_back(WORKSPACE, WORKSPACE->m_renderOffset->value());
+            for (const auto& w : Desktop::windowState()->windows())
+                if (w->m_workspace == WORKSPACE)
+                    floating.emplace_back(w, w->m_floatingOffset);
+            *WORKSPACE->m_renderOffset = Vector2D{};
+            WORKSPACE->m_renderOffset->warp(false);
+        }
+
         g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
         g_pHyprRenderer->startRenderPass();
         for (const auto& window : windows)
@@ -236,6 +271,15 @@ namespace {
                     decoration->draw(monitor, 1.F);
         g_pHyprRenderer->endRender();
         canvas.drawn = true;
+
+        for (const auto& [ref, offset] : held)
+            if (const auto WORKSPACE = ref.lock()) {
+                *WORKSPACE->m_renderOffset = offset;
+                WORKSPACE->m_renderOffset->warp(false);
+            }
+        for (const auto& [ref, offset] : floating)
+            if (const auto W = ref.lock())
+                W->m_floatingOffset = offset;
     }
 
     SP<Render::ITexture> barsOn(const PHLMONITOR& monitor) {
@@ -250,9 +294,6 @@ namespace {
     // mark, steady through the middle, settling at the end.
     constexpr auto  FLY_DURATION = std::chrono::milliseconds{240};
     constexpr float FLY_X1 = 0.35F, FLY_Y1 = 0.F, FLY_X2 = 0.65F, FLY_Y2 = 1.F;
-    // the windows are gone by this share of the way out, and back from this
-    // share of the way home
-    constexpr float FLY_HIDDEN_BY = 0.35F;
 
     float bezier(float a, float b, float u) {
         return 3.F * (1.F - u) * (1.F - u) * u * a + 3.F * (1.F - u) * u * u * b + u * u * u;
@@ -359,12 +400,16 @@ namespace {
             return IT->second;
 
         auto& slot = cache[KEY];
-        Hyprgraphics::CImage image(file, {(double)px, (double)px}); // the size only matters for an svg
-        // a file that will not load leaves the tile without a badge, as the
-        // rest of the plugin leaves the unexpected alone
-        if (!image.success() || !image.cairoSurface() || !image.cairoSurface()->cairo())
+        // A file that will not load leaves the tile without a badge, as the
+        // rest of the plugin leaves the unexpected alone; one it may not read
+        // makes the loader throw, which here, mid-frame, would end the session.
+        std::unique_ptr<Hyprgraphics::CImage> image;
+        try {
+            image = std::make_unique<Hyprgraphics::CImage>(file, Vector2D{(double)px, (double)px}); // the size only matters for an svg
+        } catch (...) { return nullptr; }
+        if (!image->success() || !image->cairoSurface() || !image->cairoSurface()->cairo())
             return nullptr;
-        const auto ICON = image.cairoSurface()->cairo();
+        const auto ICON = image->cairoSurface()->cairo();
         const int  W = cairo_image_surface_get_width(ICON), H = cairo_image_surface_get_height(ICON);
         if (W < 1 || H < 1)
             return nullptr;
@@ -562,7 +607,14 @@ namespace {
         void drawBar(const SDrawTile& tile, const CBox& target, double scale, const PHLMONITOR& monitor, float alpha) {
             const auto& BAR = *tile.bar;
             const CBox  CANVAS{target.x - BAR.x * scale, target.y - BAR.y * scale, monitor->m_transformedSize.x * scale, monitor->m_transformedSize.y * scale};
-            g_pHyprRenderer->m_renderData.clipBox = target.intersection(tile.clip);
+            // A bar cut off whole (a desktop zoomed into growing over its
+            // window) is not drawn: an empty clip box is no clip at all to
+            // Hyprland, and the canvas went on screen whole, every window's
+            // bar laid out round this one's.
+            const CBox  CLIP = target.intersection(tile.clip);
+            if (CLIP.empty())
+                return;
+            g_pHyprRenderer->m_renderData.clipBox = CLIP;
             g_pHyprRenderer->pushMonitorTransformEnabled(true);
             g_pHyprOpenGL->renderTexture(m_bars, CANVAS, {.a = alpha});
             g_pHyprRenderer->popMonitorTransformEnabled();
@@ -745,11 +797,16 @@ namespace {
         }
 
         // Cleared: a flying set flies home first, and is done once there.
+        // One cleared before its windows took off says so as well, at once:
+        // the shell waits on that word to be gone.
         void close() {
             if (!fly || m_tiles.empty() || !m_flying) {
                 m_held = false;
                 clear();
+                const bool WAITED_ON = fly && !m_done;
                 m_done = true;
+                if (WAITED_ON)
+                    g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwipreviews", .data = std::format("flown,{}", name)});
                 return;
             }
             m_armed = false;
@@ -760,7 +817,6 @@ namespace {
             m_closing         = true;
             m_since           = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - SHOWN));
             m_held            = false;
-            m_showBelow       = std::min(FLY_HIDDEN_BY, SHOWN);
             m_hiddenChanged   = true;
             // nothing else may be drawing: the way home starts with a frame
             damageMonitors();
@@ -805,7 +861,6 @@ namespace {
             m_held          = true;
             m_closing       = false;
             m_heldAt        = std::clamp(progress, 0.F, 1.F);
-            m_showBelow     = 0.F;
             m_hiddenChanged = true;
             damageMonitors();
         }
@@ -820,9 +875,8 @@ namespace {
                 m_closing = false;
                 m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(m_heldAt));
             } else {
-                m_closing   = true;
-                m_since     = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - m_heldAt));
-                m_showBelow = std::min(FLY_HIDDEN_BY, m_heldAt);
+                m_closing = true;
+                m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - m_heldAt));
             }
             damageMonitors();
         }
@@ -848,6 +902,9 @@ namespace {
                 damageTilesOf(m_selected);
                 damageTilesOf(m_previous);
             }
+            // (a window gone before its bar had come in leaves its entry, which
+            // would have every frame redrawn until the set is cleared)
+            std::erase_if(m_barFrom, [](const auto& entry) { return Time::steadyNow() - entry.second > BAR_FADE; });
             if (!m_barFrom.empty())
                 damageAll();
             if (!m_flying)
@@ -940,7 +997,13 @@ namespace {
                 const auto ON_MONITOR = [&](const CBox& rect) { return rect.copy().translate(anchor->origin - monitor->m_position).scale(monitor->m_scale).round(); };
                 auto       box        = ON_MONITOR(tile.rect);
                 auto       clip       = ON_MONITOR(tile.clip);
-                if (SHOWN < 1.F) {
+                float      alpha      = tile.alpha;
+                if (SHOWN < 1.F && (!WINDOW->m_workspace || !WINDOW->m_workspace->isVisible())) {
+                    // a window of a desktop not on screen (Mission Control
+                    // has slid away from it) has nowhere to fly to: it fades
+                    // where it is
+                    alpha *= SHOWN;
+                } else if (SHOWN < 1.F) {
                     // on the way between the window and its tile
                     auto FROM = WINDOW->geometricBox(IGeometric::GEOMETRIC_CURRENT);
                     if (bars) {
@@ -957,8 +1020,12 @@ namespace {
                 const auto BAR      = bars ? barOf(WINDOW, monitor) : std::nullopt;
                 float      barAlpha = 1.F;
                 if (bars) {
-                    // drawn only where its desktop is shown (barOf has a place for it all the same)
-                    const bool SHOWN_BAR = BAR && WINDOW->m_workspace && WINDOW->m_workspace->isVisible();
+                    // Drawn where its desktop is at rest, on screen or out of
+                    // sight (drawBars); not while it slides, when hyprbars'
+                    // bar and the place worked out for it here part, and the
+                    // bar came out cut off beside its window. It fades back in
+                    // once the desktop is still.
+                    const bool SHOWN_BAR = BAR && WINDOW->m_workspace && !WINDOW->m_workspace->m_renderOffset->isBeingAnimated();
                     if (!SHOWN_BAR)
                         m_barless.insert(WINDOW.get());
                     else if (m_barless.erase(WINDOW.get()))
@@ -973,7 +1040,7 @@ namespace {
                                              .box      = box,
                                              .clip     = clip,
                                              .badge    = tile.badge,
-                                             .alpha    = tile.alpha,
+                                             .alpha    = alpha,
                                              .outline  = SELECTED == WINDOW ? outlineIn() : PREVIOUS == WINDOW ? outlineOut() : 0.F,
                                              .bar      = BAR,
                                              .barAlpha = barAlpha});
@@ -1042,7 +1109,7 @@ namespace {
                 // visibleOnMonitor is only an overlap: a window on another
                 // workspace still sits where it was. This asks whether the
                 // frame being drawn will contain it.
-                // Nor will it a window this set has faded out for its flight:
+                // Nor will it a window this set has hidden for its flight:
                 // its picture would stand still all through Mission Control.
                 if (!WINDOW || !WINDOW->m_isMapped || (g_pHyprRenderer->shouldRenderWindow(WINDOW, monitor) && !isHidden(tile.window)))
                     continue;
@@ -1090,24 +1157,25 @@ namespace {
         std::vector<WP<CWLSurfaceResource>> m_armSurfaces;
         std::vector<PHLWINDOWREF>           m_woken; // suspended again once their tiles are gone
 
-        // a flying set's flight, and the windows it has faded out with
-        // the alpha each had before
+        // a flying set's flight, and the windows it has hidden
         bool            m_flying = false, m_closing = false, m_done = false;
         bool            m_held   = false; // by a gesture, at m_heldAt
         float           m_heldAt = 0.F;
         Time::steady_tp m_since;
         float           m_applied       = -1.F; // the flight's point last applied to the windows
         bool            m_hiddenChanged = false;
-        // the share of the way below which the windows show: FLY_HIDDEN_BY
-        // for a flight of its own; nothing while fingers hold it, nor on
-        // the way out after (the windows are gone already); on the way home
-        // after, from where the fingers let go
-        float m_showBelow = FLY_HIDDEN_BY;
         struct SHidden {
             PHLWINDOWREF window;
-            float        alpha = 1.F;
         };
         std::vector<SHidden> m_hidden;
+
+        // A window's fullscreen alpha as Hyprland has it: 0 under a fullscreen
+        // window, else 1. Asked each time rather than kept from before the
+        // flight: focusing a window under a fullscreen one in Mission Control
+        // ends the fullscreen, and a kept 0 left it there and never drawn.
+        static float fullscreenAlpha(const PHLWINDOW& window) {
+            return window->isBlockedByFullscreen() ? 0.F : 1.F;
+        }
 
         // tiles in place, or newly so: out of their windows from wherever
         // the flight is, coming back included
@@ -1117,28 +1185,26 @@ namespace {
                 return;
             }
             const float SHOWN = m_flying ? shown() : 0.F;
-            if (!m_flying)
-                m_showBelow = FLY_HIDDEN_BY;
             m_flying          = true;
             m_closing         = false;
             m_since           = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(SHOWN));
             hideWindows();
         }
 
-        // the tiles' windows faded with the flight, any others given back
+        // the tiles' windows hidden for the flight, any others given back
         void hideWindows() {
             std::erase_if(m_hidden, [this](const SHidden& hidden) {
                 const auto WINDOW = hidden.window.lock();
                 if (WINDOW && std::ranges::any_of(m_tiles, [&](const STile& tile) { return tile.window == hidden.window; }))
                     return false;
                 if (WINDOW)
-                    WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(hidden.alpha);
+                    WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW));
                 return true;
             });
             for (const auto& tile : m_tiles) {
                 const auto WINDOW = tile.window.lock();
                 if (WINDOW && std::ranges::none_of(m_hidden, [&](const SHidden& hidden) { return hidden.window == tile.window; }))
-                    m_hidden.emplace_back(SHidden{.window = tile.window, .alpha = WINDOW->alphaValue(Desktop::View::WINDOW_ALPHA_FULLSCREEN)});
+                    m_hidden.emplace_back(SHidden{.window = tile.window});
             }
             m_hiddenChanged = true;
         }
@@ -1150,7 +1216,7 @@ namespace {
         void showWindows() {
             for (const auto& hidden : m_hidden) {
                 if (const auto WINDOW = hidden.window.lock())
-                    WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(hidden.alpha);
+                    WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW));
             }
             m_hidden.clear();
         }
@@ -1171,10 +1237,14 @@ namespace {
             if (SHOWN != m_applied || m_hiddenChanged) {
                 m_applied       = SHOWN;
                 m_hiddenChanged = false;
-                const float LEFT = m_showBelow <= 0.F ? (SHOWN <= 0.F ? 1.F : 0.F) : 1.F - std::clamp(SHOWN / m_showBelow, 0.F, 1.F);
+                // The windows go as their pictures leave them and are back
+                // as the pictures land, not faded across: a picture is its
+                // window to the pixel where they meet, and one faded under
+                // its picture on the way showed every window twice.
+                const float LEFT = SHOWN <= 0.F ? 1.F : 0.F;
                 for (const auto& hidden : m_hidden) {
                     if (const auto WINDOW = hidden.window.lock())
-                        WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(hidden.alpha * LEFT);
+                        WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW) * LEFT);
                 }
             }
             if (LAYER && LAYER->alpha()[Desktop::View::LS_ALPHA_FADE]->value() != SHOWN)
@@ -1257,6 +1327,10 @@ namespace {
     class CKiwiPreviews {
       public:
         bool init(HANDLE handle) {
+            // right over the shell's surface (layers.cpp); without that, no
+            // command either, which Hyprland would keep after this is gone
+            if (!Kiwi::Layers::available())
+                return false;
             m_command = HyprlandAPI::registerHyprCtlCommand(handle,
                                                             SHyprCtlCommand{
                                                                 .name = "kiwi-previews",
@@ -1266,10 +1340,6 @@ namespace {
                                                                 .fn    = [this](eHyprCtlOutputFormat, std::string request) { return take(request); },
                                                             });
             if (!m_command)
-                return false;
-
-            // right over the shell's surface (layers.cpp)
-            if (!Kiwi::Layers::available())
                 return false;
             Kiwi::Layers::afterLayer([this](const PHLLS& layer, const PHLMONITOR& monitor, bool popups) { afterLayer(layer, monitor, popups); });
             // damage and frame callbacks belong outside the render itself
@@ -1416,7 +1486,8 @@ namespace {
             m_swipe.velocity = 0.6F * m_swipe.velocity + 0.4F * (travel / DT);
             m_swipe.lastMs   = ms;
             m_swipe.lastAt   = Time::steadyNow();
-            if (const auto SET = gestureSet(); SET && SET->hasTiles())
+            // (a set the shell has closed meanwhile goes home, fingers or not)
+            if (const auto SET = gestureSet(); SET && SET->hasTiles() && !SET->isClosing())
                 SET->hold(gestureShown(m_swipe.progress));
         }
 
@@ -1435,7 +1506,10 @@ namespace {
             // with how far and how fast, for tuning the two above on a real trackpad
             g_pEventManager->postEvent(SHyprIPCEvent{
                 .event = "kiwigesture", .data = std::format("let,{},{},{:.2f},{:.2f}", m_gestureSet, out ? "out" : "home", m_swipe.progress, m_swipe.velocity)});
-            if (const auto SET = gestureSet(); SET && SET->hasTiles() && SET->isHeld())
+            const auto SET = gestureSet();
+            if (SET && SET->isClosing())
+                return;
+            if (SET && SET->hasTiles() && SET->isHeld())
                 SET->letGo(out);
             else {
                 m_swipe.decided   = out;
@@ -1602,7 +1676,7 @@ namespace {
                     continue;
 
                 const CBox RECT{numbers[0], numbers[1], numbers[2], numbers[3]};
-                const CBox CLIP = FIELDS.size() == 9 ? CBox{numbers[4], numbers[5], numbers[6], numbers[7]}.intersection(RECT) : RECT;
+                const CBox CLIP = FIELDS.size() >= 9 ? CBox{numbers[4], numbers[5], numbers[6], numbers[7]}.intersection(RECT) : RECT;
                 if (RECT.w < 1 || RECT.h < 1 || CLIP.w < 1 || CLIP.h < 1)
                     continue;
 

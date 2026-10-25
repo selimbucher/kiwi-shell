@@ -145,17 +145,28 @@ const bursts = new Map<string, number>()
 // when that banner first appeared: repeats keep its place in the stack
 const burstStarts = new Map<string, number>()
 
+// Banners into history — but a transient one (the hint says so: a volume
+// change, a "copied" toast) is gone instead, wherever it would have gone:
+// kept, a burst of them pushed real ones out of the history's 50.
 function moveToHistory(ids: readonly number[]) {
     const current = entries()
     const next = new Map(current)
+    const transient: Notifd.Notification[] = []
     let changed = false
     for (const id of ids) {
         const entry = current.get(id)
         clearTimer(id)
         if (entry?.place !== "banner") continue
+        const n = notifd.get_notification(id)
+        if (n?.transient) {
+            transient.push(n)
+            continue
+        }
         next.set(id, { ...entry, place: "history" })
         changed = true
     }
+    // (each one resolved takes itself out of the entries)
+    for (const n of transient) n.dismiss()
     if (!changed) return
     setEntries(next)
     forgetBursts()
@@ -224,6 +235,8 @@ notifd.connect("notified", (_, id: number) => {
 
     if (!asBanner) {
         clearTimer(id)
+        // not shown, and not kept either
+        if (n.transient) return n.dismiss()
         setEntries(next)
         trimHistory()
         return

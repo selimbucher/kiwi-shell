@@ -1,0 +1,50 @@
+--- a/src/player.vala
++++ b/src/player.vala
+@@ -32,6 +32,29 @@
+      */
+     public bool available { get; private set; default = false; }
+ 
++    /**
++     * Whether [property@AstalMpris.Player:position] is asked of the player every second while it plays.
++     * The player itself only tells of a jump (a seek), so without this the position stands still in
++     * between. Turned off while nothing shows the position, neither the player nor this process is
++     * woken every second for it. Turning it on asks for the position at once.
++     */
++    public bool poll_position {
++        get { return _poll_position; }
++        set {
++            if (_poll_position == value) return;
++            _poll_position = value;
++            if (value && available && pollid == 0) {
++                check_position.begin(null);
++                init_position_poll();
++            } else if (!value && pollid > 0) {
++                Source.remove(pollid);
++                pollid = 0;
++            }
++        }
++    }
++
++    private bool _poll_position = true;
++
+     private bool check_available() {
+         if (!available) {
+             warning(@"$bus_name is not available \n");
+@@ -743,7 +766,7 @@
+ 
+     private void init_position_poll() {
+         pollid = Timeout.add_seconds(1, () => {
+-            if (!available) {
++            if (!available || !poll_position) {
+                 pollid = 0;
+                 return Source.REMOVE;
+             }
+@@ -763,7 +786,7 @@
+             yield check_position();
+             yield cache_cover();
+             available = true;
+-            init_position_poll();
++            if (poll_position) init_position_poll();
+         } catch (Error error) {
+             critical(error.message);
+         }

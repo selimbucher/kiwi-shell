@@ -11,12 +11,12 @@
 // window on its way out, the same snapshot Hyprland takes for its close
 // animation, and posts
 //
-//     kiwigenie>>minimize,<address>
+//     kiwigenie>>minimize,<address>,<monitor>
 //
 // on the event socket. A window moved back out of it onto a workspace on
 // screen is kept hidden and pictured where it lands, and posts
 //
-//     kiwigenie>>restore,<address>
+//     kiwigenie>>restore,<address>,<monitor>
 //
 // The shell answers with where that window's icon is: x, y, w, h in logical
 // pixels from the top-left of the layer surface called <namespace>, which is
@@ -24,8 +24,9 @@
 // holds still — a minimized window stays where it was, a restored one stays
 // hidden — so the round trip never shows; then the picture runs into the
 // icon, or out of it, and the real window takes its place. "none" means there
-// is no icon to go to: the window just goes, or just appears. So does one the
-// shell doesn't answer for in time.
+// is no icon to go to: the window goes into the bottom edge of its display,
+// or comes out of it, where a hidden Dock would be. So does one the shell
+// doesn't answer for in time.
 //
 // The picture is drawn among the windows, under the dock, so the window goes
 // into the dock behind its pill. A dock kept hidden has its icon below the
@@ -295,6 +296,11 @@ void main() {
 
     class CKiwiGenie {
       public:
+        // the workspace minimized windows are kept in, once the shell has said
+        const std::string& watched() const {
+            return m_watched;
+        }
+
         bool init(HANDLE handle) {
             m_command = HyprlandAPI::registerHyprCtlCommand(handle,
                                                             SHyprCtlCommand{
@@ -353,6 +359,15 @@ void main() {
             return box.translate(-monitor->m_position).scale(monitor->m_scale).round();
         }
 
+        // With no icon to go into (no dock, the shell not answering), into
+        // the bottom edge of the display, in the middle: where a Mac's Dock
+        // is, hidden, which a window minimized there pours out through. It
+        // just vanishing read as the window closing.
+        static CBox bottomEdge(const PHLMONITOR& monitor) {
+            constexpr double WIDTH = 64, HEIGHT = 32;
+            return onMonitor(monitor, CBox{monitor->m_position.x + (monitor->m_size.x - WIDTH) / 2, monitor->m_position.y + monitor->m_size.y, WIDTH, HEIGHT});
+        }
+
         SGenie* genieOf(const PHLWINDOW& window) {
             const auto IT = std::ranges::find_if(m_genies, [&](const SGenie& genie) { return genie.window == window; });
             return IT == m_genies.end() ? nullptr : &*IT;
@@ -383,7 +398,12 @@ void main() {
                 return "ok";
 
             if (WORDS[1] == "none") {
-                genie->since = Time::steadyNow() - HOLD;
+                if (const auto MONITOR = genie->monitor.lock()) {
+                    genie->icon  = bottomEdge(MONITOR);
+                    genie->since = Time::steadyNow();
+                    damage(*genie);
+                } else
+                    genie->since = Time::steadyNow() - HOLD;
                 return "ok";
             }
             if (WORDS.size() != 3)
@@ -400,7 +420,12 @@ void main() {
                     return "the icon's x, y, width and height must be numbers";
             }
             if (!LAYER) {
-                genie->since = Time::steadyNow() - HOLD;
+                if (MONITOR) {
+                    genie->icon  = bottomEdge(MONITOR);
+                    genie->since = Time::steadyNow();
+                    damage(*genie);
+                } else
+                    genie->since = Time::steadyNow() - HOLD;
                 return "no such layer on the window's monitor";
             }
 
@@ -410,8 +435,11 @@ void main() {
             return "ok";
         }
 
-        void post(const char* kind, const PHLWINDOW& window) {
-            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigenie", .data = std::format("{},{:x}", kind, reinterpret_cast<uintptr_t>(window.get()))});
+        // with the monitor the genie is drawn on, whose dock it goes to: the
+        // shell hears of the window's own only after the move
+        void post(const char* kind, const PHLWINDOW& window, const PHLMONITOR& monitor) {
+            g_pEventManager->postEvent(
+                SHyprIPCEvent{.event = "kiwigenie", .data = std::format("{},{:x},{}", kind, reinterpret_cast<uintptr_t>(window.get()), monitor->m_name)});
         }
 
         void moved(const PHLWINDOW& window, const PHLWORKSPACE& workspace) {
@@ -445,7 +473,9 @@ void main() {
                 std::erase_if(m_genies, [&](const SGenie& other) { return other.window == window; });
             }
 
-            const auto MONITOR = window->m_monitor.lock();
+            // leaving, the monitor it is drawn on; coming back, the one it is
+            // going to, which Hyprland gives it only after telling of the move
+            const auto MONITOR = INTO ? window->m_monitor.lock() : workspace->m_monitor.lock();
             if (!MONITOR)
                 return;
 
@@ -466,7 +496,7 @@ void main() {
                     .covered  = uncoveredBy(window, MONITOR),
                 });
                 cover(m_genies.back());
-                post("minimize", window);
+                post("minimize", window, MONITOR);
                 damage(m_genies.back());
                 return;
             }
@@ -476,7 +506,7 @@ void main() {
             // (pictureRestored) and hidden until the genie has put it back.
             if (OUT && !INTO && workspace->isVisible()) {
                 m_genies.emplace_back(SGenie{.window = window, .monitor = MONITOR, .restore = true, .since = Time::steadyNow()});
-                post("restore", window);
+                post("restore", window, MONITOR);
                 g_pHyprRenderer->damageMonitor(MONITOR);
             }
         }
@@ -490,7 +520,8 @@ void main() {
             auto* genie = genieOf(window);
             if (!genie || !genie->icon || !genie->snapshot || genie->restore != into)
                 return false;
-            if (!into && (!workspace->isVisible() || window->m_monitor != genie->monitor))
+            // (Hyprland gives the window its new monitor after telling of the move)
+            if (!into && (!workspace->isVisible() || workspace->m_monitor != genie->monitor))
                 return false;
 
             const float PROGRESS = progressOf(*genie);
@@ -688,8 +719,18 @@ void main() {
             for (auto& genie : m_genies) {
                 if (genie.monitor != monitor)
                     continue;
+                // the shell slow to say (busy, or starting again): to the edge
+                if (!genie.icon && genie.snapshot && Time::steadyNow() - genie.since >= HOLD) {
+                    genie.icon  = bottomEdge(monitor);
+                    genie.since = Time::steadyNow();
+                }
                 damage(genie);
                 if (finished(genie))
+                    show(genie);
+            }
+            // one whose monitor is gone shows its window again, as one that ends does
+            for (auto& genie : m_genies) {
+                if (genie.monitor.expired())
                     show(genie);
             }
             std::erase_if(m_genies, [&](const SGenie& genie) { return genie.monitor.expired() || (genie.monitor == monitor && finished(genie)); });
@@ -707,6 +748,10 @@ namespace Kiwi::Genie {
             return false;
         }
         return true;
+    }
+
+    std::string minimizedWorkspace() {
+        return g_kiwiGenie ? g_kiwiGenie->watched() : std::string{};
     }
 
     void exit() {

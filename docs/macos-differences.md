@@ -41,6 +41,8 @@ Desktops, Mission Control, their gestures and the island, as of October
   can be a frame ahead of their pictures: the compositor takes the pictures'
   new places with the frame after.
 - There is no App Exposé (Control+Down).
+- A window dragged in Mission Control is its last frame while it is
+  carried, not live; macOS keeps it live.
 
 ## Desktops
 
@@ -54,12 +56,17 @@ Desktops, Mission Control, their gestures and the island, as of October
 - Hyprland's tiling stays: tiled and floating windows stack in one order,
   the one brought forward on top, as every window on a Mac does. Hyprland
   alone keeps tiled windows under floating ones.
-- A window dragged against the left or right edge of the screen is tiled
-  there, next to the tiled window at that edge (the whole desktop when it is
-  the first). macOS gives it exactly that half of the screen.
-- Dragged against the top, it fills the desktop, as on macOS (Sequoia).
-  Dragged away again, it keeps the filled size; macOS gives it back its old
-  one.
+- On a desktop with tiled windows, a window dragged against the left or
+  right edge joins the tiling, halving the tile at that edge, and one dragged
+  into a corner takes the top or bottom of the tile there. macOS gives it
+  exactly that half or quarter of the screen, whatever else is on it. On a
+  desktop with no tiled windows kiwi does as macOS does.
+- After a window is snapped to a half, the desktop's other windows are
+  offered for the other half, one click putting one there. macOS offers them
+  this way only in Split View, Windows (Snap Assist) after any snap.
+- A tiled window dragged with a modifier held (Hyprland's own move) moves
+  within the tiling. macOS has no tiling; dragged by its title bar, a tiled
+  window comes out of it, at its own size, as a tiled Mac window does.
 
 ## Island
 

@@ -126,6 +126,8 @@ async function placeOf(city: string): Promise<Place | null> {
 }
 
 let fetching = false
+// asked for again while fetching (the city or units changed meanwhile)
+let again = false
 
 async function refresh() {
     const { weather_city: city, weather_units: units } = conf().island
@@ -133,7 +135,10 @@ async function refresh() {
         setProblem("No city set")
         return
     }
-    if (fetching) return
+    if (fetching) {
+        again = true
+        return
+    }
     fetching = true
     try {
         const place = await placeOf(city.trim())
@@ -179,6 +184,11 @@ async function refresh() {
         setProblem(forecast() ? null : "Weather unavailable")
     } finally {
         fetching = false
+        // the one asked for meanwhile, for what is set now
+        if (again) {
+            again = false
+            void refresh()
+        }
     }
 }
 

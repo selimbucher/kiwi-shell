@@ -279,6 +279,19 @@ export function loadThumbnail(path: string, width: number, height: number, keep 
             fail(error)
         }
     })
-    if (keep) thumbnails.set(key, promise)
+    if (keep) {
+        // A display's whole wallpaper (Mission Control's) is tens of MB: only
+        // the wallpaper's own are kept, those of the ones before it let go.
+        // The small ones (the wallpaper picker's) stay.
+        if (width * height > LARGE_THUMBNAIL)
+            for (const other of [...thumbnails.keys()]) {
+                const at = other.lastIndexOf("|")
+                const [w, h] = other.slice(at + 1).split("x").map(Number)
+                if (other.slice(0, at) !== path && w * h > LARGE_THUMBNAIL) thumbnails.delete(other)
+            }
+        thumbnails.set(key, promise)
+    }
     return promise
 }
+
+const LARGE_THUMBNAIL = 512 * 512

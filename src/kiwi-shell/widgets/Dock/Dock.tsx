@@ -1,4 +1,5 @@
 import { logger } from "../../log"
+import type { MenuSlot } from "./dock-state"
 const log = logger("dock")
 import app from "ags/gtk4/app"
 import App from "ags/app"
@@ -6,7 +7,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, primaryGdkMonitor, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, clientsBinding, list, unpinnedList, setDockOverlap, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
+import { hyprland, clientsBinding, list, unpinnedList, restoring, setDockOverlap, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
@@ -166,6 +167,8 @@ function dockCss(icon: number, margin: number, primary: string) {
     --hop-settle-duration: ${SETTLE_MS}ms;
     --dock-headroom: ${headroomFor(icon)}px;
     --icon-size: ${icon}px;
+    --icon-cell-half: ${(icon + 2 * px(icon, DOCK.gap / 2, 1)) / 2}px;
+    --icon-drop: ${Math.round(icon * 1.75)}px;
     --dock-slide-duration: ${DOCK_SLIDE_DURATION}ms;
     --dock-slide-out-duration: ${DOCK_SLIDE_OUT_DURATION}ms;
     --dock-slide-distance: ${dockSlideDistance(icon)}px;
@@ -189,6 +192,8 @@ function dockCss(icon: number, margin: number, primary: string) {
 }
 
 // ─── Dock ─────────────────────────────────────────────────────────────────────
+
+const UNPINNED_EXIT_DELAY_MS = 500
 
 // Auto-hide is built so stuck states are structurally impossible:
 //
@@ -223,7 +228,19 @@ const EDGE_BAND_PX = 8
 const SIDE_SLACK_PX = 24
 
 export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
-    const [menuOpen, setMenuOpen] = createState(false)
+    // Each popover of the dock (a menu, a flyout) says for itself whether it
+    // is open: one flag shared between them was left wrong by one opening as
+    // another closed, or by one going away with its icon while open.
+    const openMenus = new Set<object>()
+    const [menuOpen, setMenuOpenState] = createState(false)
+    const menuSlot: MenuSlot = () => {
+        const key = {}
+        return (open: boolean) => {
+            if (open) openMenus.add(key)
+            else openMenus.delete(key)
+            setMenuOpenState(openMenus.size > 0)
+        }
+    }
     // a window reaches into the dock's strip (measureCover). A state skips
     // equal values, so only a change reaches the dock.
     const [covered, setCovered] = createState(false)
@@ -350,7 +367,8 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         })
     }
 
-    const showDock = createComputed(get => {
+    let wasShown = false
+    const showDock = createComputed(get => (wasShown = (() => {
         const config = get(conf)
         if (get(list).length + get(unpinnedList).length == 0)
             return false
@@ -363,20 +381,23 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         // comes up on another for the pointer at its bottom edge; what the
         // windows there cover is beside the point.
         if (get(primaryGdkMonitor) !== gdkmonitor) return false
+        // a window coming out of it: as it was until the window is out
+        if (get(restoring)) return wasShown
         return !get(covered)
-    })
+    })()))
 
     // Only a window that actually reaches the dock's strip counts. The old
     // test was workspace membership alone, which is why a floating calculator
     // parked in a corner hid the dock as thoroughly as a maximised window did.
+    // The windows of the desktop on show, and of a special workspace shown
+    // over it (a scratchpad), which the dock is drawn over just the same.
     const coverOf = () => {
-        const activeId = hyprland.get_monitors()
-            .find(m => m.name === gdkmonitor.get_connector())
-            ?.activeWorkspace?.id
+        const monitor = hyprland.get_monitors().find(m => m.name === gdkmonitor.get_connector())
+        const shown = new Set([monitor?.activeWorkspace?.id, monitor?.specialWorkspace?.id].filter(id => id !== undefined && id !== 0))
         const geo = gdkmonitor.get_geometry()
         const stripTop = geo.y + geo.height - (bandHeight() || 80)
         setCovered([...windows.values()].some(win =>
-            win.ws === activeId
+            shown.has(win.ws)
             && win.y + win.h > stripTop
             && win.x < geo.x + geo.width
             && win.x + win.w > geo.x))
@@ -567,7 +588,8 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 // in auto-hide the dock reserves nothing, so anything else
                 // anchored to the bottom edge lands on top of it unless it
                 // is told how much room the dock is taking
-                const syncOverlap = () => setDockOverlap(
+                const connector = gdkmonitor.get_connector() ?? ""
+                const syncOverlap = () => setDockOverlap(connector,
                     showDock() && conf().dock !== "default"
                         ? bandHeight()
                         : 0)
@@ -578,7 +600,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
                 unsubscribe.push(showDock.subscribe(syncOverlap), conf.subscribe(syncOverlap))
                 whenMapped(syncOverlap)
-                onCleanup(() => setDockOverlap(0))
+                onCleanup(() => setDockOverlap(connector, 0))
 
                 // "default" keeps windows off the band the dock sits in; the
                 // headroom above it is only there for a hopping icon, so the
@@ -596,6 +618,12 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 )
                 const eventId = hyprland.connect("event", (_h, event: string, args: string) => {
                     if (event === "windowgeometry") windowMoved(args)
+                    // (a special workspace shown or hidden: once AstalHyprland
+                    // has it, which may be after this)
+                    else if (event === "activespecialv2") GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                        measureCover()
+                        return GLib.SOURCE_REMOVE
+                    })
                     else if (COVER_EVENTS.has(event)) measureCover()
                 })
                 whenMapped(measureCover)
@@ -656,7 +684,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             }}
         >
             <DockBar
-                setMenuOpen={setMenuOpen}
+                menuSlot={menuSlot}
                 showDock={showDock}
                 onDockBoxReady={(widget) => { dockBoxRef = widget }}
             />
@@ -705,8 +733,8 @@ function EdgeSensor({ gdkmonitor, poke }: {
 
 // ─── DockBar ──────────────────────────────────────────────────────────────────
 
-function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
-    setMenuOpen: (v: boolean) => void,
+function DockBar({ menuSlot, showDock, onDockBoxReady }: {
+    menuSlot: MenuSlot,
     showDock: ReturnType<typeof createComputed<boolean>>,
     onDockBoxReady: (widget: Gtk.Widget) => void,
 }) {
@@ -714,12 +742,14 @@ function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
     const unpinnedBinding = createComputed(get => get(unpinnedList))
 
     let prevPinnedSnapshot = new Set(list())
-    pinnedBinding.subscribe(() => {
+    // the running apps' icons there, and those not leaving
+    const [unpinnedShown, setUnpinnedShown] = createState({ present: 0, staying: 0 })
+    onCleanup(pinnedBinding.subscribe(() => {
         GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             prevPinnedSnapshot = new Set(list())
             return GLib.SOURCE_REMOVE
         })
-    })
+    }))
 
     const extraOffset = createComputed(get =>
         get(list).length + get(unpinnedList).length + 1
@@ -759,7 +789,7 @@ function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
                                 return (
                                     <AppIcon
                                         entry={entry}
-                                        setMenuOpen={setMenuOpen}
+                                        menuSlot={menuSlot}
                                         $={(self) => {
                                             const motion = new Gtk.EventControllerMotion()
                                             motion.connect("enter", () => conf().dock_arpeggio && playArpeggio(index()))
@@ -772,9 +802,11 @@ function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
                     </box>
                     <box
                         vexpand={true}
-                        class="dock-spacer"
+                        // there while an icon is beside it, and shrinking
+                        // with the last one going
+                        class={unpinnedShown(n => n.staying > 0 ? "dock-spacer" : "dock-spacer leaving")}
                         visible={createComputed(get =>
-                            get(list).length > 0 && get(unpinnedList).length > 0
+                            get(list).length > 0 && get(unpinnedShown).present > 0
                         )}
                     />
                     <box>
@@ -783,6 +815,13 @@ function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
                             keyFn={(entry) => entry}
                             enterClass="fade-in"
                             exitClass="fade-out"
+                            // An app between windows (a splash gone, its main
+                            // window not up yet) is still running: its icon
+                            // stays, rather than shrinking and growing back.
+                            exitDelay={UNPINNED_EXIT_DELAY_MS}
+                            // pinned, it is in the other list at once
+                            shouldExit={(entry) => !list().includes(entry)}
+                            onCount={(present, staying) => setUnpinnedShown({ present, staying })}
                             shouldEnter={(entry) => !prevPinnedSnapshot.has(entry)}
                             children={(entry) => {
                                 const index = createComputed(get =>
@@ -791,7 +830,7 @@ function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
                                 return (
                                     <AppIcon
                                         entry={entry}
-                                        setMenuOpen={setMenuOpen}
+                                        menuSlot={menuSlot}
                                         $={(self) => {
                                             const motion = new Gtk.EventControllerMotion()
                                             motion.connect("enter", () => conf().dock_arpeggio && playArpeggio(index()))
@@ -812,7 +851,7 @@ function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
                         )}
                     />
                     <HomeFolderButton
-                        setMenuOpen={setMenuOpen}
+                        menuSlot={menuSlot}
                         $={(self) => {
                             const motion = new Gtk.EventControllerMotion()
                             motion.connect("enter", () => conf().dock_arpeggio && playArpeggio(extraOffset()))
@@ -820,7 +859,7 @@ function DockBar({ setMenuOpen, showDock, onDockBoxReady }: {
                         }}
                     />
                     <TrashButton
-                        setMenuOpen={setMenuOpen}
+                        menuSlot={menuSlot}
                         $={(self) => {
                             const motion = new Gtk.EventControllerMotion()
                             motion.connect("enter", () =>

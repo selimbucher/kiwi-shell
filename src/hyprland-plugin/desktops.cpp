@@ -103,7 +103,9 @@ namespace {
             const double DESKTOP  = monitor->m_size.x + *GAP;
             const double FRACTION = DESKTOP > 0 ? WS->m_renderOffset->value().x / DESKTOP : 0.0;
             auto&        last     = m_slides[monitor->m_name];
-            if (last.first == WS->m_id && std::abs(last.second - FRACTION) < 1e-4)
+            // (at rest is said even after a step smaller than that: the shell
+            // follows the slide until it hears it is over)
+            if (last.first == WS->m_id && (FRACTION == last.second || (FRACTION != 0.0 && std::abs(last.second - FRACTION) < 1e-4)))
                 return;
             const bool MOVED = last.first != WS->m_id || FRACTION != 0.0 || last.second != 0.0;
             last             = {WS->m_id, FRACTION};

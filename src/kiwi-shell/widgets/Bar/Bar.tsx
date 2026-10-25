@@ -5,6 +5,7 @@ import { createBinding, createComputed, onCleanup } from "ags"
 
 import Battery from "gi://AstalBattery"
 import Network from "gi://AstalNetwork"
+import Notifd from "gi://AstalNotifd"
 
 import SystemMenu, { systemMenuOpen, closeSystemMenu } from "./SystemMenu/SystemMenu"
 import { closeNc } from "../Notifications/NotificationCenter"
@@ -24,6 +25,7 @@ const wifiStateBinding = wifiProperty("state", Network.DeviceState.UNAVAILABLE)
 const activeAPBinding = wifiProperty<Network.AccessPoint | null>("activeAccessPoint", null)
 
 const hasBattery = battery.get_is_present()
+const dontDisturb = createBinding(Notifd.get_default(), "dont-disturb")
 
 const { TOP, LEFT, RIGHT } = Astal.WindowAnchor
 
@@ -128,6 +130,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
         <box class="MenuButtons">
             <menubutton class="toggle-powermenu">
                 <box class="icons">
+                    <QuietIcon />
                     <PreferencesIcon />
                     {network.get().wifi && <NetworkIcon />}
                     <BatteryIcon />
@@ -167,14 +170,35 @@ function BatteryIcon() {
     )
 }
 
+// Do Not Disturb on, for as long as it is, as a Mac's menu bar shows a Focus:
+// otherwise nothing said the banners were being held back
+function QuietIcon() {
+    return (
+        <Gtk.Image
+            visible={dontDisturb}
+            class="quietIcon"
+            pixelSize={16}
+            iconName="notifications-disabled-symbolic"
+        />
+    )
+}
+
 function NetworkIcon() {
     return (
         <Gtk.Image
             class="networkIcon"
             iconSize={Gtk.IconSize.NORMAL}
-            iconName={createComputed((get) =>
-                networkIcon(get(wiredBinding), get(wifiStateBinding), get(activeAPBinding))
-            )}
+            // the cable's state and the signal's strength change on their own
+            // objects, which are followed too
+            iconName={createComputed((get) => {
+                const wired = get(wiredBinding)
+                const ap = get(activeAPBinding)
+                return networkIcon(
+                    wired ? get(createBinding(wired, "state")) : null,
+                    get(wifiStateBinding),
+                    ap ? get(createBinding(ap, "strength")) : null,
+                )
+            })}
         />
     )
 }
@@ -195,9 +219,9 @@ function PreferencesIcon() {
     )
 }
 
-function networkIcon(wired, wifiState, activeAP) {
+function networkIcon(wiredState: number | null, wifiState: number, strength: number | null) {
 
-    if (wired && wired.state === 100) {
+    if (wiredState === Network.DeviceState.ACTIVATED) {
         return "network-wired-activated-symbolic"
     }
     if (
@@ -207,8 +231,8 @@ function networkIcon(wired, wifiState, activeAP) {
         return "network-wireless-disabled-symbolic"
     }
     if (wifiState === Network.DeviceState.ACTIVATED) {
-        return activeAP
-            ? wifiIcon(activeAP.strength)
+        return strength !== null
+            ? wifiIcon(strength)
             : "network-wireless-signal-none-symbolic"
     }
     return "network-wireless-signal-none-symbolic"

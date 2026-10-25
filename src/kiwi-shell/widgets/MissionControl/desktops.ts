@@ -155,14 +155,17 @@ export function watchDesktops(changed: () => void): () => void {
     return () => void watchers.delete(changed)
 }
 
+// the rows as the bar last had them, and as the plugin last took them: it
+// isn't loaded yet at login, and a set it never took is sent again
+let lastSeen = ""
 let lastKept = ""
 function sync() {
     reconcile()
     save()
-    const kept = JSON.stringify([...desktops])
-    if (kept === lastKept) return
-    lastKept = kept
-    void keepDesktops(desktops)
+    const now = JSON.stringify([...desktops])
+    if (now !== lastKept) void keepDesktops(desktops).then(ok => { if (ok) lastKept = now })
+    if (now === lastSeen) return
+    lastSeen = now
     for (const changed of watchers) changed()
 }
 

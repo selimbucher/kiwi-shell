@@ -11,10 +11,12 @@
     padding-top: var(--dock-headroom);
 }
 
+// Opening out as the dock first comes. At rest as it ends, with the start
+// held through the delay: where animations are off (GTK's
+// gtk-enable-animations, a desktop's "reduce motion") none runs, and a
+// resting scaleX(0) that only the animation's end undid left no dock at all.
 .dock-bar-container {
-    animation: dock-activate 400ms ease forwards;
-    animation-delay: 60ms;
-    transform: scaleX(0);
+    animation: dock-activate 400ms ease 60ms backwards;
 }
 
 .dock-bar {
@@ -194,6 +196,10 @@
     background-color: var(--k-divider);
     border-radius: 1px;
     animation: emerge 600ms ease-out;
+
+    &.leaving {
+        animation: spacer-shrink 450ms ease forwards;
+    }
 }
 
 
@@ -225,10 +231,13 @@
 // the small rebound that settles the icon once its app is up
 @keyframes dock-hop-settle { @include hop-frames(--hop-settle-height); }
 
-$slide-margin: calc(var(--icon-size) / 2 * -1);
+// An icon coming and going slides up from below the dock and back, and one
+// that grows in or shrinks out takes its cell's width with it: from a
+// width of nothing, the cell's two halves taken off as margins.
+$cell-margin: calc(var(--icon-cell-half) * -1);
 
 @keyframes icon-slide {
-    0%   { transform: translateY(80px); opacity: 0.4;}
+    0%   { transform: translateY(var(--icon-drop)); opacity: 0.4;}
     80%  { transform: translateY(-3px);}
     93%  { transform: translateY(1px); }
     100% { transform: translateY(0); opacity: 1;}
@@ -236,9 +245,9 @@ $slide-margin: calc(var(--icon-size) / 2 * -1);
 
 @keyframes grow-h {
     0%   {
-        transform: translateY(80px) scaleX(0); opacity: 0.4;
-        margin-left: -25px;
-        margin-right: -25px;
+        transform: translateY(var(--icon-drop)) scaleX(0); opacity: 0.4;
+        margin-left: $cell-margin;
+        margin-right: $cell-margin;
     }
     80%  { transform: translateY(-3px) scaleX(1); margin: 0;}
     93%  { transform: translateY(1px); }
@@ -249,10 +258,17 @@ $slide-margin: calc(var(--icon-size) / 2 * -1);
 @keyframes shrink-h {
     0%   { transform: translateY(0) scaleX(1); opacity: 1; margin: 0; }
     100% {
-        transform: translateY(80px) scaleX(0); opacity: 0;
-        margin-left: -25px;
-        margin-right: -25px;
+        transform: translateY(var(--icon-drop)) scaleX(0); opacity: 0;
+        margin-left: $cell-margin;
+        margin-right: $cell-margin;
     }
+}
+
+// the line between the kept and the running apps, going with the last
+// running app's icon
+@keyframes spacer-shrink {
+    0%   { opacity: 1; }
+    100% { opacity: 0; min-width: 0; margin-left: 0; margin-right: 0; }
 }
 
 @keyframes emerge {
@@ -266,7 +282,7 @@ $slide-margin: calc(var(--icon-size) / 2 * -1);
 }
 
 .app-icon-container {
-    transform: translateY(80px)
+    transform: translateY(var(--icon-drop))
 }
 
 .app-launch-button.hop {

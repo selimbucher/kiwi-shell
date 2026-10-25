@@ -1,5 +1,5 @@
 import AstalTray from "gi://AstalTray"
-import { createBinding, For } from "ags"
+import { createBinding, For, onCleanup } from "ags"
 import Gtk from "gi://Gtk?version=4.0"
 import GLib from "gi://GLib?version=2.0"
 import { exec } from "ags/process"
@@ -30,7 +30,7 @@ export default function Tray() {
                         return GLib.SOURCE_REMOVE
                     })
                 })
-                self.connect("destroy", unsub)
+                onCleanup(unsub)
             }}
         >
             <For each={trayItems}>

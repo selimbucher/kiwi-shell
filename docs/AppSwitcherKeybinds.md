@@ -4,7 +4,8 @@
 reload) kiwi-shell registers natural Alt+Tab keybinds automatically, using
 Hyprland's [submap](https://wiki.hypr.land/Configuring/Binds/#submaps) feature —
 press `Alt`+`Tab` and hold `Alt`, press `Tab` again to cycle through the
-applications, release `Alt` to switch, or press `Escape` to abort.
+applications (`Shift`+`Tab` or the arrow keys to go back), release `Alt` to
+switch, or press `Escape` to abort.
 
 If `ALT+TAB` (or `ALT+ALT_L`) is bound to something unrelated to the app
 switcher in your Hyprland config, kiwi-shell leaves your keyboard alone and
@@ -19,14 +20,16 @@ refreshed to the current scheme on startup.
 
 ## Manual setup (custom keys)
 
-For different keys, bind kiwi-shell's global shortcuts yourself: `apps-next` on
-a press, `apps-confirm` and `apps-close` on a release. This is the equivalent
+For different keys, bind kiwi-shell's global shortcuts yourself: `apps-next` and
+`apps-previous` on a press, `apps-confirm` and `apps-close` on a release. This is the equivalent
 of what kiwi-shell sets up automatically:
 
 ```lua
 -- Open the switcher and enter the submap
 hl.bind("ALT + TAB", hl.dsp.global("kiwi-shell:apps-next"))
 hl.bind("ALT + TAB", hl.dsp.submap("app_switcher"))
+hl.bind("ALT + SHIFT + TAB", hl.dsp.global("kiwi-shell:apps-previous"))
+hl.bind("ALT + SHIFT + TAB", hl.dsp.submap("app_switcher"))
 
 -- Capture the release of the Left Alt key.
 -- IMPORTANT: these two must live OUTSIDE the submap. Hyprland matches a bind
@@ -40,6 +43,9 @@ hl.bind("ALT + ALT_L", hl.dsp.submap("reset"), { release = true, transparent = t
 hl.define_submap("app_switcher", function()
     -- Allow repeating TAB while holding ALT to cycle the menu
     hl.bind("ALT + TAB", hl.dsp.global("kiwi-shell:apps-next"), { repeating = true })
+    hl.bind("ALT + SHIFT + TAB", hl.dsp.global("kiwi-shell:apps-previous"), { repeating = true })
+    hl.bind("ALT + left", hl.dsp.global("kiwi-shell:apps-previous"), { repeating = true })
+    hl.bind("ALT + right", hl.dsp.global("kiwi-shell:apps-next"), { repeating = true })
 
     -- Provide a failsafe to abort if you change your mind
     hl.bind("escape", hl.dsp.global("kiwi-shell:apps-close"), { release = true })

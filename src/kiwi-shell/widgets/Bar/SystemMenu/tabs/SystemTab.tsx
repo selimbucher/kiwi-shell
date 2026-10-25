@@ -211,9 +211,10 @@ function OptionButtons(){
 // ─── Outputs ──────────────────────────────────────────────────────────────────
 // Only the outputs that are there, as macOS and GNOME list them: an HDMI or
 // DisplayPort connector with no display on it says so, and choosing it
-// played nothing. Each is called by its port ("Speaker", "HDMI / DisplayPort
-// 1 Output"), not by the sound card's long name, which said nothing before
-// the part that tells them apart and was cut off there.
+// played nothing. Named as macOS names them (outputName): the computer's own
+// by what they are, any other by the device's own name — never the sound
+// card's long name, which said nothing before the part that tells them apart
+// and was cut off there.
 //
 // A card that is one device with several outputs (an Intel laptop's speaker
 // and its HDMI connectors) has a port for each, described as the output's
@@ -228,6 +229,22 @@ const UNPLUGGED = AstalWp.Available.NO
 function portOf(speaker: AstalWp.Endpoint, ports: AstalWp.Route[]): AstalWp.Route | null {
   const profile = speaker.get_pw_property("device.profile.description")
   return profile ? ports.find(port => port.description === profile) ?? null : null
+}
+
+// The computer's own outputs (its sound card on the PCI bus, or the SoC's)
+// by what they are: "Built-in Speakers", "Headphones", told by the port's
+// name, which unlike its description isn't translated; a display by the name
+// it gives the card (the port's description then), else its connector. Any
+// other output — AirPods, a USB DAC — by the device's name, not its port's
+// ("Headset", "Analog Stereo").
+function outputName(speaker: AstalWp.Endpoint, ports: AstalWp.Route[]): string {
+  const port = portOf(speaker, ports)
+  const builtIn = ["pci", "platform"].includes(speaker.get_pw_property("device.bus") ?? "")
+  if (!builtIn) return speaker.device?.description || speaker.description || speaker.name || "Unknown Device"
+  const kind = (port?.name || speaker.get_pw_property("node.nick") || "").toLowerCase()
+  if (kind.includes("speaker")) return "Built-in Speakers"
+  if (kind.includes("headphone")) return "Headphones"
+  return port?.description || speaker.get_pw_property("node.nick") || speaker.description || "Unknown Device"
 }
 
 function outputPorts(speaker: AstalWp.Endpoint, get: <T>(a: Accessor<T>) => T): AstalWp.Route[] {
@@ -260,8 +277,7 @@ function AudioDevices({ close }) {
           if (port) return get(createBinding(port, "available")) !== UNPLUGGED
           return ports.length === 0 || ports.some(p => get(createBinding(p, "available")) !== UNPLUGGED)
         })
-        const name = createComputed(get =>
-          portOf(spk, outputPorts(spk, get))?.description || spk.description || spk.name || "Unknown Device")
+        const name = createComputed(get => outputName(spk, outputPorts(spk, get)))
         return (
           <button
             class={isDefault.as(d => d ? "menu-item active" : "menu-item")}

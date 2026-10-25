@@ -3,9 +3,10 @@ const log = logger("mission-control")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import GLib from "gi://GLib"
+import Cairo from "gi://cairo"
 import GObject from "gi://GObject"
 import Pango from "gi://Pango"
-import { createState, createComputed, createRoot, onCleanup, type Accessor } from "ags"
+import { createState, createRoot, onCleanup, type Accessor } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
@@ -158,13 +159,16 @@ function shownMonitor(): string | null {
 }
 
 function refresh() {
+    // only while open: a drop, a × or a reorder can finish after it closed
+    if (!isOpen.get() || closing.get()) return
     // not under a window being dragged, whose drop refreshes; nor while a
     // desktop is zoomed into, which is where everything goes next, or the
     // desktops are being renumbered (moveDesktop)
     if (drag || renumbering || scene?.isZooming()) return
     const name = view.get()?.monitor.name ?? shownMonitor()
     const next = name ? snapshot(name) : null
-    if (!next) return
+    // its display gone
+    if (!next) return void closeMissionControl()
     setView(next)
     // whatever had the focus was in what has just been rebuilt
     mcWindow?.set_focus(null)
@@ -196,12 +200,31 @@ let afterLanding: (() => void) | null = null
 let landingSource = 0
 let closedAt = 0
 const LANDED_ANYWAY_MS = 700
+// Mission Control fading off a desktop it zoomed into (Scene.zoomed)
+let zoomFade = 0
+
+function landAnyway() {
+    if (landingSource) GLib.source_remove(landingSource)
+    landingSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LANDED_ANYWAY_MS, () => {
+        landingSource = 0
+        landed(false)
+        return GLib.SOURCE_REMOVE
+    })
+}
 
 function landed(heard: boolean) {
     if (!closing.get()) return
     log.debug(`landed ${Date.now() - closedAt} ms after closing${heard ? "" : " (not heard from the plugin)"}`)
     if (landingSource) GLib.source_remove(landingSource)
     landingSource = 0
+    if (zoomFade) mcWindow?.get_child()?.remove_tick_callback(zoomFade)
+    zoomFade = 0
+    // a drag whose end GTK never delivered, the window gone under it, and
+    // the same for a desktop being moved along the bar
+    drag = null
+    setCarried(null)
+    reordering = false
+    reorderedCanvas = null
     setClosing(false)
     setOpen(false)
     setView(null)
@@ -241,7 +264,8 @@ hyprland.connect("event", (_h: unknown, event: string, args: string) => {
 })
 
 export function closeMissionControl(then?: () => void) {
-    if (!isOpen.get() || closing.get()) return
+    // a desktop being zoomed into is where it goes, and then it's gone
+    if (!isOpen.get() || closing.get() || scene?.isZooming()) return
     // the outline and the title are off the chosen window at once, quickly
     // (OUTLINE_FADE): carried along on the way home they were there a moment
     // only to be gone the moment it landed
@@ -249,16 +273,19 @@ export function closeMissionControl(then?: () => void) {
     afterLanding = then ?? null
     closedAt = Date.now()
     setClosing(true)
-    if (!livePreviews() || windowTiles.tiles.size === 0) {
+    // a window carried goes home with the others, from where it is
+    if (drag) {
+        putDown(drag.frame)
+        setCarried(null)
+    }
+    // nothing flies home that the compositor hasn't had yet
+    if (!livePreviews() || windowTiles.tiles.size === 0 || !windowTiles.sent()) {
+        windowTiles.hidden()
         landed(false)
         return
     }
     windowTiles.hidden()
-    landingSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, LANDED_ANYWAY_MS, () => {
-        landingSource = 0
-        landed(false)
-        return GLib.SOURCE_REMOVE
-    })
+    landAnyway()
 }
 
 export const toggleMissionControl = () =>
@@ -267,7 +294,7 @@ export const toggleMissionControl = () =>
 // The window comes forward at once: it flies home over the others, and is on
 // top when it lands, where the rest of the windows find it.
 function goToWindow(window: Window) {
-    if (closing.get()) return
+    if (closing.get() || scene?.isZooming()) return
     raisePreview(WINDOWS_SET, window.client.get_address())
     focusClient(window.client)
     closeMissionControl()
@@ -277,7 +304,7 @@ function goToWindow(window: Window) {
 // on macOS, and that desktop is there. The one in view is already there: its
 // windows just go home.
 function goTo(id: number) {
-    if (closing.get()) return
+    if (closing.get() || scene?.isZooming()) return
     const v = view.get()
     if (!v || id === v.monitor.active) return closeMissionControl()
     if (!scene?.zoomInto(id)) closeMissionControl(() => void goToDesktop(id))
@@ -290,6 +317,7 @@ function closeAtOnce() {
     setSelected(null)
     closedAt = Date.now()
     setClosing(true)
+    landAnyway()
     windowTiles.giveBack(() => landed(true))
 }
 
@@ -306,6 +334,10 @@ function refreshSoon() {
 }
 hyprland.connect("client-added", refreshSoon)
 hyprland.connect("client-removed", refreshSoon)
+// to another desktop, minimized, by a keybind or by the app itself
+hyprland.connect("client-moved", refreshSoon)
+hyprland.connect("minimize", refreshSoon)
+hyprland.connect("monitor-removed", refreshSoon)
 hyprland.connect("notify::focused-workspace", refreshSoon)
 
 // ─── Shortcuts ────────────────────────────────────────────────────────────────
@@ -446,6 +478,18 @@ isOpen.subscribe(() => {
     }
 })
 
+// Windows flying into a desktop's picture (dropped on it, or put on another
+// desktop meanwhile): not in the picture until they are there, or it shows
+// each twice on the way.
+const arrivingWindows = new Set<string>()
+function showArriving(address: string, arriving: boolean) {
+    if (arriving === arrivingWindows.has(address)) return
+    if (arriving) arrivingWindows.add(address)
+    else arrivingWindows.delete(address)
+    desktopTiles.tiles.get(address)?.set_opacity(arriving ? 0 : 1)
+    desktopTiles.measure()
+}
+
 // A window as a picture of `width` × `height`: an empty box the compositor
 // draws the window into, or, without kiwi's plugin, the shell's own capture.
 function WindowPicture({ window, width, height, tiles }: {
@@ -459,6 +503,7 @@ function WindowPicture({ window, width, height, tiles }: {
                 widthRequest={width}
                 heightRequest={height}
                 $={(self: Gtk.Widget) => {
+                    if (arrivingWindows.has(address)) self.set_opacity(0)
                     // drawn in the order registered: re-registered at the end
                     tiles.tiles.delete(address)
                     tiles.tiles.set(address, self)
@@ -569,6 +614,123 @@ type Drag = {
 }
 let drag: Drag | null = null
 
+// ─── The window carried ───────────────────────────────────────────────────────
+// A window being dragged is drawn on a small layer of its own over Mission
+// Control, which goes with the pointer: the compositor draws the window
+// wherever that layer is, so following the pointer is a move of the layer,
+// in the same frame, not a new set of tiles told over IPC at every step —
+// that round trip had the window trail behind the pointer. Carried, the
+// window is its last frame, not live. It takes over from its place among the
+// others once the compositor has it, and hands back the same way.
+const CARRIED_SET = "mission-control-carried"
+// room round the picture on the layer for its shadow: moving a layer redraws
+// what the layer covers
+const CARRY_PAD = 48
+const carriedTiles = new LiveTiles({
+    set: CARRIED_SET,
+    namespace: LAYER.missionControlCarried,
+    motion: "still",
+    radius: WINDOW_RADIUS,
+    shadow: true,
+    bars: true,
+})
+type Carried = { address: string; box: Box }
+const [carried, setCarried] = createState<Carried | null>(null)
+
+const addressOf = (frame: Frame) => frame.slot.item.client.get_address()
+
+// the picture's box on the display, from where the scene has put it
+function carriedBox(frame: Frame, at: Box): Box {
+    const [dx, dy] = mcWindow?.get_surface_transform() ?? [0, 0]
+    return { x: Math.round(at.x + dx), y: Math.round(at.y + dy), width: Math.max(1, Math.round(at.width)), height: Math.max(1, Math.round(at.height)) }
+}
+
+function pickUp(frame: Frame) {
+    const address = addressOf(frame)
+    setCarried({ address, box: carriedBox(frame, frame.at) })
+    // drawn on its own layer: out of the others
+    carriedTiles.whenTaken(() => {
+        if (carried.get()?.address !== address || windowTiles.tiles.get(address) !== frame.picture) return
+        windowTiles.tiles.delete(address)
+        windowTiles.measure()
+    })
+}
+
+// where the scene has the carried window now (Scene.place)
+function carriedTo(frame: Frame, at: Box) {
+    const c = carried.get()
+    if (!c || c.address !== addressOf(frame)) return
+    const box = carriedBox(frame, at)
+    if (box.x === c.box.x && box.y === c.box.y && box.width === c.box.width && box.height === c.box.height) return
+    setCarried({ address: c.address, box })
+}
+
+// back among the others (on top: re-registered last), and its own layer
+// gone once the compositor has it there
+function putDown(frame: Frame) {
+    const address = addressOf(frame)
+    if (carried.get()?.address !== address) return
+    if (windowTiles.tiles.get(address) !== frame.picture) {
+        windowTiles.tiles.delete(address)
+        windowTiles.tiles.set(address, frame.picture)
+    }
+    windowTiles.whenTaken(() => {
+        if (carried.get()?.address === address) setCarried(null)
+    })
+}
+
+function CarriedWindow({ monitor }: { monitor: Accessor<Gdk.Monitor> }) {
+    const pane = new PreviewPane({ halign: Gtk.Align.START, valign: Gtk.Align.START })
+    const picture = new Gtk.Box({ marginStart: CARRY_PAD, marginTop: CARRY_PAD, marginEnd: CARRY_PAD, marginBottom: CARRY_PAD })
+    pane.append(picture)
+    pane.onLayout = () => carriedTiles.measure()
+    carriedTiles.pane = pane
+    const follow = () => {
+        const c = carried.get()
+        carriedTiles.tiles.clear()
+        if (!c) return
+        picture.set_size_request(c.box.width, c.box.height)
+        carriedTiles.tiles.set(c.address, picture)
+    }
+    let wasCarried = false
+    onCleanup(carried.subscribe(() => {
+        follow()
+        const now = carried.get() !== null
+        if (now === wasCarried) return
+        wasCarried = now
+        if (now) carriedTiles.shown()
+        else carriedTiles.hidden()
+    }))
+    onCleanup(() => { if (carriedTiles.pane === pane) carriedTiles.pane = null })
+    return (
+        <window
+            namespace={LAYER.missionControlCarried}
+            name="ags-mission-control-carried"
+            class="MissionControlCarried"
+            visible={carried(c => c !== null)}
+            gdkmonitor={monitor}
+            exclusivity={Astal.Exclusivity.IGNORE}
+            anchor={Astal.WindowAnchor.TOP | Astal.WindowAnchor.LEFT}
+            marginLeft={carried(c => c ? c.box.x - CARRY_PAD : 0)}
+            marginTop={carried(c => c ? c.box.y - CARRY_PAD : 0)}
+            application={app}
+            layer={Astal.Layer.OVERLAY}
+            keymode={Astal.Keymode.NONE}
+            $={(self) => {
+                carriedTiles.window = self
+                // never in the pointer's way: the drag goes on on Mission Control
+                self.connect("map", () => self.get_surface()?.set_input_region(new Cairo.Region()))
+                onCleanup(() => {
+                    if (carriedTiles.window === self) carriedTiles.window = null
+                    destroyWindow(self)
+                })
+            }}
+        >
+            {pane}
+        </window>
+    )
+}
+
 // the desktop (or +) under a point of the windows' canvas
 function dropTargetAt(canvas: Gtk.Widget, x: number, y: number): number | "add" | null {
     const inside = (widget: Gtk.Widget) => {
@@ -611,6 +773,7 @@ async function dropWindow(scene: Scene) {
     if (!drag) return
     const { frame, target } = drag
     drag = null
+    putDown(frame)
     markDropTarget(null)
     frame.held = false
     const v = scene.v
@@ -649,8 +812,8 @@ function dragWindows(scene: Scene) {
             frame.held = true
             setSelected(null)
             setExpanded(true)
-            raisePreview(WINDOWS_SET, frame.slot.item.client.get_address())
             frame.widget.insert_before(canvas, null)
+            pickUp(frame)
         }
         dragTo(scene, sx + dx, sy + dy)
     })
@@ -688,6 +851,8 @@ type Frame = {
     // from `from` to the slot, or into a desktop's picture when leaving
     move: Tween
     leaving: Box | null
+    // the desktop whose picture it is leaving for, followed as it moves
+    into: Into | null
     held: boolean
     dispose: () => void
 }
@@ -711,6 +876,9 @@ const frameOf = new WeakMap<Gtk.Widget, Frame>()
 type Page = { id: number; wallpaper: Gtk.Picture; frames: Map<string, Frame> }
 
 // a desktop in the bar
+// a window going into a desktop's picture
+type Into = { id: number; window: Window }
+
 type Item = {
     id: number
     // the desktop's picture, its windows inside it
@@ -890,7 +1058,7 @@ class Scene {
         for (const i of new Set([Math.floor(position), Math.ceil(position)])) {
             const desktop = this.v.desktops[i]
             if (desktop && !this.pages.has(desktop.id))
-                this.addPage(desktop.id, spreadOf(this.v.monitor, desktop.windows), new Map())
+                this.addPage(desktop.id, spreadOf(this.v.monitor, desktop.windows, expanded.get()), new Map())
         }
         this.following = fraction !== 0
         this.camera.jump(position)
@@ -925,7 +1093,7 @@ class Scene {
     // the ones coming from another desktop's picture (`origins`) from there,
     // and the ones leaving for another desktop's picture (`destinations`)
     // into it. Others come and go where they are.
-    private fill(page: Page, slots: Slot<Window>[], origins: Map<string, Box>, destinations: Map<string, Box>) {
+    private fill(page: Page, slots: Slot<Window>[], origins: Map<string, Box>, destinations: Map<string, Into>) {
         const kept = new Set<string>()
         for (const slot of slots) {
             const address = slot.item.client.get_address()
@@ -937,6 +1105,7 @@ class Scene {
             }
             frame.slot = slot
             frame.leaving = null
+            this.stopInto(frame)
             if (!frame.held) this.glide(frame, FLIGHT)
         }
         for (const [address, frame] of page.frames) {
@@ -947,7 +1116,9 @@ class Scene {
                 continue
             }
             frame.held = false
-            frame.leaving = into
+            frame.into = into
+            frame.leaving = this.intoBox(into) ?? frame.at
+            showArriving(address, true)
             this.glide(frame, FLIGHT)
         }
         // bottom to top, as the windows overlap, the titles over them all;
@@ -999,7 +1170,7 @@ class Scene {
                 slot, widget, picture, title,
                 at: { ...start }, from: { ...start },
                 move: new Tween(from ? 0 : 1),
-                leaving: null, held: false,
+                leaving: null, into: null, held: false,
                 dispose: () => {
                     this.stage.remove(widget)
                     this.stage.remove(title)
@@ -1016,8 +1187,25 @@ class Scene {
 
     private dropFrame(page: Page, frame: Frame) {
         if (drag?.frame === frame) drag = null
+        // (landed in the picture, or not going there after all)
+        this.stopInto(frame)
         frame.dispose()
         page.frames.delete(frame.slot.item.client.get_address())
+    }
+
+    // Where a window going into a desktop's picture is to land: where the
+    // picture is now. A new desktop's slides in from the end of the bar for
+    // longer than the window flies, and aimed at where it would end up the
+    // window landed on nothing.
+    private intoBox(into: Into): Box | null {
+        const item = this.items.get(into.id)
+        return item ? this.inPicture(item, into.window) : null
+    }
+
+    private stopInto(frame: Frame) {
+        if (!frame.into) return
+        frame.into = null
+        showArriving(frame.slot.item.client.get_address(), false)
     }
 
     // from where it is now to where it belongs
@@ -1234,12 +1422,12 @@ class Scene {
 
         // the windows: those leaving this desktop for another one's picture
         // fly into it
-        const destinations = new Map<string, Box>()
+        const destinations = new Map<string, Into>()
         if (this.opening.value > 0.5) {
             for (const desktop of v.desktops) {
                 const item = this.items.get(desktop.id)
                 if (!item || desktop.id === v.monitor.active) continue
-                for (const w of desktop.windows) destinations.set(w.client.get_address(), this.inPicture(item, w, item.x.target))
+                for (const w of desktop.windows) destinations.set(w.client.get_address(), { id: desktop.id, window: w })
             }
         }
         // pages whose desktop has been closed go
@@ -1293,7 +1481,9 @@ class Scene {
     zoomInto(id: number): boolean {
         const item = this.items.get(id)
         const desktop = this.v.desktops.find(d => d.id === id)
-        if (this.zoom || !item || !desktop || this.opening.value < 1 || !livePreviews()) return false
+        // (from where its picture is, the bar still opening included: only
+        // a folded bar has none on screen to grow from)
+        if (this.zoom || !item || !desktop || this.opening.value <= 0 || !livePreviews()) return false
         forgetClose()
         this.zoom = createRoot(dispose => {
             const wallpaper = new Gtk.Picture({ contentFit: Gtk.ContentFit.COVER, canShrink: true, paintable: wallpaperTexture.get() })
@@ -1341,12 +1531,13 @@ class Scene {
         const content = mcWindow?.get_child()
         if (!content) return closeAtOnce()
         let start = -1
-        content.add_tick_callback((_w, clock) => {
+        zoomFade = content.add_tick_callback((_w, clock) => {
             const now = clock.get_frame_time() / 1000
             if (start < 0) start = now
             const t = Math.min(1, (now - start) / ZOOM_FADE_MS)
             content.set_opacity(1 - easeOutCubic(t))
             if (t < 1) return GLib.SOURCE_CONTINUE
+            zoomFade = 0
             closeAtOnce()
             return GLib.SOURCE_REMOVE
         })
@@ -1425,6 +1616,12 @@ class Scene {
             this.reordered = null
             reordering = false
             reorderedCanvas = null
+            // ended by Mission Control going (Escape, the shortcut, three
+            // fingers down) rather than let go: the move is called off
+            if (closing.get() || !isOpen.get()) {
+                place = from = -1
+                return
+            }
             if (place !== from) {
                 // The desktops are renumbered as they move: the scene goes by
                 // the new numbers before it hears of anything else.
@@ -1501,10 +1698,14 @@ class Scene {
             const offset = Math.round((this.indexOf(page.id) - this.camera.value) * pitch)
             this.stage.move(page.wallpaper, offset, 0)
             for (const frame of page.frames.values()) {
-                if (!frame.held) frame.at = lerpBox(frame.from, frame.leaving ?? frame.slot, frame.move.value)
+                if (!frame.held) {
+                    if (frame.into) frame.leaving = this.intoBox(frame.into) ?? frame.leaving
+                    frame.at = lerpBox(frame.from, frame.leaving ?? frame.slot, frame.move.value)
+                }
                 const { x, y, width, height } = frame.at
                 frame.picture.set_size_request(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)))
                 this.stage.move(frame.widget, Math.round(x + offset) - FRAME, Math.round(y) - FRAME)
+                if (frame.held) carriedTo(frame, { x: x + offset, y, width, height })
                 this.stage.move(frame.title, Math.round(x + offset + width / 2 - (frame.slot.width + TITLE_WIDTH_EXTRA) / 2),
                     Math.round(y + height + FRAME + 6))
             }
@@ -1821,7 +2022,16 @@ function onKey(keyval: number): boolean {
 // ─── The window ───────────────────────────────────────────────────────────────
 
 export default function MissionControl({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
-    const monitor = createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)
+    // Where popups go (the display in use), but while open the display it
+    // opened on: the pointer going over to another one leaves it there.
+    const [monitor, setMonitor] = createState<Gdk.Monitor>(popupGdkMonitor.get() ?? gdkmonitor)
+    const place = () => {
+        const shown = view.get()?.monitor.name
+        const on = shown ? app.get_monitors().find(m => m.get_connector() === shown) : undefined
+        setMonitor(on ?? popupGdkMonitor.get() ?? gdkmonitor)
+    }
+    onCleanup(popupGdkMonitor.subscribe(place))
+    onCleanup(view.subscribe(place))
 
     // the wallpaper behind it all, at the display's own pixels
     const loadWallpaper = () => {
@@ -1837,10 +2047,10 @@ export default function MissionControl({ gdkmonitor }: { gdkmonitor: Gdk.Monitor
     // Ready before it is first needed: decoding a 4K photo takes a while,
     // and opening without it, the wallpaper came in once the windows had
     // already flown.
-    wallpaperPath.subscribe(loadWallpaper)
-    monitor.subscribe(loadWallpaper)
+    onCleanup(wallpaperPath.subscribe(loadWallpaper))
+    onCleanup(monitor.subscribe(loadWallpaper))
     loadWallpaper()
-    isOpen.subscribe(() => { if (isOpen.get()) loadWallpaper() })
+    onCleanup(isOpen.subscribe(() => { if (isOpen.get()) loadWallpaper() }))
 
     // the bar, over the windows: its desktops' windows are the compositor's
     const bar = new PreviewPane({ valign: Gtk.Align.START, vexpand: false })
@@ -1879,6 +2089,15 @@ export default function MissionControl({ gdkmonitor }: { gdkmonitor: Gdk.Monitor
     })
     onCleanup(() => {
         unsubscribe()
+        // gone while open (its display unplugged): closed, for the next one
+        if (landingSource) GLib.source_remove(landingSource)
+        landingSource = 0
+        afterLanding = null
+        drag = null
+        setCarried(null)
+        setClosing(false)
+        setOpen(false)
+        setView(null)
         scene?.destroy()
         scene = null
         if (windowTiles.pane === pane) windowTiles.pane = null
@@ -1945,5 +2164,6 @@ export default function MissionControl({ gdkmonitor }: { gdkmonitor: Gdk.Monitor
             {pane}
         </window>,
         <CloseButton monitor={monitor} />,
+        <CarriedWindow monitor={monitor} />,
     ]
 }

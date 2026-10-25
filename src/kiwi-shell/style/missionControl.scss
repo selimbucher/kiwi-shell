@@ -104,6 +104,13 @@ window.MissionControlClose {
     background: none;
 }
 
+// A window being dragged (MissionControl.tsx, CarriedWindow): the compositor
+// draws it on this surface, which itself draws a pixel that is nearly clear —
+// with nothing at all GTK never puts the surface on screen
+window.MissionControlCarried {
+    background-color: rgba(0, 0, 0, 0.004);
+}
+
 button.mc-close {
     @include flat-button;
     min-width: 22px;

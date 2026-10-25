@@ -1,15 +1,16 @@
 import { Gtk, Gdk } from "ags/gtk4"
-import { createState } from "ags"
+import { createState, onCleanup } from "ags"
 import Gio from "gi://Gio"
-import GObject from "gi://GObject"
 import GLib from "gi://GLib"
 import { conf } from "../config"
 import { playSound } from "../sound"
-import { HOME, launchBounce, type Hop } from "./dock-state"
+import { HOME, launchBounce, type Hop, type MenuSlot } from "./dock-state"
 import { openUri, openPath, emptyTrash, letGoOnClose } from "./dock-utils"
 import { ContextMenu } from "../ContextMenu"
+import { openChoicePrompt } from "../prompts"
 
-export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void }) {
+export function HomeFolderButton({ menuSlot }: { menuSlot: MenuSlot }) {
+    const setMenuOpen = menuSlot()
     const commonDirs = [
         { name: "Desktop",   path: `${HOME}/Desktop`,   icon: "user-desktop" },
         { name: "Documents", path: `${HOME}/Documents`, icon: "folder-documents" },
@@ -71,9 +72,11 @@ export function HomeFolderButton({ setMenuOpen }: { setMenuOpen: (v: boolean) =>
     )
 }
 
-let _trashMonitor: Gio.FileMonitor | null = null
+// every dock's trash watch, held so none is collected (one per display)
+const trashMonitors = new Set<Gio.FileMonitor>()
 
-export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void }) {
+export function TrashButton({ menuSlot }: { menuSlot: MenuSlot }) {
+    const setMenuOpen = menuSlot()
     const TRASH_FILES = `${GLib.get_user_data_dir()}/Trash/files`
 
     const isTrashEmpty = () => {
@@ -88,9 +91,13 @@ export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void
     const [trashEmpty, setTrashEmpty] = createState(isTrashEmpty())
     const [hop, setHop] = createState<Hop>("")
 
-    const trashDir = Gio.File.new_for_path(TRASH_FILES)
-    _trashMonitor = trashDir.monitor_directory(Gio.FileMonitorFlags.NONE, null)
-    _trashMonitor.connect("changed", () => setTrashEmpty(isTrashEmpty()))
+    const trashMonitor = Gio.File.new_for_path(TRASH_FILES).monitor_directory(Gio.FileMonitorFlags.NONE, null)
+    trashMonitor.connect("changed", () => setTrashEmpty(isTrashEmpty()))
+    trashMonitors.add(trashMonitor)
+    onCleanup(() => {
+        trashMonitor.cancel()
+        trashMonitors.delete(trashMonitor)
+    })
 
     const menu = ContextMenu({
         class: "app-context-menu",
@@ -108,11 +115,14 @@ export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void
                 // the monitor already tracks this; an always-live item on an
                 // empty trash is the only one here that can do nothing
                 sensitive: trashEmpty.as(e => !e),
-                onClick: () => {
-                    playSound("trash.wav")
-                    emptyTrash()
-                    setTrashEmpty(true)
-                },
+                // gone for good, so asked first, as a Mac asks
+                onClick: () => openChoicePrompt("Empty Trash",
+                    "Are you sure you want to permanently erase the items in the Trash? You can't undo this action.",
+                    [{ label: "Empty Trash", primary: true, run: () => {
+                        playSound("trash.wav")
+                        emptyTrash()
+                        setTrashEmpty(true)
+                    } }]),
             },
         ],
     })
@@ -135,20 +145,23 @@ export function TrashButton({ setMenuOpen }: { setMenuOpen: (v: boolean) => void
                     self.add_controller(gesture)
                     letGoOnClose(menu, self)
 
-                    const dropTarget = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE | Gdk.DragAction.COPY)
-                    dropTarget.connect("accept", (_target, drop) =>
-                        drop.get_formats().contain_mime_type("text/uri-list")
-                    )
+                    // files as files: GTK's plain-text form of a drag is paths,
+                    // not URIs, and a name with a % in it didn't survive
+                    // being decoded as one
+                    const dropTarget = Gtk.DropTarget.new(Gdk.FileList.$gtype, Gdk.DragAction.MOVE | Gdk.DragAction.COPY)
                     dropTarget.connect("drop", (_target, value) => {
-                        if (typeof value === "string") {
-                            value.trim().split("\n").filter(Boolean).forEach(uri => {
-                                const path = decodeURIComponent(uri.replace(/^file:\/\//, "").trim())
-                                Gio.File.new_for_path(path).trash(null)
-                            })
-                            setTrashEmpty(false)
-                            return true
+                        if (!(value instanceof Gdk.FileList)) return false
+                        let trashed = false
+                        for (const file of value.get_files()) {
+                            try {
+                                file.trash(null)
+                                trashed = true
+                            } catch (e) {
+                                console.error(`could not move ${file.get_path()} to the trash:`, e)
+                            }
                         }
-                        return false
+                        if (trashed) setTrashEmpty(false)
+                        return trashed
                     })
                     dropTarget.connect("enter", () => {
                         self.add_css_class("drag-hover")

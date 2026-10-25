@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { createState, createComputed, onCleanup } from "ags"
+import { createState, createComputed, createRoot, onCleanup } from "ags"
 import { destroyWindow } from "../monitors"
 import { readFile, writeFileAsync } from "ags/file"
 import Gio from "gi://Gio"
@@ -317,6 +317,19 @@ let fixedRef: Gtk.Fixed | null = null
 const iconWidgets = new Map<string, Gtk.Widget>()
 // what the widget was built from — rebuild when the look changes
 const iconVersion = new Map<string, string>()
+// Each icon in a reactive scope of its own, ended when it goes: it is built
+// from the directory watcher, outside any, and its bindings to the selection
+// and the icon theme would otherwise outlive it.
+const iconScopes = new Map<string, () => void>()
+
+function dropIcon(path: string) {
+    const widget = iconWidgets.get(path)
+    if (widget && widget.get_parent()) (widget.get_parent() as Gtk.Fixed).remove(widget)
+    iconScopes.get(path)?.()
+    iconScopes.delete(path)
+    iconWidgets.delete(path)
+    iconVersion.delete(path)
+}
 let monW = 1920
 let monH = 1080
 
@@ -435,17 +448,18 @@ function relayout() {
     const byPath = new Map(list.map((i) => [i.path, i]))
 
     // drop widgets for removed files, rebuild ones whose look changed
-    for (const [path, w] of [...iconWidgets]) {
+    for (const path of [...iconWidgets.keys()]) {
         const item = byPath.get(path)
         const version = item && `${item.name}\0${item.isDir}\0${item.contentType}`
         if (item && version === iconVersion.get(path)) continue
-        fixed.remove(w)
-        iconWidgets.delete(path)
-        iconVersion.delete(path)
+        dropIcon(path)
     }
     for (const item of list) {
         if (iconWidgets.has(item.path)) continue
-        const w = DesktopIcon({ item }) as Gtk.Widget
+        const w = createRoot(dispose => {
+            iconScopes.set(item.path, dispose)
+            return DesktopIcon({ item }) as Gtk.Widget
+        })
         if (selected.get().has(item.path)) w.add_css_class("selected")
         iconWidgets.set(item.path, w)
         iconVersion.set(item.path, `${item.name}\0${item.isDir}\0${item.contentType}`)
@@ -883,10 +897,20 @@ function DesktopIcon({ item }: { item: DesktopItem }) {
 }
 
 export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
-    const geometry = gdkmonitor.get_geometry()
-    monW = geometry.width
-    monH = geometry.height
+    // the grid as large as the display is now, and again when its size or
+    // scale changes
+    const measure = () => {
+        const geometry = gdkmonitor.get_geometry()
+        if (geometry.width === monW && geometry.height === monH) return
+        monW = geometry.width
+        monH = geometry.height
+        relayout()
+    }
+    monW = gdkmonitor.get_geometry().width
+    monH = gdkmonitor.get_geometry().height
     monitorRef = gdkmonitor
+    const measured = gdkmonitor.connect("notify::geometry", measure)
+    onCleanup(() => gdkmonitor.disconnect(measured))
 
     // re-read on every popup: the clipboard can change while the menu is shut
     const [canPaste, setCanPaste] = createState(false)
@@ -1164,6 +1188,12 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 $={(self) => {
                     fixedRef = self
                     relayout()
+                    // built again for another display (app.tsx): the icons
+                    // are this one's, and go with it
+                    onCleanup(() => {
+                        for (const path of [...iconWidgets.keys()]) dropIcon(path)
+                        if (fixedRef === self) fixedRef = null
+                    })
                 }}
             />
             </overlay>

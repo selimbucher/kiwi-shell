@@ -104,8 +104,10 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
     // monitor only follows the popup monitor while nothing is shown, and
     // at the moment the center opens.
     const [monitor, setMonitor] = createState<Gdk.Monitor>(popupGdkMonitor() ?? gdkmonitor)
+    // (a display unplugged under it is left at once, shown or not)
     const followPopupMonitor = (force = false) => {
-        if (force || !shown()) setMonitor(popupGdkMonitor() ?? gdkmonitor)
+        const gone = !app.get_monitors().includes(monitor())
+        if (force || gone || !shown()) setMonitor(popupGdkMonitor() ?? gdkmonitor)
     }
 
     let wasOpen = centerOpen()

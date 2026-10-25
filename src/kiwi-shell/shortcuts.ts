@@ -130,7 +130,7 @@ export function optionalShortcut(name: OptionalShortcutName): Shortcut | null {
 
 const DESCRIPTIONS: Record<ShortcutName, string[]> = {
     launcher: ["kiwi: launcher"],
-    app_switcher: ["kiwi: apps open", "kiwi: apps submap enter", "kiwi: apps confirm", "kiwi: apps submap reset"],
+    app_switcher: ["kiwi: apps open", "kiwi: apps open backwards", "kiwi: apps submap enter", "kiwi: apps confirm", "kiwi: apps submap reset"],
     mission_control: ["kiwi: mission control"],
     desktop_left: ["kiwi: desktop left"],
     desktop_right: ["kiwi: desktop right"],
@@ -153,7 +153,7 @@ function wantedCombos(name: ShortcutName): string[] {
             : [combo(s)]
     }
     const s = shortcut(name)
-    if (name === "app_switcher") return [combo(s), `${s.mods[0]} + ${heldModifierKey(s)}`]
+    if (name === "app_switcher") return [combo(s), combo(s, "SHIFT"), `${s.mods[0]} + ${heldModifierKey(s)}`]
     return [combo(s)]
 }
 

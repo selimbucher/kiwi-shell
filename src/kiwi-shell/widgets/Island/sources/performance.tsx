@@ -1,5 +1,5 @@
 import { Gtk } from "ags/gtk4"
-import { createComputed, createState, type Accessor } from "ags"
+import { createComputed, createState, onCleanup, type Accessor } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
@@ -271,6 +271,8 @@ function look() {
     busyLooks = load >= BUSY ? busyLooks + 1 : 0
     if (busyLooks >= 2 || (atLimit && load >= STILL_BUSY)) {
         atLimit = { load, perCore, degrees, top: lastTop.length ? lastTop : atLimit?.top ?? [], since: atLimit?.since ?? now }
+        // on again before the open card was closed: the same spell
+        cpuOver = false
     } else if (atLimit && cpuCardOpen) {
         cpuOver = true
     } else if (atLimit) {
@@ -406,6 +408,8 @@ function setWatching(on: boolean) {
         looking = 0
         if (pressureSource) GLib.source_remove(pressureSource)
         pressureSource = 0
+        if (pressureOver) GLib.source_remove(pressureOver)
+        pressureOver = pressureFrom = 0
         pressureStream?.close(null)
         pressureStream = null
         snapshot = null
@@ -564,8 +568,7 @@ function Top({ groups, value }: { groups: Accessor<Group[]>; value: (g: Group) =
         update()
     })
     list.add_controller(motion)
-    const unsubscribe = groups.subscribe(update)
-    list.connect("destroy", unsubscribe)
+    onCleanup(groups.subscribe(update))
     return list
 }
 
@@ -610,8 +613,7 @@ function Cores({ loads }: { loads: Accessor<number[]> }) {
         bars.queue_draw()
     }
     update()
-    const unsubscribe = loads.subscribe(update)
-    bars.connect("destroy", unsubscribe)
+    onCleanup(loads.subscribe(update))
     return bars
 }
 

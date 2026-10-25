@@ -39,7 +39,8 @@ export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monito
                 keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 keys.connect("key-pressed", (_controller, keyval: number) => {
                     if (keyval === Gdk.KEY_Escape) {
-                        setShowPrompt(false)
+                        if (kind() === "choice") settle(null)
+                        else setShowPrompt(false)
                         return Gdk.EVENT_STOP
                     }
                     // a choice prompt has no entry to take Enter: it means the primary
@@ -72,6 +73,8 @@ let pw!: Gtk.Entry
 const [pwInvalid, setpwInvalid] = createState(false)
 
 export function openWifiPrompt(ssid: string, invalid = false) {
+    // a question still open goes unanswered
+    if (asking) settle(null)
     pw.text = ""
     setpwInvalid(invalid)
     setWifiSSID(ssid)
@@ -79,20 +82,43 @@ export function openWifiPrompt(ssid: string, invalid = false) {
     setShowPrompt(true)
 }
 
-// A question with buttons for answers: the power menu's confirmations. One
-// choice may be primary (Enter picks it); Cancel and Escape are always there.
+// A question with buttons for answers: the power menu's confirmations, a
+// device asking to pair. One choice may be primary (Enter picks it); Cancel
+// and Escape are always there, and `cancelled` runs for them — or for the
+// question going unanswered, another one taking its place or the asker
+// withdrawing it (the close returned).
 export type Choice = { label: string; primary?: boolean; run: () => void }
-const [choice, setChoice] = createState<{ title: string; text: string; choices: Choice[] } | null>(null)
+type Question = { title: string; text: string; choices: Choice[]; cancelled?: () => void }
+const [choice, setChoice] = createState<Question | null>(null)
 
-export function openChoicePrompt(title: string, text: string, choices: Choice[]) {
-    setChoice({ title, text, choices })
+// the question on screen, until answered one way or the other
+let asking: Question | null = null
+
+function settle(answer: Choice | null) {
+    const question = asking
+    asking = null
+    setShowPrompt(false)
+    if (!question) return
+    if (answer) answer.run()
+    else question.cancelled?.()
+}
+
+export function openChoicePrompt(title: string, text: string, choices: Choice[], cancelled?: () => void): () => void {
+    if (asking) settle(null)
+    const question = { title, text, choices, cancelled }
+    asking = question
+    setChoice(question)
     setKind("choice")
     setShowPrompt(true)
+    return () => {
+        if (asking !== question) return
+        asking = null
+        setShowPrompt(false)
+    }
 }
 
 function choose(c: Choice) {
-    setShowPrompt(false)
-    c.run()
+    settle(c)
 }
 
 function ChoicePrompt() {
@@ -116,7 +142,7 @@ function ChoicePrompt() {
                 halign={Gtk.Align.END}
                 spacing={8}
             >
-                <button onClicked={() => setShowPrompt(false)}>Cancel</button>
+                <button onClicked={() => settle(null)}>Cancel</button>
                 <For each={choice.as(c => c?.choices ?? [])}>
                     {(c: Choice) => (
                         <button class={c.primary ? "primary" : ""} onClicked={() => choose(c)}>{c.label}</button>

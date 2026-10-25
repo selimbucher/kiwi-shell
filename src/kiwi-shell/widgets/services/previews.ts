@@ -346,6 +346,11 @@ export class LiveTiles {
         ++this.generation
     }
 
+    /** Whether the compositor has been sent the tiles (since shown()). */
+    sent(): boolean {
+        return showing.has(this.options.set)
+    }
+
     /**
      * A flying set's windows given back where they are, nothing flying home
      * (Mission Control has zoomed into a desktop that shows them in place);
@@ -397,9 +402,22 @@ export class LiveTiles {
         if (pane.waiting && tiles.length === 0 && this.tiles.size > 0) return
 
         const measured = ++this.generation
+        const waiters = this.takenWaiters.splice(0)
         const { set, namespace, motion, popup, squareTop, fly, shadow, bars } = this.options
         showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly, shadow, bars }, () => {
             if (measured === this.generation) this.pane?.show()
+            for (const then of waiters) then()
         })
+    }
+
+    private takenWaiters: (() => void)[] = []
+
+    /**
+     * `then` once the compositor has the tiles as they are now: a tile taken
+     * out or put back is drawn that way from the shell's next frame.
+     */
+    whenTaken(then: () => void) {
+        this.takenWaiters.push(then)
+        this.measure()
     }
 }

@@ -1,4 +1,4 @@
-import { createState, type Accessor } from "ags"
+import { createState, onCleanup, type Accessor } from "ags"
 import { Gtk, Gdk } from "ags/gtk4"
 import Gio from "gi://Gio"
 import Pango from "gi://Pango"
@@ -132,7 +132,7 @@ function Thumbnail({ path, width, height, class: className }: {
     if (typeof path === "string") load(path)
     else {
         load(path.get())
-        path.subscribe(() => load(path.get()))
+        onCleanup(path.subscribe(() => load(path.get())))
     }
 
     return (
@@ -209,8 +209,8 @@ function WallpaperGrid() {
                     markCurrent()
                 }
                 rebuild()
-                wallpapers.subscribe(rebuild)
-                wallpaperPath.subscribe(markCurrent)
+                onCleanup(wallpapers.subscribe(rebuild))
+                onCleanup(wallpaperPath.subscribe(markCurrent))
             }}
         />
     )

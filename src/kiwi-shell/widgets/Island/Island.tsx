@@ -367,7 +367,7 @@ export function IslandCard() {
         setCardOn(open.monitor)
         morph.open(open.from, widget, open.what)
     }
-    opened.subscribe(follow)
+    onCleanup(opened.subscribe(follow))
 
     const closeSoon = () => GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
         collapse()
@@ -446,7 +446,7 @@ export function IslandCard() {
                 // taller's window.
                 const size = () => self.set_default_size(monitorOf(where())?.get_geometry().width ?? -1, -1)
                 size()
-                cardOn.subscribe(size)
+                onCleanup(cardOn.subscribe(size))
             }}
         >
             {morph}

@@ -121,6 +121,19 @@ const DEVICES_SETTLE_MS = 150
 
 const cameraDevices = () => listDir("/dev").filter(name => /^video\d+$/.test(name)).map(name => `/dev/${name}`).sort()
 
+// inotify watches only what may be read: a camera just plugged in is root's
+// alone until udev has given it to the user, which a moment later it has
+// (and one never given is one no app of the user's opens either)
+const readable = (path: string) => {
+    try {
+        return Gio.File.new_for_path(path).query_info("access::can-read", Gio.FileQueryInfoFlags.NONE, null).get_attribute_boolean("access::can-read")
+    } catch {
+        return false
+    }
+}
+// how long udev has to do that after a device file appears
+const UDEV_SETTLE_MS = 1000
+
 /** The apps with a camera's device open, by name. */
 function openingCameras(devices: string[]): Use[] {
     const apps: Use[] = []
@@ -146,10 +159,16 @@ function openingCameras(devices: string[]): Use[] {
     return apps
 }
 
-// one line per event from an inotifywait, for as long as it runs
-function inotifywait(args: string[], onEvent: () => void): Gio.Subprocess | null {
+let quitting = false
+
+// one line per event from an inotifywait, for as long as it runs; `ended`
+// when it stops on its own (a device it watched gone, one it can't read)
+function inotifywait(args: string[], onEvent: () => void, ended: () => void): Gio.Subprocess | null {
     try {
         const proc = Gio.Subprocess.new(["inotifywait", "-m", "-q", ...args], Gio.SubprocessFlags.STDOUT_PIPE)
+        proc.wait_async(null, () => {
+            if (!quitting) ended()
+        })
         const lines = new Gio.DataInputStream({ base_stream: proc.get_stdout_pipe()! })
         const next = () => lines.read_line_async(GLib.PRIORITY_DEFAULT, null, (_s, result) => {
             try {
@@ -170,6 +189,12 @@ function inotifywait(args: string[], onEvent: () => void): Gio.Subprocess | null
 let opens: Gio.Subprocess | null = null
 let watching = ""
 let settle = 0
+// a watch that stopped on its own soon after it began is begun once more,
+// and if that one stops too, left until the device files change
+const SHORT_LIVED_MS = 10_000
+let retried = ""
+let failed = ""
+let again = 0
 
 function lookAtCameras() {
     if (settle) GLib.source_remove(settle)
@@ -187,17 +212,49 @@ function lookAtCameras() {
 // anew when the cameras change, a device file of another kind coming or going
 // leaving them be
 function watchCameras() {
-    const devices = cameraDevices()
-    if (devices.join(" ") === watching && (opens || !devices.length)) return
-    watching = devices.join(" ")
+    const devices = cameraDevices().filter(readable)
+    const list = devices.join(" ")
+    if (list === watching && (opens || !devices.length)) return
+    if (list === failed) return
+    watching = list
     opens?.force_exit()
-    opens = devices.length ? inotifywait(["-e", "open", "-e", "close", ...devices], lookAtCameras) : null
+    const began = GLib.get_monotonic_time()
+    const proc: Gio.Subprocess | null = devices.length ? inotifywait(["-e", "open", "-e", "close", ...devices], lookAtCameras, () => {
+        if (opens !== proc) return // replaced
+        opens = null
+        watching = ""
+        if (GLib.get_monotonic_time() - began > SHORT_LIVED_MS * 1000) retried = ""
+        if (retried === list) {
+            failed = list
+            return log.warn(`privacy: no word of cameras opened directly, the watch on ${list} keeps stopping`)
+        }
+        // once more in a moment, as the cameras are then
+        retried = list
+        if (again) GLib.source_remove(again)
+        again = GLib.timeout_add(GLib.PRIORITY_DEFAULT, UDEV_SETTLE_MS, () => {
+            again = 0
+            watchCameras()
+            return GLib.SOURCE_REMOVE
+        })
+    }) : null
+    opens = proc
     lookAtCameras()
 }
 
-const hotplug = inotifywait(["-e", "create", "-e", "delete", "--format", "%f", "/dev"], watchCameras)
+// a device file come or gone, once udev is done with it
+let plugged = 0
+const hotplug = inotifywait(["-e", "create", "-e", "delete", "--format", "%f", "/dev"], () => {
+    if (plugged) GLib.source_remove(plugged)
+    plugged = GLib.timeout_add(GLib.PRIORITY_DEFAULT, UDEV_SETTLE_MS, () => {
+        plugged = 0
+        failed = retried = ""
+        watchCameras()
+        return GLib.SOURCE_REMOVE
+    })
+}, () => log.warn("privacy: no word of cameras coming and going (inotifywait stopped)"))
 watchCameras()
 app.connect("shutdown", () => {
+    quitting = true
     opens?.force_exit()
     hotplug?.force_exit()
 })

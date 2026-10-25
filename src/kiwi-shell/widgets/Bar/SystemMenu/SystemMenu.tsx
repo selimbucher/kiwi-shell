@@ -1,5 +1,5 @@
 import { Gtk } from "ags/gtk4"
-import { createState, createBinding, createComputed } from "ags"
+import { createState, createBinding, createComputed, onCleanup } from "ags"
 import AstalBattery from "gi://AstalBattery"
 
 import { CircularProgress } from "../../Misc"
@@ -82,10 +82,11 @@ if (hasBattery) {
   batCharging.subscribe(checkBattery)
 }
 
-let systemMenuPopover: Gtk.Popover | null = null
+// one per bar, each display's: the one open is whichever that is
+const systemMenuPopovers = new Set<Gtk.Popover>()
 
 export function closeSystemMenu() {
-  systemMenuPopover?.popdown()
+  for (const popover of systemMenuPopovers) popover.popdown()
 }
 
 // Expose active tab state so other modules can react to it (e.g., Bar popover open)
@@ -135,7 +136,10 @@ export default function SystemMenu() {
       hasArrow={false}
       class="system-menu-popover"
       autohide={debugMode((b) => !b)}
-      $={(self) => (systemMenuPopover = self)}
+      $={(self) => {
+        systemMenuPopovers.add(self)
+        onCleanup(() => systemMenuPopovers.delete(self))
+      }}
       onShow={() => {
         setSystemMenuOpen(true)
         closeNc()

@@ -19,6 +19,8 @@
 #include <plugins/PluginAPI.hpp>
 
 #include <functional>
+#include <optional>
+#include <string>
 
 namespace Kiwi {
     // What the shell and the plugin say to each other: the requests, the
@@ -27,7 +29,7 @@ namespace Kiwi {
     // with `hyprctl kiwi-version` and won't use a plugin that says otherwise:
     // on Arch the plugin is built by hyprpm from the repository, the shell by
     // the AUR package from a release, and the two need not be the same.
-    constexpr int PROTOCOL = 10; // 10: a preview tile's own alpha (previews.cpp)
+    constexpr int PROTOCOL = 11; // 11: kiwisnapped event, kiwi-snap (snap.cpp), kiwigenie names the monitor
 
     // right after a layer surface (or, with popups, its popups) is drawn
     namespace Layers {
@@ -50,6 +52,9 @@ namespace Kiwi {
 
     namespace Genie {
         bool init(HANDLE handle);
+        // where the shell keeps minimized windows (a special workspace's
+        // name), once it has said
+        std::string minimizedWorkspace();
         void exit();
     }
 
@@ -65,10 +70,20 @@ namespace Kiwi {
         void exit();
     }
 
+    // the session locked, a display switched off: told on the event socket
+    namespace Screen {
+        bool init(HANDLE handle);
+        void exit();
+    }
+
     namespace Snap {
         bool init(HANDLE handle);
         // right before `window` is drawn: what it is dragged towards, under it
         void underWindow(const PHLWINDOW& window, const PHLMONITOR& monitor);
+        // while a window joins the tiling beside a chosen tile (dragged
+        // against an edge, or back from minimized): that tile, for the layout
+        // looking for the one to split
+        std::optional<PHLWINDOW> splitting(const Vector2D& pos, uint16_t properties);
         void exit();
     }
 }

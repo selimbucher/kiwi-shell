@@ -29,6 +29,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
     const bool STACKING = Kiwi::Stacking::init(handle);
     // its shape is drawn in the stacking's pass
     const bool SNAP = STACKING && Kiwi::Snap::init(handle);
+    const bool SCREEN = Kiwi::Screen::init(handle);
     if (!GEOMETRY && !PREVIEWS && !GENIE && !DESKTOPS && !STACKING)
         throw std::runtime_error("[kiwi] none of its parts could start");
 
@@ -44,13 +45,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
         .description = std::string{"For kiwi-shell: "} + (GEOMETRY ? "window geometry events" : "(no window geometry events)") + ", " +
             (PREVIEWS ? "window previews" : "(no window previews)") + ", " +
             (GENIE ? "minimize and restore animation" : "(no minimize animation)") + ", " + (DESKTOPS ? "desktops" : "(no desktops)") + ", " +
-            (STACKING ? "one stacking order" : "(tiled windows under floating ones)") + ", " + (SNAP ? "snapping to the edges" : "(no snapping)"),
+            (STACKING ? "one stacking order" : "(tiled windows under floating ones)") + ", " + (SNAP ? "snapping to the edges" : "(no snapping)") + ", " +
+            (SCREEN ? "screen lock and power events" : "(no screen events)"),
         .author  = "selim",
         .version = "0.2.0",
     };
 }
 
 APICALL EXPORT void pluginExit() {
+    Kiwi::Screen::exit();
     Kiwi::Snap::exit();
     Kiwi::Stacking::exit();
     Kiwi::Desktops::exit();

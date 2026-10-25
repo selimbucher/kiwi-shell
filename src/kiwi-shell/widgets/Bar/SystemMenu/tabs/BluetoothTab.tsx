@@ -1,16 +1,18 @@
 import { Gtk } from "ags/gtk4"
 import AstalBluetooth from "gi://AstalBluetooth"
 import GLib from "gi://GLib"
-import { createBinding, createComputed, createState } from "ags"
+import Gio from "gi://Gio"
+import { createBinding, createComputed, createState, onCleanup } from "ags"
 import { exec } from "ags/process"
 
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
 import { KeyedList } from "../../../KeyedList"
 import { ContextMenu } from "../../../ContextMenu"
 import { logger } from "../../../../log"
-import { registerBluetoothAgent } from "../../../../bluetoothAgent"
+import { registerBluetoothAgent, expectPairing, pairingOver } from "../../../../bluetoothAgent"
 const log = logger("bluetooth")
 import { bluetoothTabOpen } from "../SystemMenu"
+import { openChoicePrompt } from "../../../prompts"
 
 function hasBluetoothAdapter(): boolean {
   try {
@@ -36,9 +38,30 @@ const liveAdapter = (): AstalBluetooth.Adapter | undefined =>
 
 const [adapterState, setAdapterState] = createState(liveAdapter())
 
+// Seen by other devices and open to their pairing only while the Bluetooth
+// tab is open, as a Mac is while its Bluetooth settings are: the rest of the
+// time nothing nearby can find the laptop or start pairing with it.
+function advertise() {
+  const adapter = liveAdapter()
+  if (!adapter?.powered) return
+  const open = bluetoothTabOpen()
+  try {
+    if (adapter.discoverable !== open) adapter.set_discoverable(open)
+    if (adapter.pairable !== open) adapter.set_pairable(open)
+  } catch (e) {
+    log.warn("could not set the adapter's visibility:", e as Error)
+  }
+}
+// (SystemMenu and this file import each other: its state is there once both are)
+if (bluetooth) GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+  bluetoothTabOpen.subscribe(advertise)
+  advertise()
+  return GLib.SOURCE_REMOVE
+})
+
 function onAdapterPowered(adapter: AstalBluetooth.Adapter) {
   if (adapter !== liveAdapter() || !adapter.powered) return
-  adapter.set_discoverable(true)
+  advertise()
   if (bluetoothTabOpen()) startBluetoothDiscovery()
 }
 
@@ -89,10 +112,23 @@ const bluetoothEnabledBinding = createComputed((get) =>
 // from the adapter so the handler only ever acts on a click.
 let syncingSwitch = false
 
-// pair() blocks the main loop for as long as bluez takes (10s is normal for a
-// mouse that has gone back to sleep), so the row can only ever show "Pairing…"
-// if it is painted before the call runs. This holds the address it will run on.
+// the device being paired, "Pairing…" on its row
 const [pairingAddress, setPairingAddress] = createState("")
+// A pairing or connection that failed says so on the device's row for a
+// while, as a Mac's Bluetooth settings do, rather than the row just going
+// back to how it was.
+const [failure, setFailure] = createState<{ address: string; text: string } | null>(null)
+let failureTimer = 0
+const FAILURE_SHOWN_MS = 5000
+function failed(address: string, text: string) {
+  if (failureTimer) GLib.source_remove(failureTimer)
+  setFailure({ address, text })
+  failureTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, FAILURE_SHOWN_MS, () => {
+    failureTimer = 0
+    setFailure(null)
+    return GLib.SOURCE_REMOVE
+  })
+}
 
 const MAC_NAME = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/
 
@@ -181,7 +217,7 @@ export default function BluetoothTab({ visible }) {
               }
             }
             follow()
-            bluetoothEnabledBinding.subscribe(follow)
+            onCleanup(bluetoothEnabledBinding.subscribe(follow))
           }}
           onStateSet={(self, state) => {
             if (syncingSwitch) return false
@@ -285,6 +321,8 @@ function Device({ device, paired }) {
     if (pairing !== "" && pairing === device.address) return "Pairing…"
     if (get(connectingBinding)) return "Connecting…"
     if (get(connectedBinding)) return "Connected"
+    const failing = get(failure)
+    if (failing && failing.address === device.address) return failing.text
     return ""
   })
 
@@ -374,7 +412,10 @@ function DeviceContextMenu(
         label: "Forget Device",
         icon: "user-trash-symbolic",
         visible: createComputed((get) => get(pairedBinding) || get(trustedBinding)),
-        onClick: () => forgetDevice(device),
+        // pairing it again needs the device in pairing mode, so asked first
+        onClick: () => openChoicePrompt("Forget Device",
+          `Forget “${device.alias || device.name || device.address}”? It will need to be paired again.`,
+          [{ label: "Forget", primary: true, run: () => forgetDevice(device) }]),
       },
     ],
   })
@@ -393,6 +434,7 @@ function connectDevice(device) {
       log.debug("Connected successfully!")
     } catch (err) {
       log.error("Connect failed:", err)
+      failed(device.address ?? "", "Couldn't connect")
     } finally {
       if (bluetoothTabOpen()) startBluetoothDiscovery()
     }
@@ -416,41 +458,43 @@ function pairDevice(device) {
   // Pause scanning first: pairing while discovery runs is a common cause of the
   // AuthenticationTimeout / Page Timeout failures seen with these mice.
   stopBluetoothDiscovery()
-  setPairingAddress(device.address ?? "")
-
-  // pair() is a SYNCHRONOUS bluez call that throws on failure (unlike
-  // connect/disconnect which are async) — it blocks the shell until pairing
-  // completes or times out. It must be wrapped: the context-menu "Pair &
-  // Connect" button calls this with no try/catch, so an uncaught throw here
-  // used to crash the handler.
-  // It runs at PRIORITY_LOW rather than inline because it blocks the frame it
-  // is called from: the redraw that paints "Pairing…" onto the row sits at
-  // GDK_PRIORITY_REDRAW and has to get in first, or the label only appears once
-  // the pairing it announces is already over.
-  GLib.idle_add(GLib.PRIORITY_LOW, () => {
-    try {
-      device.pair()
-    } catch (err) {
-      // AlreadyExists → the device is in fact already paired at the bluez level;
-      // fall through to connecting it. Any other error (AuthenticationTimeout /
-      // AuthenticationFailed / ConnectionAttemptFailed "Page Timeout") means the
-      // device didn't complete pairing — surface it and stop rather than
-      // connect-spam. connectDevice() manages discovery itself.
-      setPairingAddress("")
-      if (String(err).includes("AlreadyExists")) {
-        device.trusted = true
-        connectDevice(device)
-      } else {
-        log.error("Pair failed:", err)
-        if (bluetoothTabOpen()) startBluetoothDiscovery()
-      }
-      return GLib.SOURCE_REMOVE
+  const address = device.address ?? ""
+  setPairingAddress(address)
+  const path = device.get_object_path?.() ?? ""
+  const over = (error: unknown | null) => {
+    pairingOver(path)
+    if (pairingAddress.get() === address) setPairingAddress("")
+    // AlreadyExists → the device is in fact already paired at the bluez level;
+    // fall through to connecting it. Any other error (AuthenticationTimeout /
+    // AuthenticationFailed / ConnectionAttemptFailed "Page Timeout") means the
+    // device didn't complete pairing — said on its row, and nothing more is
+    // tried. connectDevice() manages discovery itself.
+    if (error && !String(error).includes("AlreadyExists")) {
+      log.error("Pair failed:", error)
+      failed(address, "Couldn't pair")
+      if (bluetoothTabOpen()) startBluetoothDiscovery()
+      return
     }
-    setPairingAddress("")
     device.trusted = true
     connectDevice(device)
-    return GLib.SOURCE_REMOVE
-  })
+  }
+  if (!path) return over(new Error("the device has no bluez object"))
+  // asked for here: the agent confirms it without asking again
+  expectPairing(path)
+  // Astal's pair() is a synchronous call: the shell stood still until bluez
+  // answered (10 s for a mouse gone back to sleep), and the agent, answering
+  // from the same main loop, couldn't be asked anything meanwhile. Called
+  // here without waiting, as bluetoothctl does; a minute leaves time to type
+  // a code shown on the other device.
+  Gio.DBus.system.call("org.bluez", path, "org.bluez.Device1", "Pair", null, null,
+    Gio.DBusCallFlags.NONE, 60_000, null, (bus, result) => {
+      try {
+        bus!.call_finish(result)
+        over(null)
+      } catch (e) {
+        over(e)
+      }
+    })
 }
 
 function forgetDevice(device) {

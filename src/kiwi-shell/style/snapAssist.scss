@@ -1,0 +1,43 @@
+@use 'theme' as *;
+
+// The windows offered for the free half after a snap (SnapAssist.tsx): a
+// pane over that half, as the shape a snap shows is (snap.cpp: rounding 12),
+// the pictures the compositor's over it
+window.SnapAssist {
+    background: none;
+}
+
+.snap-assist-panel {
+    @include panel;
+    border-radius: 12px;
+}
+
+// pointed at, a window lifts: its title brightens, its picture is outlined
+.snap-assist-window {
+    border-radius: 10px;
+    padding: 0;
+
+    .snap-assist-picture {
+        border-radius: 8px;
+        box-shadow: 0 0 0 0 transparent;
+        transition: box-shadow 110ms ease-out;
+    }
+
+    .snap-assist-title {
+        color: var(--k-fg);
+        opacity: 0.72;
+        font-size: 12px;
+        transition: opacity 110ms ease-out;
+    }
+
+    // pointed at, or chosen with the arrows
+    &:hover, &.selected {
+        .snap-assist-picture {
+            box-shadow: 0 0 0 3px var(--primary, #8f7fde);
+        }
+
+        .snap-assist-title {
+            opacity: 1;
+        }
+    }
+}

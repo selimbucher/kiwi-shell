@@ -9,6 +9,7 @@
 #include <output/Monitor.hpp>
 
 #include <charconv>
+#include <cmath>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -41,6 +42,12 @@ namespace Kiwi {
             else
                 return std::from_chars(text.data(), END, out);
         }();
+        // (from_chars reads "nan" and "inf" as numbers, which no box or
+        // alpha can be)
+        if constexpr (std::is_floating_point_v<T>) {
+            if (RESULT.ec == std::errc{} && !std::isfinite(out))
+                return false;
+        }
         return RESULT.ec == std::errc{} && RESULT.ptr == END;
     }
 

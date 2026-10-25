@@ -134,6 +134,9 @@ typedef struct {
     AppCapture *self;
     struct hyprland_toplevel_export_frame_v1 *frame;
     struct zwlr_foreign_toplevel_handle_v1   *wlr_handle;
+    /* the window's, to find its handle again: the handle is gone once the
+     * window closes (wlr_handle_closed) */
+    char           address[32];
     guint          timeout_id;
     uint32_t       format;
     uint32_t       width;
@@ -160,7 +163,7 @@ G_DEFINE_TYPE(AppCapture, app_capture, G_TYPE_OBJECT)
 
 static void     request_mapping(AppCapture *self, ToplevelEntry *entry);
 static void     emit_frame_failed(AppCapture *self, const char *reason);
-static void     do_capture(AppCapture *self,
+static void     do_capture(AppCapture *self, const char *address,
                            struct zwlr_foreign_toplevel_handle_v1 *wlr_handle,
                            gboolean shm_only);
 static struct zwlr_foreign_toplevel_handle_v1 *find_wlr_handle(AppCapture *self,
@@ -1034,9 +1037,20 @@ static void frame_handle_failed(void *data,
      * captured from a GPU buffer Hyprland can't render into */
     if (f->on_gpu) {
         AppCapture *self = f->self;
-        struct zwlr_foreign_toplevel_handle_v1 *wlr_handle = f->wlr_handle;
+        char address[sizeof f->address];
+        g_strlcpy(address, f->address, sizeof address);
         frame_free(f, TRUE);
-        do_capture(self, wlr_handle, TRUE);
+        /* The window may have closed meanwhile (a GPU copy waits for its
+         * display to draw, up to FRAME_TIMEOUT_MS), and with it the handle
+         * this frame was for: freed in wlr_handle_closed, and a capture of
+         * it would be a request on a dead object, which takes the shell's
+         * whole Wayland connection down. Asked for again by address. */
+        struct zwlr_foreign_toplevel_handle_v1 *wlr_handle = find_wlr_handle(self, address);
+        if (!wlr_handle) {
+            emit_frame_failed(self, "closed");
+            return;
+        }
+        do_capture(self, address, wlr_handle, TRUE);
         return;
     }
 
@@ -1080,12 +1094,13 @@ static struct zwlr_foreign_toplevel_handle_v1 *find_wlr_handle(AppCapture *self,
     return NULL;
 }
 
-static void do_capture(AppCapture *self,
+static void do_capture(AppCapture *self, const char *address,
                        struct zwlr_foreign_toplevel_handle_v1 *wlr_handle,
                        gboolean shm_only)
 {
     Frame *f      = g_new0(Frame, 1);
     f->self       = self;
+    g_strlcpy(f->address, address, sizeof f->address);
     f->shm_fd     = -1;
     f->wlr_handle = wlr_handle;
     f->shm_only   = shm_only;
@@ -1154,7 +1169,7 @@ static void flush_pending_for_address(AppCapture *self, const char *address)
         PendingCapture *pc = g_ptr_array_index(self->pending_captures, i - 1);
         if (g_strcmp0(pc->address, address) != 0) continue;
 
-        do_capture(self, wlr_handle, FALSE);
+        do_capture(self, address, wlr_handle, FALSE);
         g_ptr_array_remove_index(self->pending_captures, i - 1);
         /* JS side is single-flight — at most one match expected.
          * Break to avoid issuing two captures against the same shm state. */
@@ -1307,7 +1322,7 @@ void app_capture_capture_by_handle(AppCapture *self, const gchar *address)
     struct zwlr_foreign_toplevel_handle_v1 *wlr_handle =
         find_wlr_handle(self, addr);
     if (wlr_handle) {
-        do_capture(self, wlr_handle, FALSE);
+        do_capture(self, addr, wlr_handle, FALSE);
         return;
     }
 

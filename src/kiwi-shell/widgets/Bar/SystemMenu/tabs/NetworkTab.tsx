@@ -8,6 +8,7 @@ import { ContextMenu } from "../../../ContextMenu"
 import { wifiIcon } from "../../../iconNames"
 import { logger } from "../../../../log"
 import { network, wifiProperty, currentWifi } from "../../../services/network"
+import { openChoicePrompt } from "../../../prompts"
 const log = logger("network")
 
 // The current Wi-Fi device, followed across NetworkManager restarts
@@ -160,22 +161,11 @@ function AccessPoint(ap) {
       class={isActiveBinding.as((isActive) =>
         isActive ? "network-item active" : "network-item",
       )}
+      // The network joined already is just that, as on a Mac (Disconnect is
+      // in its menu); clicked, it was dropped.
       onClicked={() => {
-        if (isActiveBinding()) {
-          disconnectNetwork(ap.ssid)
-          return
-        }
-        setConnectingSsid(ap.ssid)
-        onNetworkClick(ap.ssid, ap.flags !== 0)
-          .catch((e) => {
-            if (
-              String(e).includes("Secrets were required, but not provided") ||
-              String(e).includes("property is invalid")
-            ) {
-              openWifiPrompt(ap.ssid, true)
-            }
-          })
-          .finally(() => setConnectingSsid(""))
+        if (isActiveBinding()) return
+        join(ap.ssid, ap.flags !== 0)
       }}
       $={(self) => {
         const gesture = new Gtk.GestureClick()
@@ -237,7 +227,10 @@ function NetworkContextMenu(ap, isActiveBinding, savedBinding) {
         label: "Forget Network",
         icon: "user-trash-symbolic",
         visible: savedBinding,
-        onClick: () => forgetNetwork(ap.ssid),
+        // its password goes with it, so asked first
+        onClick: () => openChoicePrompt("Forget Network",
+          `Forget the network “${ap.ssid}”? You'll need its password to join it again.`,
+          [{ label: "Forget", primary: true, run: () => forgetNetwork(ap.ssid) }]),
       },
     ],
   })
@@ -250,19 +243,42 @@ function networkIcon(wiredState, strength) {
     return wifiIcon(strength)
 }
 
+// Joining, "Connecting…" on its row meanwhile. A password wrong or missing
+// asks for it; anything else that stops it says so, rather than the row just
+// going back to how it was.
+function join(ssid: string, secured: boolean) {
+  setConnectingSsid(ssid)
+  onNetworkClick(ssid, secured)
+    .catch((e) => {
+      const error = String(e)
+      if (error.includes("Secrets were required, but not provided") || error.includes("property is invalid")) {
+        openWifiPrompt(ssid, true)
+        return
+      }
+      log.error(`joining ${ssid}:`, e)
+      const reason = error.split("\n").map(l => l.replace(/^.*?Error:\s*/, "").trim()).filter(Boolean).pop()
+      openChoicePrompt(`Couldn't join “${ssid}”`, reason ?? "The network couldn't be joined.",
+        [{ label: "Try Again", primary: true, run: () => join(ssid, secured) }])
+    })
+    .finally(() => setConnectingSsid(""))
+}
+
+// The network's name goes to nmcli as one argument of its own, never inside
+// a command line: a name is anything a nearby access point cares to send,
+// quotes included, and quoted into a line one could add arguments of its own.
 async function onNetworkClick(ssid: string, secured: boolean) {
   const saved = await hasSavedPassword(ssid)
   if (saved) {
-    await execAsync(`nmcli con up "${ssid}"`)
+    await execAsync(["nmcli", "connection", "up", "id", ssid])
   } else {
     if (secured) openWifiPrompt(ssid)
-    else await execAsync(`nmcli device wifi connect "${ssid}"`)
+    else await execAsync(["nmcli", "device", "wifi", "connect", ssid])
   }
 }
 
 async function disconnectNetwork(ssid: string) {
   try {
-    await execAsync(`nmcli con down "${ssid}"`)
+    await execAsync(["nmcli", "connection", "down", "id", ssid])
   } catch (e) {
     log.error("Disconnect failed:", e)
   }
@@ -272,7 +288,7 @@ async function disconnectNetwork(ssid: string) {
 // saved secret too, so the next click prompts for the password again.
 async function forgetNetwork(ssid: string) {
   try {
-    await execAsync(`nmcli con delete "${ssid}"`)
+    await execAsync(["nmcli", "connection", "delete", "id", ssid])
   } catch (e) {
     log.error("Forget failed:", e)
   }
@@ -280,7 +296,7 @@ async function forgetNetwork(ssid: string) {
 
 async function hasSavedPassword(ssid: string): Promise<boolean> {
   try {
-    await execAsync(`nmcli -s connection show "${ssid}"`)
+    await execAsync(["nmcli", "-s", "connection", "show", "id", ssid])
     return true
   } catch (e) {
     return false

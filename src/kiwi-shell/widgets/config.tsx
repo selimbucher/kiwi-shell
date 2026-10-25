@@ -1,4 +1,5 @@
 import { logger } from "../log"
+import { notify } from "../notify"
 const log = logger("config")
 import { readFile, writeFileAsync, monitorFile } from "ags/file"
 import { createState } from "ags"
@@ -70,8 +71,17 @@ function loadConfig() {
         }
     }
 
-    const content = readFile(CONFIG_FILE)
-    return deepMerge(defaultConfig, migrate(JSON.parse(content)))
+    // A file that doesn't read (a comma too many typed by hand, a write cut
+    // short) leaves the shell on its defaults, not without a bar, dock and
+    // shortcuts: the file stays as it is, and is taken up as soon as it's
+    // saved again (reloadConfig).
+    try {
+        return deepMerge(defaultConfig, migrate(JSON.parse(readFile(CONFIG_FILE))))
+    } catch (e) {
+        log.error(`could not read ${CONFIG_FILE}, using the defaults:`, e as Error)
+        notify("Settings could not be read", `kiwi is using its default settings until config.json reads again: ${(e as Error).message}`, { urgency: 2 })
+        return defaultConfig
+    }
 }
 
 async function writeHypr(primaryColor: string) {

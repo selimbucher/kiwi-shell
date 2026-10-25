@@ -1,4 +1,7 @@
 import { logger } from "../../log"
+
+/** A popover of the dock's own say in whether a menu is open (Dock). */
+export type MenuSlot = () => (open: boolean) => void
 const log = logger("dock")
 import { createState, createComputed, createBinding } from "ags"
 import { readFile, writeFileAsync } from "ags/file"
@@ -15,8 +18,12 @@ import type Gtk from "gi://Gtk?version=4.0"
 // "default" mode, where it reserves its space and nothing else can be under
 // it; the dock's own height while it is shown in auto-hide, so that anything
 // else anchored to that edge — the volume and brightness indicator — can step
-// out of the way.
-export const [dockOverlap, setDockOverlap] = createState(0)
+// out of the way. Each display's dock has its own, by the display's connector.
+export const [dockOverlaps, setDockOverlaps] = createState<Record<string, number>>({})
+export function setDockOverlap(connector: string, px: number) {
+    const now = dockOverlaps.peek()
+    if ((now[connector] ?? 0) !== px) setDockOverlaps({ ...now, [connector]: px })
+}
 
 export const DOCK_HIDE_TIMEOUT = 200
 export const DOCK_SLIDE_DURATION = 400
@@ -53,11 +60,23 @@ export type Hop = "" | "hop" | "hop-again" | "hop-settle"
 
 const bouncing = new Set<(hop: Hop) => void>()
 
-export function launchBounce(setHop: (hop: Hop) => void) {
+// The icon hops until the app's own window opens (`ours`, when said: any
+// window else), or 10 s have gone. An X11 window may say its class only
+// after it has mapped, so one that doesn't yet is asked again once it does.
+export function launchBounce(setHop: (hop: Hop) => void, ours?: (client: Hyprland.Client) => boolean) {
     if (bouncing.has(setHop)) return
     bouncing.add(setHop)
     let opened = false
-    const addedId = hyprland.connect("client-added", () => { opened = true })
+    const waiting = new Map<Hyprland.Client, number>()
+    const addedId = hyprland.connect("client-added", (_h, client: Hyprland.Client) => {
+        if (!ours || ours(client)) {
+            opened = true
+            return
+        }
+        if (!client.class) waiting.set(client, client.connect("notify::class", () => {
+            if (ours(client)) opened = true
+        }))
+    })
     const began = GLib.get_monotonic_time()
     let hops = 0
     const next = () => {
@@ -65,6 +84,8 @@ export function launchBounce(setHop: (hop: Hop) => void) {
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, HOP_MS, () => {
             if (opened || GLib.get_monotonic_time() - began >= LAUNCH_BOUNCE_MAX_MS * 1000) {
                 hyprland.disconnect(addedId)
+                for (const [client, id] of waiting) client.disconnect(id)
+                waiting.clear()
                 setHop("hop-settle")
                 GLib.timeout_add(GLib.PRIORITY_DEFAULT, SETTLE_MS, () => {
                     bouncing.delete(setHop)
@@ -161,12 +182,13 @@ export function registerDockIcon(entry: string, icon: Gtk.Widget) {
     }
 }
 
-// the app's icon in the dock on the window's own monitor, which is the one
-// the plugin draws on
-function iconFor(client: Hyprland.Client) {
+// the app's icon in the dock on the monitor the plugin draws the genie on
+// (the window's own, which the client here may not know yet: the event comes
+// before AstalHyprland has heard of the move)
+function iconFor(client: Hyprland.Client, monitor: string | undefined) {
     const icons = [...dockIcons.get(entryForClient(client)) ?? []]
-    const monitor = client.get_monitor()?.get_name()
-    return icons.find(icon => (icon.get_root() as any)?.gdkmonitor?.get_connector() === monitor) ?? icons[0]
+    const on = monitor || client.get_monitor()?.get_name()
+    return icons.find(icon => (icon.get_root() as any)?.gdkmonitor?.get_connector() === on) ?? icons[0]
 }
 
 // Where the icon sits in the dock's surface, the way the plugin counts: from
@@ -208,12 +230,29 @@ function surfaceRect(icon: Gtk.Widget, minimizing: boolean) {
 }
 
 
+// A window pouring out of the dock: the dock stays as it is until the window
+// is out (the genie's 450 ms, src/hyprland-plugin/genie.cpp), rather than
+// sliding away under it as soon as the window is back over its strip.
+export const [restoring, setRestoring] = createState(false)
+const RESTORE_MS = 500
+let restoreTimer = 0
+
 hyprland.connect("event", (_h: unknown, event: string, args: string) => {
     if (event !== "kiwigenie") return
-    const [kind, address = ""] = args.split(",")
+    const [kind, address = "", monitor] = args.split(",")
+    if (kind === "restore") {
+        if (restoreTimer) GLib.source_remove(restoreTimer)
+        setRestoring(true)
+        restoreTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, RESTORE_MS, () => {
+            restoreTimer = 0
+            setRestoring(false)
+            return GLib.SOURCE_REMOVE
+        })
+    }
     const client = hyprland.get_client(address)
-    // no dock, nothing to pour into: the window just goes, or just appears
-    const icon = client && conf().dock !== "disabled" ? iconFor(client) : undefined
+    // no dock, nothing to pour into: the plugin takes the window into the
+    // bottom edge, or out of it
+    const icon = client && conf().dock !== "disabled" ? iconFor(client, monitor) : undefined
     const rect = icon ? surfaceRect(icon, kind === "minimize") : null
     genieTo(address, rect ? { namespace: LAYER.dock, icon: rect } : null)
 })

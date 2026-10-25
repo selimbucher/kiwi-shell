@@ -1,5 +1,5 @@
 import { Gtk, Gdk } from "ags/gtk4"
-import { createBinding, type Accessor } from "ags"
+import { createBinding, onCleanup, type Accessor } from "ags"
 import AstalBattery from "gi://AstalBattery"
 import GObject from "gi://GObject"
 import Gsk from "gi://Gsk"
@@ -100,7 +100,7 @@ function Charging() {
     }
     update()
     const id = battery.connect("notify::percentage", update)
-    glyph.connect("destroy", () => battery.disconnect(id))
+    onCleanup(() => battery.disconnect(id))
     return (
         <box class="island-alert leading" valign={Gtk.Align.CENTER} spacing={7}>
             {glyph}
