@@ -27,6 +27,22 @@ function nixConfigExists(): boolean {
     catch { return false }
 }
 
+// What Home Manager sets (services.kiwi-shell.settings), laid over the
+// user's own settings: only those, the rest left to Kiwi Settings. It used
+// to be copied over config.json at every start, which undid every change
+// made in Kiwi Settings, set in Home Manager or not.
+function nixConfig(): Record<string, any> {
+    try {
+        return JSON.parse(readFile(NIX_CONFIG_FILE))
+    } catch {
+        return {}
+    }
+}
+
+function effective(defaults: Record<string, any>, user: Record<string, any>) {
+    return deepMerge(deepMerge(defaults, migrate(user)), nixConfig())
+}
+
 function deepMerge(defaults: Record<string, any>, overrides: Record<string, any>): Record<string, any> {
     const result = { ...defaults }
     for (const key in overrides) {
@@ -62,13 +78,9 @@ function loadConfig() {
     const defaultContent = readFile(DEFAULT_CONFIG_FILE)
     const defaultConfig = JSON.parse(defaultContent)
 
-    if (nixConfigExists()) {
-        exec(`cp --no-preserve=mode ${NIX_CONFIG_FILE} ${CONFIG_FILE}`)
-    } else {
-        try { readFile(CONFIG_FILE) }
-        catch {
-            exec(`cp --no-preserve=mode ${DEFAULT_CONFIG_FILE} ${CONFIG_FILE}`)
-        }
+    try { readFile(CONFIG_FILE) }
+    catch {
+        exec(`cp --no-preserve=mode ${DEFAULT_CONFIG_FILE} ${CONFIG_FILE}`)
     }
 
     // A file that doesn't read (a comma too many typed by hand, a write cut
@@ -76,11 +88,11 @@ function loadConfig() {
     // shortcuts: the file stays as it is, and is taken up as soon as it's
     // saved again (reloadConfig).
     try {
-        return deepMerge(defaultConfig, migrate(JSON.parse(readFile(CONFIG_FILE))))
+        return effective(defaultConfig, JSON.parse(readFile(CONFIG_FILE)))
     } catch (e) {
         log.error(`could not read ${CONFIG_FILE}, using the defaults:`, e as Error)
         notify("Settings could not be read", `kiwi is using its default settings until config.json reads again: ${(e as Error).message}`, { urgency: 2 })
-        return defaultConfig
+        return deepMerge(defaultConfig, nixConfig())
     }
 }
 
@@ -116,7 +128,7 @@ function reloadConfig() {
         if (!content.trim()) return
         const defaultContent = readFile(DEFAULT_CONFIG_FILE)
         const defaultConfig = JSON.parse(defaultContent)
-        setConf(deepMerge(defaultConfig, migrate(JSON.parse(content))))
+        setConf(effective(defaultConfig, JSON.parse(content)))
     } catch (error) {
         log.error("Failed to reload config:", error)
     }

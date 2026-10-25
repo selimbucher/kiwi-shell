@@ -239,21 +239,22 @@ function landed(heard: boolean) {
 hyprland.connect("event", (_h: unknown, event: string, args: string) => {
     if (event === "kiwigesture" && args === `open,${WINDOWS_SET}`) {
         if (!isOpen.get()) openMissionControl()
-    } else if (event === "kiwigesture" && args === `close,${WINDOWS_SET}`) {
-        // fingers down with no windows on show, so nothing to follow them
-        closeMissionControl()
     } else if (event === "kiwigesture" && args === `held,${WINDOWS_SET}`) {
         fingersHold = true
         setSelected(null)
     } else if (event === "kiwigesture" && args.startsWith(`let,${WINDOWS_SET},`)) {
         fingersHold = false
-        // where it went, how far the fingers got and how fast they were
-        const [, , to, progress, speed] = args.split(",")
-        log.info(`three fingers let go: ${to}, ${progress} of the way, ${speed} per ms`)
+        // where it went, how far the fingers got, how fast they were (of the
+        // way a second) and how far that was on the trackpad, and to libinput
+        const [, , to, progress, speed, mm, accelerated] = args.split(",")
+        log.info(`three fingers let go: ${to}, ${progress} of the way, ${speed} of it a second, ${mm} mm (accelerated ${accelerated})`)
     } else if (event === "kiwidesk") {
         // the desktops sliding (the plugin, desktops.cpp): the view follows
         const [monitor, id, fraction] = args.split(",")
         if (scene && view.get()?.monitor.name === monitor) scene.follow(Number(id), Number(fraction))
+    } else if (event === "kiwipreviews" && args.startsWith(`at,${WINDOWS_SET},`)) {
+        // how far the windows are out, every frame they fly
+        scene?.flight(Number(args.slice(`at,${WINDOWS_SET},`.length)))
     } else if (event === "kiwipreviews" && args === `flown,${WINDOWS_SET}`) {
         if (isOpen.get() && !closing.get()) {
             closedAt = Date.now()
@@ -278,8 +279,9 @@ export function closeMissionControl(then?: () => void) {
         putDown(drag.frame)
         setCarried(null)
     }
-    // nothing flies home that the compositor hasn't had yet
-    if (!livePreviews() || windowTiles.tiles.size === 0 || !windowTiles.sent()) {
+    // nothing flies home that the compositor hasn't had yet (with no windows
+    // to fly, the compositor still takes it away as a flight would)
+    if (!livePreviews() || !windowTiles.sent()) {
         windowTiles.hidden()
         landed(false)
         return
@@ -898,6 +900,8 @@ const FOLDED_BAR = 44
 const NAME_SPACING = 8
 // how far the names come down from as Mission Control opens
 const NAMES_DROP = 24
+// how long they wait for the windows' flight to bring them, at most
+const NAMES_ANYWAY_MS = 400
 // the name's pill around its text (style/missionControl.scss)
 const NAME_PAD = 4
 // how much of the new desktop shows at the bar's end while + is pointed at
@@ -950,6 +954,11 @@ class Scene {
     private readonly opening = new Tween()
     // the names: 0 up above the screen, 1 in place
     private readonly names = new Tween()
+    // The names come down with the windows' flight, which the compositor
+    // flies (`flight`), the fingers' or not: on a desktop without windows
+    // they are what moves. Without it they come on their own.
+    private flown = false
+    private namesAnyway = 0
     // the new desktop at the bar's end: 0 out of sight, 1 peeking in
     private readonly peek = new Tween()
     private pointingAtPlus = false
@@ -972,7 +981,14 @@ class Scene {
         this.addPage(v.monitor.active, v.slots, new Map())
         this.camera.jump(this.indexOf(v.monitor.active))
         this.opening.jump(expanded.get() ? 1 : 0)
-        this.names.to(1, NAMES_COMING)
+        if (livePreviews()) {
+            // (should the flight never come, they come all the same)
+            this.namesAnyway = GLib.timeout_add(GLib.PRIORITY_DEFAULT, NAMES_ANYWAY_MS, () => {
+                this.namesAnyway = 0
+                if (!this.flown) this.go(this.names, 1, NAMES_COMING)
+                return GLib.SOURCE_REMOVE
+            })
+        } else this.names.to(1, NAMES_COMING)
 
         dragWindows(this)
         this.reorderOnDrag()
@@ -986,7 +1002,8 @@ class Scene {
                 const windows = v.desktops.find(d => d.id === v.monitor.active)?.windows ?? []
                 setView({ ...v, slots: spreadOf(v.monitor, windows, expanded.get()) })
             }),
-            closing.subscribe(() => { if (closing.get()) this.go(this.names, 0, NAMES_COMING) }),
+            // (the flight home takes them up with it; one into a desktop doesn't fly)
+            closing.subscribe(() => { if (closing.get() && !this.flown) this.go(this.names, 0, NAMES_COMING) }),
             selected.subscribe(() => this.showSelected()),
         )
         this.showWallpaper()
@@ -998,6 +1015,8 @@ class Scene {
     destroy() {
         if (this.tick) this.stage.remove_tick_callback(this.tick)
         this.tick = 0
+        if (this.namesAnyway) GLib.source_remove(this.namesAnyway)
+        this.namesAnyway = 0
         this.unsubscribe.forEach(u => u())
         for (const page of this.pages.values()) for (const frame of page.frames.values()) frame.dispose()
         for (const item of this.items.values()) this.dropItem(item)
@@ -1039,6 +1058,14 @@ class Scene {
     /** A desktop on its way along the bar: it shows no × until it is there. */
     isMoving(id: number): boolean {
         return this.items.get(id)?.x.running ?? false
+    }
+
+    /** How far out the windows' flight is (0 in their places, 1 spread out), this frame. */
+    flight(shown: number) {
+        if (!Number.isFinite(shown)) return
+        this.flown = true
+        this.names.jump(Math.min(1, Math.max(0, shown)))
+        this.animate()
     }
 
     /** The bar's own height now, folded to open: the pointer above it opens it. */
@@ -1732,7 +1759,8 @@ class Scene {
             const x = lerp(folded, caption.x, open)
             const y = lerp((FOLDED_BAR - pill) / 2, caption.y, open) - coming
             this.bar.move(item.name, Math.round(x), Math.round(y))
-            item.name.set_opacity(this.names.value)
+            // (with the flight, the compositor fades them with all of Mission Control)
+            item.name.set_opacity(this.flown ? 1 : this.names.value)
             open > 0.5 ? item.name.add_css_class("open") : item.name.remove_css_class("open")
             folded += widths[i] + NAME_SPACING
         })

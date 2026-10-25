@@ -334,7 +334,9 @@ export class LiveTiles {
             afterNextFrame(this.window, () => {
                 this.firstFrameDrawn = true
                 this.measure()
-                if (this.tiles.size === 0) this.pane?.show()
+                // (a flying set without tiles flies all the same: its pane
+                // waits for the compositor too)
+                if (this.tiles.size === 0 && !this.options.fly) this.pane?.show()
             })
             return GLib.SOURCE_REMOVE
         })

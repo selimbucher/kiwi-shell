@@ -6,7 +6,7 @@ import { subprocess } from "ags/process"
 
 import AstalWp from "gi://AstalWp"
 import AstalPowerProfiles from "gi://AstalPowerProfiles"
-import AstalBattery from "gi://AstalBattery"
+import { battery } from "../../../services/battery"
 import Notifd from "gi://AstalNotifd"
 
 
@@ -39,7 +39,7 @@ const hasPowerProfiles = powerProfiles.length > 0
 
 // The button leaves balanced for the profile the machine most likely wants:
 // saving power on battery, speed on a desktop that has it.
-const hasBattery = AstalBattery.get_default().get_is_present()
+const hasBattery = battery.get_is_present()
 const activePowerProfile = !hasBattery && powerProfiles.includes("performance")
   ? "performance" : "power-saver"
 const defaultPowerProfile = "balanced"
@@ -343,8 +343,10 @@ function VolumeSlider() {
                 max={1}
                 step={0.01}
                 value={volB}
-                onChangeValue={(self) => {
-                  spk.volume = self.value
+                // (the value given: the slider's own is the one before it, the
+                // first of the two times the signal comes)
+                onChangeValue={(_self: Gtk.Widget, _scroll: Gtk.ScrollType, value: number) => {
+                  spk.volume = Math.min(1, Math.max(0, value))
                   spk.mute = false
                 }}
               />
@@ -395,8 +397,8 @@ function Sliders() {
           step={0.01}
           value={brightness}
           sensitive={brightnessWritable}
-          onChangeValue={(self) => {
-            setBrightnessLevel(self.value)
+          onChangeValue={(_self: Gtk.Widget, _scroll: Gtk.ScrollType, value: number) => {
+            setBrightnessLevel(Math.min(1, Math.max(0, value)))
           }}
         />
       </box>

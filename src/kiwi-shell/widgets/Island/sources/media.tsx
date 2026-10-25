@@ -573,7 +573,37 @@ function Expanded({ player }: { player: Mpris.Player }) {
     const artist = createBinding(player, "artist").as(a => String(a ?? ""))
     const position = createBinding(player, "position")
     const length = createBinding(player, "length")
-    const left = createComputed(get => Math.max(0, get(length) - get(position)))
+    // Where the knob is taken, while the pointer has it and until the player
+    // is there: the knob and the time show that rather than the player's
+    // position, which comes once a second and pulled the knob back from
+    // under the pointer. It is gone to once, as it is let go — every step of
+    // a drag was a seek, and Spotify skipped back and forth through them.
+    const [aim, setAim] = createState<number | null>(null)
+    const shown = createComputed(get => get(aim) ?? get(position))
+    const left = createComputed(get => Math.max(0, get(length) - get(shown)))
+    let holding = false
+    let landing = 0
+    const land = () => {
+        if (landing) GLib.source_remove(landing)
+        landing = 0
+        setAim(null)
+    }
+    onCleanup(() => { if (landing) GLib.source_remove(landing) })
+    // the player there: the aim gives way to its position
+    onCleanup(position.subscribe(() => {
+        const a = aim.peek()
+        if (!holding && a !== null && Math.abs(position.peek() - a) < 1.5) land()
+    }))
+    const seek = (to: number) => {
+        player.set_position(to)
+        if (landing) GLib.source_remove(landing)
+        // (or it never says, a player without position updates)
+        landing = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
+            landing = 0
+            setAim(null)
+            return GLib.SOURCE_REMOVE
+        })
+    }
 
     return (
         <box class="island-card island-media" orientation={Gtk.Orientation.VERTICAL}>
@@ -588,11 +618,35 @@ function Expanded({ player }: { player: Mpris.Player }) {
                 <Bars player={player} />
             </box>
             <box class="progress" orientation={Gtk.Orientation.VERTICAL} visible={length(l => l > 0)}>
-                <slider hexpand min={0} max={length} value={position}
+                <slider hexpand min={0} max={length} value={shown}
                     sensitive={createBinding(player, "can_seek")}
-                    onChangeValue={self => player.set_position(self.value)} />
+                    // (the value given: the slider's own is the one before it,
+                    // the first of the two times the signal comes)
+                    onChangeValue={(_self: Gtk.Widget, _scroll: Gtk.ScrollType, value: number) => {
+                        value = Math.min(length.peek(), Math.max(0, value))
+                        setAim(value)
+                        if (!holding) seek(value)
+                    }}
+                    $={(self) => {
+                        // the pointer or a finger on it, seen before the slider does
+                        const hand = new Gtk.EventControllerLegacy({ propagationPhase: Gtk.PropagationPhase.CAPTURE })
+                        hand.connect("event", (_c, event: Gdk.Event) => {
+                            const type = event.get_event_type()
+                            if (type === Gdk.EventType.BUTTON_PRESS || type === Gdk.EventType.TOUCH_BEGIN) {
+                                holding = true
+                                setAim(self.value)
+                            } else if (type === Gdk.EventType.BUTTON_RELEASE || type === Gdk.EventType.TOUCH_END || type === Gdk.EventType.TOUCH_CANCEL) {
+                                if (!holding) return false
+                                holding = false
+                                const to = aim.peek()
+                                if (to !== null) seek(to)
+                            }
+                            return false
+                        })
+                        self.add_controller(hand)
+                    }} />
                 <box class="times">
-                    <label class="time" label={position(time)} hexpand xalign={0} />
+                    <label class="time" label={shown(time)} hexpand xalign={0} />
                     <label class="time" label={left(l => `-${time(l)}`)} hexpand xalign={1} />
                 </box>
             </box>

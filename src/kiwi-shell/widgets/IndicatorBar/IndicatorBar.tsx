@@ -250,9 +250,11 @@ function Indicator(){
           max={1}
           step={0.01}
           value={indicatorValue}
-          onChangeValue={(self) => {
+          // (the value given: the slider's own is the one before it, the
+          // first of the two times the signal comes)
+          onChangeValue={(_self: Gtk.Widget, _scroll: Gtk.ScrollType, value: number) => {
             resetIndicatorTimeout()
-            indicatorChange(self.value)
+            indicatorChange(Math.min(1, Math.max(0, value)))
           }}
           sensitive={isSensitive}
           orientation={conf(conf =>

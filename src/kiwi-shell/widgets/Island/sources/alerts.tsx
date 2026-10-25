@@ -1,6 +1,6 @@
 import { Gtk, Gdk } from "ags/gtk4"
 import { createBinding, onCleanup, type Accessor } from "ags"
-import AstalBattery from "gi://AstalBattery"
+import { battery } from "../../services/battery"
 import GObject from "gi://GObject"
 import Gsk from "gi://Gsk"
 import Graphene from "gi://Graphene"
@@ -48,7 +48,6 @@ const enabled = (key: "charging" | "devices" | "focus") => !!conf().island[key]
 // iOS's: the charge, and a battery filled to it, in a colour for how full it
 // is: red to 20%, yellow to 40%, green above.
 
-const battery = AstalBattery.get_default()
 
 const LEVELS = [
     { upTo: 0.2, name: "low", color: "#ff453a" },

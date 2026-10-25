@@ -1,6 +1,6 @@
 import { Gtk } from "ags/gtk4"
 import { createState, createBinding, createComputed, onCleanup } from "ags"
-import AstalBattery from "gi://AstalBattery"
+import { battery } from "../../services/battery"
 
 import { CircularProgress } from "../../Misc"
 
@@ -33,7 +33,6 @@ const wifi = network.get().wifi
 const bluetooth: AstalBluetooth.Adapter | undefined =
   AstalBluetooth.get_default().adapter ?? undefined
 
-const battery = AstalBattery.get_default()
 const hasBattery = battery.get_is_present()
 
 const batPercent = createBinding(battery, "percentage")

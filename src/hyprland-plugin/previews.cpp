@@ -20,7 +20,7 @@
 //     hyprctl kiwi-previews raise <set> <address>
 //     hyprctl kiwi-previews select <set> <address>|- [<rrggbb>]
 //     hyprctl kiwi-previews gesture <set> <fingers>
-//     hyprctl kiwi-previews swipe begin up|down | update <travel> <ms> | end [cancel]
+//     hyprctl kiwi-previews swipe begin up|down | update <travel> <ms> | end [cancel] [<ms>] | tune [<name> <value>]
 //
 // Each part of the shell that shows previews names its own set, and sets
 // come and go independently: the dock's flyout closing does not clear a
@@ -48,7 +48,10 @@
 // fly is Mission Control's: the tiles leave their windows as the set appears,
 // from where each window is on screen to its tile, and go back into them when
 // the set is cleared, after which a `kiwipreviews>>flown,<set>` event says
-// the shell can take its surface down. Meanwhile the windows themselves are
+// the shell can take its surface down, and `kiwipreviews>>at,<set>,<shown>`
+// says on every frame the flight moves how far out it is (0 in the windows,
+// 1 in place), for what of the shell's own goes with it: Mission Control's
+// desktop names coming down. Meanwhile the windows themselves are
 // hidden, from the frame their pictures leave them to the frame they land,
 // and the layer the tiles are on fades in and out with the flight, its other
 // sets with it. Should the layer go away first, the flight ends there.
@@ -57,17 +60,23 @@
 //
 // gesture has that many fingers up the trackpad fly a set's tiles out of
 // their windows, and down fly them home, following the fingers the whole way
-// as macOS's Mission Control does; let go past half way (or flicked) the
-// flight goes on by itself, short of it it goes back. Out of nothing, the
-// plugin asks the shell for the set with `kiwigesture>>open,<set>` and holds
-// the tiles where the fingers are once they come. `kiwigesture>>held,<set>`
-// says the fingers have the set, `kiwigesture>>let,<set>,out|home` where it
-// goes once they let go. Down with the set up but nothing in it (Mission
-// Control on an empty desktop), `kiwigesture>>close,<set>` asks the shell to
-// close it, there being nothing to follow the fingers. While the fingers hold the flight the windows stay
+// as macOS's Mission Control does ("Following the fingers" below); let go,
+// the flight goes on by itself to where the fingers were headed, out or home. Out of
+// nothing, the plugin asks the shell for the set with
+// `kiwigesture>>open,<set>`, and the tiles set off after the fingers once they
+// come. `kiwigesture>>held,<set>` says the fingers have the set,
+// `kiwigesture>>let,<set>,out|home,<progress>,<speed>,<mm>,<accelerated>`
+// where it goes once they let go, with how far they got, how fast (the way
+// out a second), how far that was on the trackpad and how far libinput's
+// acceleration made it. A set with no tiles (Mission Control on an empty
+// desktop) flies all the same, its surface fading in and out with the flight
+// it would have had. While the fingers hold the flight the windows stay
 // hidden, wherever the pictures are: shown under pictures that are still on
-// their way, they were two of each. Hyprland clears gestures
-// on every config reload; this one is added again after each.
+// their way, they were two of each. Hyprland clears gestures on every config
+// reload; this one is added again after each.
+// swipe plays a swipe through without a trackpad, its travel in libinput's
+// unaccelerated units, and `swipe tune` sets the gesture's numbers for the
+// session, for trying them on a real trackpad.
 // <badge> is an image file (percent-encoded: a path has spaces and commas),
 // the app's icon, drawn in the picture's bottom-right corner with a drop
 // shadow: thumbnails of same-app windows look alike, the badge says which
@@ -125,6 +134,7 @@
 #include <optional>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <format>
 #include <map>
 #include <ranges>
@@ -322,36 +332,74 @@ namespace {
         return bezier(FLY_X1, FLY_X2, U);
     }
 
-    // a full swipe, from the windows to the tiles, in the trackpad's units
-    // (240 took a brush of the fingers for one, 300 a long push)
-    constexpr float GESTURE_DISTANCE = 275.F;
-    // Let go faster than this (units per ms) and the flight goes that way;
-    // slower, it goes on past this share of the way, and back short of it.
-    // A Mac takes a short quick swipe as readily as a long one, and lets a
-    // slow one go a little way.
-    constexpr float GESTURE_FLICK   = 0.4F;
-    constexpr float GESTURE_PAST    = 0.4F;
-    // and held still this long, it was no flick
-    constexpr auto GESTURE_REST = std::chrono::milliseconds{80};
+    // ─── Following the fingers ──────────────────────────────────────────────
+    // As Apple's guidelines for gestures have it ("Designing Fluid
+    // Interfaces", WWDC 2018), and as GNOME's overview and niri's go: the
+    // windows go out as far as the fingers have, in a straight line with
+    // their own travel on the trackpad (fingers.cpp), and let go, on to where
+    // the fingers were headed, as fast as they were going.
+    //
+    // The numbers can be changed for the session (`swipe tune`): what feels
+    // right takes a real trackpad.
+    struct SGestureTuning {
+        // a full swipe, from the windows to the tiles, in libinput's
+        // unaccelerated units: 300, 28.5 mm of the trackpad, as GNOME's
+        // overview and niri's take
+        float distance = 300.F;
+        // The windows hang on the fingers by a spring, critically damped:
+        // no bounce, as Apple advises to start with. The tiles, which come a
+        // few frames into the swipe, catch up with the fingers rather than
+        // leap to them, and a swipe quicker than a flight is still one.
+        // Its stiffness, as an angular frequency (rad/s): following fingers
+        // that move steadily, the windows are at most 2/follow behind
+        // (33 ms), and a quick swipe takes about as long as the flight
+        // Mission Control opens with otherwise.
+        float follow = 60.F;
+        // Let go, a softer one takes them the rest of the way, at the speed
+        // they had: from rest, 95% of the way in 200 ms, as the flight
+        // Mission Control opens with otherwise (FLY_DURATION).
+        float settle = 24.F;
+        // Where to: out if the fingers, slowing down at the rate GNOME and
+        // niri take (0.997 a millisecond), would have gone on past half way,
+        // which is as far again as they'd go in 333 ms at the speed they had.
+        float projection = 0.333F; // s
+    };
+    SGestureTuning g_tuning;
 
-    // How far out the windows are for how far the fingers have gone: eased at
-    // both ends, mostly smoothstep, so they set off and settle as a flight
-    // does, and a brush of the fingers barely moves them.
-    constexpr float GESTURE_EASE = 0.8F;
+    // the fingers' speed: their travel in the last 150 ms of the swipe, over
+    // that time (GNOME's and niri's)
+    constexpr uint32_t GESTURE_LATELY_MS = 150;
+    // libinput's unaccelerated units, in millimetres (fingers.cpp)
+    constexpr float UNIT_MM = 25.4F / (1000.F * 0.9F * 0.2968F);
 
-    float gestureShown(float progress) {
-        const float P = std::clamp(progress, 0.F, 1.F);
-        return (1.F - GESTURE_EASE) * P + GESTURE_EASE * P * P * (3.F - 2.F * P);
+    // How far out (0 in their windows, 1 in place) and how fast (of the way
+    // a second), and where it's pulled to how hard.
+    struct SSpring {
+        float           x = 0.F, v = 0.F;
+        float           target = 0.F;
+        Time::steady_tp at;
+    };
+    // Tiles that come late (the shell's first Mission Control after it
+    // starts takes 100 ms), the fingers already this far out: the windows
+    // catch up on the softer spring, setting off gently as a flight does,
+    // and follow once they are this close.
+    constexpr float SPRING_CATCH_UP = 0.1F;
+    // as good as there: a thousandth of the way off, barely moving
+    constexpr float SPRING_REST       = 0.001F;
+    constexpr float SPRING_REST_SPEED = 0.01F;
+
+    // A critically damped spring after `dt` seconds, exactly, however long
+    // the frame: with y = x - target, x(t) = target + (y + (v + w y) t) e^-wt.
+    void springStep(SSpring& spring, float dt, float w) {
+        const float Y = spring.x - spring.target;
+        const float C = spring.v + w * Y;
+        const float E = std::exp(-w * dt);
+        spring.x      = spring.target + (Y + C * dt) * E;
+        spring.v      = (spring.v - w * C * dt) * E;
     }
 
-    // the fingers' progress for windows that far out
-    float gestureProgress(float shown) {
-        float lo = 0.F, hi = 1.F;
-        for (int i = 0; i < 24; ++i) {
-            const float MID = (lo + hi) / 2.F;
-            (gestureShown(MID) < shown ? lo : hi) = MID;
-        }
-        return (lo + hi) / 2.F;
+    bool springResting(const SSpring& spring) {
+        return std::abs(spring.x - spring.target) <= SPRING_REST && std::abs(spring.v) <= SPRING_REST_SPEED;
     }
 
     CBox between(const CBox& from, const CBox& to, float t) {
@@ -445,8 +493,8 @@ namespace {
         // chosen tile's colour (see "Around a picture")
         CPreviewPassElement(std::vector<SDrawTile>&& tiles, int rounding, bool squareTop, float alpha, BadgeTextures& badges, bool shadow = false, float decor = 0.F,
                             std::optional<CHyprColor> outline = std::nullopt, bool barred = false, SP<Render::ITexture> bars = nullptr) :
-            m_tiles(std::move(tiles)), m_rounding(rounding), m_squareTop(squareTop), m_alpha(alpha), m_badges(badges), m_shadow(shadow), m_decor(decor),
-            m_outline(outline), m_barred(barred), m_bars(bars) {}
+            m_tiles(std::move(tiles)), m_rounding(rounding), m_squareTop(squareTop), m_barred(barred), m_bars(bars), m_alpha(alpha), m_badges(badges), m_shadow(shadow),
+            m_decor(decor), m_outline(outline) {}
 
         std::vector<UP<IPassElement>> draw() override {
             const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
@@ -551,6 +599,24 @@ namespace {
                                                      });
                     },
                     nullptr);
+
+                // A window shown whole (with its bar) wears its own border
+                // round its picture, as it does on screen, in its own colours:
+                // without it the window lost its edge in Mission Control and
+                // got it back as it landed.
+                if (m_barred) {
+                    const int BORDER = WINDOW->getRealBorderSize();
+                    if (BORDER > 0) {
+                        const float POWER = WINDOW->roundingPower();
+                        // (Hyprland's own outer corner, CHyprBorderDecoration)
+                        const double CORRECTION = BORDER * (M_SQRT2 - 1) * std::max(2.0 - POWER, 0.0);
+                        g_pHyprRenderer->m_renderData.clipBox = reach(tile, (BORDER + 1) * SCALE);
+                        g_pHyprOpenGL->renderBorder(tile.box, WINDOW->m_realBorderColor,
+                                                    {.round = ROUND, .roundingPower = POWER, .borderSize = BORDER, .a = ALPHA,
+                                                     .outerRound = static_cast<int>(std::round(ROUND + (BORDER - CORRECTION) * SCALE))});
+                        g_pHyprRenderer->m_renderData.clipBox = tile.clip;
+                    }
+                }
 
                 if (!tile.badge.empty())
                     drawBadge(tile, MONITOR->m_scale, ALPHA);
@@ -753,7 +819,13 @@ namespace {
             suspendWoken();
             m_armListeners.clear();
             m_armSurfaces.clear();
-            m_armed = !tiles.empty();
+            // Shown with nothing to fly (Mission Control on an empty desktop),
+            // a flying set's surface comes all the same, from its first
+            // frame, as a flight would bring it, and goes the same way. Tiles
+            // that come once it is out (a desktop zoomed into, one slid to)
+            // are where they're put, rather than flying out of their windows
+            // as on opening.
+            m_armed = !tiles.empty() || (fly && !m_flying);
             if (m_armed) {
                 m_pending = std::move(tiles);
                 listenForCommit();
@@ -765,14 +837,6 @@ namespace {
                 // just given back. Only a clear sends tiles home.
                 if (fly)
                     hideWindows();
-            } else if (fly && !m_flying) {
-                // Shown with nothing to fly (Mission Control on an empty
-                // desktop): it is out already. Tiles that come later (a
-                // desktop zoomed into, one slid to) are where they're put,
-                // rather than flying out of their windows as on opening.
-                m_flying  = true;
-                m_closing = false;
-                m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION));
             }
         }
 
@@ -784,6 +848,7 @@ namespace {
             suspendWoken();
             showWindows();
             m_flying = false;
+            m_sprung = false;
             m_barless.clear();
             m_barFrom.clear();
             if (m_tiles.empty())
@@ -800,8 +865,9 @@ namespace {
         // One cleared before its windows took off says so as well, at once:
         // the shell waits on that word to be gone.
         void close() {
-            if (!fly || m_tiles.empty() || !m_flying) {
-                m_held = false;
+            if (!fly || !m_flying) {
+                m_held   = false;
+                m_sprung = false;
                 clear();
                 const bool WAITED_ON = fly && !m_done;
                 m_done = true;
@@ -817,6 +883,7 @@ namespace {
             m_closing         = true;
             m_since           = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - SHOWN));
             m_held            = false;
+            m_sprung          = false;
             m_hiddenChanged   = true;
             // nothing else may be drawing: the way home starts with a frame
             damageMonitors();
@@ -828,18 +895,15 @@ namespace {
                     g_pHyprRenderer->damageMonitor(monitor);
         }
 
-        // out of their windows and staying out: open
+        // out of their windows and staying out (or, with none, its surface
+        // there): open
         bool isOut() const {
-            return m_flying && !m_closing && !m_tiles.empty();
+            return m_flying && !m_closing;
         }
 
-        bool hasTiles() const {
-            return !m_tiles.empty();
-        }
-
-        // Mission Control up with no windows to show: on an empty desktop
-        bool isOutEmpty() const {
-            return fly && m_tiles.empty() && !m_closing && !m_done;
+        // something for fingers to hold: tiles, or a flight without them
+        bool holdable() const {
+            return !m_tiles.empty() || (fly && m_flying);
         }
 
         bool isClosing() const {
@@ -850,35 +914,69 @@ namespace {
             return m_held;
         }
 
-        // A gesture's hand on the flight: held at `progress` until let go.
-        void hold(float progress) {
-            if (m_tiles.empty())
+        // A gesture's hand on the flight: the windows pulled after the
+        // fingers, `target` of the way out, until let go. Taken from
+        // wherever the flight is, at the speed it has.
+        void hold(float target) {
+            if (!holdable())
                 return;
+            const auto NOW = Time::steadyNow();
+            const bool FRESH = !m_sprung;
+            if (FRESH) {
+                m_spring = SSpring{.x = m_flying ? shown() : 0.F, .v = flightSpeed(), .at = NOW};
+                m_sprung = true;
+            } else if (springResting(m_spring))
+                m_spring.at = NOW; // nothing has been drawn since it came to rest
             if (!m_flying) {
                 m_flying = true;
                 hideWindows();
             }
             m_held          = true;
             m_closing       = false;
-            m_heldAt        = std::clamp(progress, 0.F, 1.F);
+            m_spring.target = std::clamp(target, 0.F, 1.F);
+            if (FRESH)
+                m_catching = std::abs(m_spring.target - m_spring.x) > SPRING_CATCH_UP;
             m_hiddenChanged = true;
             damageMonitors();
         }
 
-        // let go: on out, or home
+        // let go: on out, or home, from where and as fast as the fingers had them
         void letGo(bool out) {
             if (!m_held)
                 return;
             m_held          = false;
+            m_closing       = !out;
+            m_spring.target = out ? 1.F : 0.F;
             m_hiddenChanged = true;
-            if (out) {
-                m_closing = false;
-                m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(m_heldAt));
-            } else {
-                m_closing = true;
-                m_since   = Time::steadyNow() - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(FLY_DURATION) * flyCurveInverse(1.F - m_heldAt));
-            }
             damageMonitors();
+        }
+
+        // Once a frame, before it is drawn: the spring moved on by the time
+        // since the last.
+        void step() {
+            if (!m_sprung)
+                return;
+            const auto NOW = Time::steadyNow();
+            // (a frame long in coming isn't a leap)
+            const float DT = std::clamp(std::chrono::duration<float>(NOW - m_spring.at).count(), 0.F, 0.05F);
+            m_spring.at    = NOW;
+            if (m_catching && (!m_held || std::abs(m_spring.x - m_spring.target) <= SPRING_CATCH_UP))
+                m_catching = false;
+            float w = m_held && !m_catching ? g_tuning.follow : g_tuning.settle;
+            // Let go faster than the settling spring would take them from
+            // there, the windows would overshoot their places and come back:
+            // it is stiffened to just that speed, and they slow into place
+            // from it.
+            const float Y = m_spring.x - m_spring.target;
+            if (!m_held && m_spring.v * Y < 0.F && std::abs(Y) > SPRING_REST)
+                w = std::max(w, std::abs(m_spring.v / Y));
+            springStep(m_spring, DT, w);
+            if (m_held || !springResting(m_spring))
+                return;
+            // there: out and staying, or home, as a flight on its curve ends
+            m_sprung  = false;
+            m_closing = m_spring.target < 0.5F;
+            m_since   = NOW - std::chrono::duration_cast<Time::steady_dur>(FLY_DURATION);
         }
 
         // the window's tile drawn over the others
@@ -909,7 +1007,8 @@ namespace {
                 damageAll();
             if (!m_flying)
                 return;
-            if (m_closing || std::chrono::duration<float>(Time::steadyNow() - m_since) < std::chrono::duration<float>(FLY_DURATION) + std::chrono::milliseconds{50})
+            if (m_sprung ? !springResting(m_spring) :
+                           m_closing || std::chrono::duration<float>(Time::steadyNow() - m_since) < std::chrono::duration<float>(FLY_DURATION) + std::chrono::milliseconds{50})
                 g_pHyprRenderer->damageMonitor(monitor);
         }
 
@@ -922,10 +1021,25 @@ namespace {
         float shown() const {
             if (!m_flying)
                 return 1.F;
-            if (m_held)
-                return m_heldAt;
+            if (m_sprung)
+                return std::clamp(m_spring.x, 0.F, 1.F);
             const float T = std::clamp(std::chrono::duration<float>(Time::steadyNow() - m_since).count() / std::chrono::duration<float>(FLY_DURATION).count(), 0.F, 1.F);
             return m_closing ? 1.F - flyCurve(T) : flyCurve(T);
+        }
+
+        // how fast it is going, of the way out a second
+        float flightSpeed() const {
+            if (!m_flying)
+                return 0.F;
+            if (m_sprung)
+                return m_spring.v;
+            const float LENGTH = std::chrono::duration<float>(FLY_DURATION).count();
+            const float T      = std::chrono::duration<float>(Time::steadyNow() - m_since).count() / LENGTH;
+            if (T >= 1.F)
+                return 0.F;
+            constexpr float H     = 0.01F;
+            const float     SPEED = (flyCurve(std::min(1.F, T + H)) - flyCurve(T)) / (H * LENGTH);
+            return m_closing ? -SPEED : SPEED;
         }
 
         // The shell's next frame is the one it shows its pane in. A surface
@@ -1159,8 +1273,11 @@ namespace {
 
         // a flying set's flight, and the windows it has hidden
         bool            m_flying = false, m_closing = false, m_done = false;
-        bool            m_held   = false; // by a gesture, at m_heldAt
-        float           m_heldAt = 0.F;
+        bool            m_held   = false; // by a gesture's fingers
+        // the flight on a spring rather than its curve: the gesture's, until it lands
+        bool            m_sprung = false;
+        SSpring         m_spring;
+        bool            m_catching = false; // up with fingers that got ahead (SPRING_CATCH_UP)
         Time::steady_tp m_since;
         float           m_applied       = -1.F; // the flight's point last applied to the windows
         bool            m_hiddenChanged = false;
@@ -1180,7 +1297,7 @@ namespace {
         // tiles in place, or newly so: out of their windows from wherever
         // the flight is, coming back included
         void flyOut() {
-            if (m_held) {
+            if (m_held || m_sprung) {
                 hideWindows();
                 return;
             }
@@ -1235,6 +1352,9 @@ namespace {
             // while the flight moves, or Mission Control would redraw the
             // screen every frame for as long as it is open
             if (SHOWN != m_applied || m_hiddenChanged) {
+                // what of the shell's own goes with the flight follows it
+                if (SHOWN != m_applied)
+                    g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwipreviews", .data = std::format("at,{},{:.3f}", name, SHOWN)});
                 m_applied       = SHOWN;
                 m_hiddenChanged = false;
                 // The windows go as their pictures leave them and are back
@@ -1257,6 +1377,7 @@ namespace {
             m_flying               = false;
             m_closing              = false;
             m_held                 = false;
+            m_sprung               = false;
             showWindows();
             if (!WAS_CLOSING)
                 return;
@@ -1294,30 +1415,33 @@ namespace {
     };
 
     // Fingers on the trackpad, as Hyprland hands them over: the travel is up
-    // the trackpad, in its units.
+    // the trackpad, as the fingers went (fingers.cpp), and as libinput's
+    // acceleration had it.
     class CFlyGesture : public ITrackpadGesture {
       public:
         struct SHandlers {
-            std::function<void(bool up, float travel, uint32_t ms)> begin;
-            std::function<void(float travel, uint32_t ms)>          update;
-            std::function<void(bool cancelled)>                     end;
+            std::function<void(bool up)>                                    begin;
+            std::function<void(float travel, float accelerated, uint32_t ms)> update;
+            std::function<void(bool cancelled, uint32_t ms)>                end;
         };
 
         explicit CFlyGesture(SHandlers handlers) : m_handlers(std::move(handlers)) {}
 
+        // (its delta is the first update's, which comes right after)
         void begin(const STrackpadGestureBegin& e) override {
             ITrackpadGesture::begin(e);
+            Kiwi::Fingers::begin();
             if (e.swipe)
-                m_handlers.begin(e.direction == TRACKPAD_GESTURE_DIR_UP, -e.swipe->delta.y * m_scale, e.swipe->timeMs);
+                m_handlers.begin(e.direction == TRACKPAD_GESTURE_DIR_UP);
         }
 
         void update(const STrackpadGestureUpdate& e) override {
             if (e.swipe)
-                m_handlers.update(-e.swipe->delta.y * m_scale, e.swipe->timeMs);
+                m_handlers.update(-Kiwi::Fingers::travel(e.swipe->delta, e.swipe->timeMs).y * m_scale, -e.swipe->delta.y * m_scale, e.swipe->timeMs);
         }
 
         void end(const STrackpadGestureEnd& e) override {
-            m_handlers.end(e.swipe && e.swipe->cancelled);
+            m_handlers.end(e.swipe && e.swipe->cancelled, e.swipe ? e.swipe->timeMs : 0);
         }
 
       private:
@@ -1346,6 +1470,8 @@ namespace {
             m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) {
                 m_rendering = monitor;
                 swipeOnto();
+                for (auto& [_, set] : m_sets)
+                    set->step();
                 for (auto& [_, set] : m_sets)
                     set->keepAlive(monitor);
                 std::erase_if(m_sets, [](const auto& entry) { return entry.second->done(); });
@@ -1416,13 +1542,17 @@ namespace {
         size_t      m_gestureFingers = 0;
         bool        m_gestureAdded   = false;
         struct {
-            bool                active = false, opening = false;
-            float               progress = 0.F, velocity = 0.F;
-            uint32_t            lastMs   = 0;
-            Time::steady_tp     lastAt;
+            bool                                   active = false, opening = false;
+            float                                  progress = 0.F;
+            // the last 150 ms of it, for the fingers' speed: when, how far
+            std::deque<std::pair<uint32_t, float>> lately;
+            uint32_t                               lastMs = 0;
+            Time::steady_tp                        lastAt;
+            // all the way, as the fingers went and as libinput had it
+            float                                  travelled = 0.F, accelerated = 0.F;
             // let go before the tiles came: on out, or home
-            std::optional<bool> decided;
-            Time::steady_tp     decidedAt;
+            std::optional<bool>                    decided;
+            Time::steady_tp                        decidedAt;
         } m_swipe;
 
         std::string addGesture() {
@@ -1430,9 +1560,9 @@ namespace {
                 return "ok";
             removeGesture();
             auto result = g_pTrackpadGestures->addGesture(makeUnique<CFlyGesture>(CFlyGesture::SHandlers{
-                                                              .begin  = [this](bool up, float travel, uint32_t ms) { swipeBegin(up, travel, ms); },
-                                                              .update = [this](float travel, uint32_t ms) { swipeUpdate(travel, ms); },
-                                                              .end    = [this](bool cancelled) { swipeEnd(cancelled); },
+                                                              .begin  = [this](bool up) { swipeBegin(up); },
+                                                              .update = [this](float travel, float accelerated, uint32_t ms) { swipeUpdate(travel, accelerated, ms); },
+                                                              .end    = [this](bool cancelled, uint32_t ms) { swipeEnd(cancelled, ms); },
                                                           }),
                                                           m_gestureFingers, TRACKPAD_GESTURE_DIR_VERTICAL, 0, 1.F, false);
             if (!result)
@@ -1453,7 +1583,7 @@ namespace {
             return IT == m_sets.end() ? nullptr : IT->second.get();
         }
 
-        void swipeBegin(bool up, float travel, uint32_t ms) {
+        void swipeBegin(bool up) {
             m_swipe         = {};
             const auto SET  = gestureSet();
             if (SET && SET->isClosing())
@@ -1463,53 +1593,67 @@ namespace {
                 m_swipe.opening = true;
                 g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("open,{}", m_gestureSet)});
             } else if (!up && OPEN) {
-                m_swipe.progress = gestureProgress(SET->shown());
-                SET->hold(gestureShown(m_swipe.progress));
-            } else if (!up && SET && SET->isOutEmpty()) {
-                // nothing to take home under the fingers: the shell just closes it
-                g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("close,{}", m_gestureSet)});
-                return;
+                m_swipe.progress = SET->shown();
+                SET->hold(m_swipe.progress);
             } else
                 return;
             m_swipe.active = true;
-            m_swipe.lastMs = ms;
+            m_swipe.lastAt = Time::steadyNow();
             // the shell lets nothing be pointed at while the fingers have the windows
             g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("held,{}", m_gestureSet)});
-            swipeUpdate(travel, ms);
         }
 
-        void swipeUpdate(float travel, uint32_t ms) {
+        void swipeUpdate(float travel, float accelerated, uint32_t ms) {
             if (!m_swipe.active)
                 return;
-            m_swipe.progress = std::clamp(m_swipe.progress + travel / GESTURE_DISTANCE, 0.F, 1.F);
-            const float DT   = std::max(1.F, static_cast<float>(ms - m_swipe.lastMs));
-            m_swipe.velocity = 0.6F * m_swipe.velocity + 0.4F * (travel / DT);
-            m_swipe.lastMs   = ms;
-            m_swipe.lastAt   = Time::steadyNow();
+            const float STEP = travel / g_tuning.distance;
+            m_swipe.progress = std::clamp(m_swipe.progress + STEP, 0.F, 1.F);
+            m_swipe.lately.emplace_back(ms, STEP);
+            while (m_swipe.lately.size() > 1 && ms - m_swipe.lately.front().first > GESTURE_LATELY_MS)
+                m_swipe.lately.pop_front();
+            m_swipe.lastMs = ms;
+            m_swipe.lastAt = Time::steadyNow();
+            m_swipe.travelled += travel;
+            m_swipe.accelerated += accelerated;
             // (a set the shell has closed meanwhile goes home, fingers or not)
-            if (const auto SET = gestureSet(); SET && SET->hasTiles() && !SET->isClosing())
-                SET->hold(gestureShown(m_swipe.progress));
+            if (const auto SET = gestureSet(); SET && SET->holdable() && !SET->isClosing())
+                SET->hold(m_swipe.progress);
         }
 
-        void swipeEnd(bool cancelled) {
+        // The fingers' speed, of the way out a second: their travel in the
+        // last 150 ms before they let go, over that time. Fingers that came
+        // to rest first were going nowhere.
+        float swipeSpeed(uint32_t ms) {
+            auto& lately = m_swipe.lately;
+            lately.emplace_back(ms, 0.F);
+            while (lately.size() > 1 && ms - lately.front().first > GESTURE_LATELY_MS)
+                lately.pop_front();
+            if (lately.size() < 2 || lately.back().first <= lately.front().first)
+                return 0.F;
+            float travel = 0.F;
+            // (the first is the travel up to the start of the time)
+            for (size_t i = 1; i < lately.size(); ++i)
+                travel += lately[i].second;
+            return travel / ((lately.back().first - lately.front().first) / 1000.F);
+        }
+
+        void swipeEnd(bool cancelled, uint32_t ms) {
             if (!m_swipe.active)
                 return;
             m_swipe.active = false;
-            // fingers that came to rest before letting go flicked nothing
-            if (Time::steadyNow() - m_swipe.lastAt > GESTURE_REST)
-                m_swipe.velocity = 0.F;
-            // past the mark from where it started, the way the fingers went
-            const float PAST = m_swipe.opening ? GESTURE_PAST : 1.F - GESTURE_PAST;
-            bool        out  = m_swipe.velocity > GESTURE_FLICK ? true : m_swipe.velocity < -GESTURE_FLICK ? false : m_swipe.progress > PAST;
+            const float SPEED = swipeSpeed(ms);
+            // where the fingers were headed: out past half way, or home
+            bool out = m_swipe.progress + SPEED * g_tuning.projection > 0.5F;
             if (cancelled)
                 out = !m_swipe.opening;
-            // with how far and how fast, for tuning the two above on a real trackpad
-            g_pEventManager->postEvent(SHyprIPCEvent{
-                .event = "kiwigesture", .data = std::format("let,{},{},{:.2f},{:.2f}", m_gestureSet, out ? "out" : "home", m_swipe.progress, m_swipe.velocity)});
+            // with how far and how fast, for tuning on a real trackpad
+            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture",
+                                                     .data  = std::format("let,{},{},{:.2f},{:.2f},{:.1f},{:.1f}", m_gestureSet, out ? "out" : "home", m_swipe.progress, SPEED,
+                                                                          std::abs(m_swipe.travelled) * UNIT_MM, std::abs(m_swipe.accelerated) * UNIT_MM)});
             const auto SET = gestureSet();
             if (SET && SET->isClosing())
                 return;
-            if (SET && SET->hasTiles() && SET->isHeld())
+            if (SET && SET->isHeld())
                 SET->letGo(out);
             else {
                 m_swipe.decided   = out;
@@ -1517,23 +1661,46 @@ namespace {
             }
         }
 
-        // The tiles the swipe opened come a few frames into it: they are
-        // put where the fingers are by now, or, the fingers already gone,
-        // where the swipe would have left them.
+        // The tiles the swipe opened come a few frames into it: they set off
+        // after the fingers from their windows, or, the fingers already gone,
+        // on to where the fingers were headed.
         void swipeOnto() {
             const auto SET = gestureSet();
-            if (!SET || !SET->hasTiles() || SET->isHeld())
+            if (!SET || !SET->holdable() || SET->isHeld() || SET->isClosing())
                 return;
             if (m_swipe.active && m_swipe.opening)
-                SET->hold(gestureShown(m_swipe.progress));
+                SET->hold(m_swipe.progress);
             else if (m_swipe.decided) {
                 // a swipe given up on long ago isn't this opening's
                 if (Time::steadyNow() - m_swipe.decidedAt < std::chrono::seconds{1}) {
-                    SET->hold(gestureShown(m_swipe.progress));
+                    SET->hold(m_swipe.progress);
                     SET->letGo(*m_swipe.decided);
                 }
                 m_swipe.decided.reset();
             }
+        }
+
+        // "swipe tune [<name> <value>]": the gesture's numbers, changed for
+        // the session
+        std::string tune(const std::vector<std::string_view>& words) {
+            if (words.size() == 4) {
+                float value = 0.F;
+                if (!parse(words[3], value) || value <= 0.F)
+                    return "a value is a number above 0";
+                if (words[2] == "distance")
+                    g_tuning.distance = value;
+                else if (words[2] == "follow")
+                    g_tuning.follow = value;
+                else if (words[2] == "settle")
+                    g_tuning.settle = value;
+                else if (words[2] == "projection")
+                    g_tuning.projection = value;
+                else
+                    return "distance, follow, settle or projection";
+            } else if (words.size() != 2)
+                return "usage: kiwi-previews swipe tune [distance|follow|settle|projection <value>]";
+            return std::format("distance {} ({:.1f} mm), follow {} rad/s, settle {} rad/s, projection {} s\n", g_tuning.distance, g_tuning.distance * UNIT_MM,
+                               g_tuning.follow, g_tuning.settle, g_tuning.projection);
         }
 
         // "<set> <namespace> <rounding> [live|still] [popup] <tile> ...",
@@ -1595,18 +1762,25 @@ namespace {
                 return "ok";
             }
             // the gesture's swipe without a trackpad, step by step: for tests,
-            // and for playing the same swipe back as often as needed
+            // and for playing the same swipe back as often as needed; its
+            // travel as the fingers went, in libinput's unaccelerated units
             if (WORDS.size() >= 2 && WORDS[0] == "swipe") {
                 float    travel = 0.F;
                 uint32_t ms     = 0;
                 if (WORDS[1] == "begin" && WORDS.size() == 3 && (WORDS[2] == "up" || WORDS[2] == "down"))
-                    swipeBegin(WORDS[2] == "up", 0.F, 0);
+                    swipeBegin(WORDS[2] == "up");
                 else if (WORDS[1] == "update" && WORDS.size() == 4 && parse(WORDS[2], travel) && parse(WORDS[3], ms))
-                    swipeUpdate(travel, ms);
-                else if (WORDS[1] == "end")
-                    swipeEnd(WORDS.size() == 3 && WORDS[2] == "cancel");
+                    swipeUpdate(travel, travel, ms);
+                else if (WORDS[1] == "end") {
+                    // when: given, or as long after the last update as it's been
+                    const size_t AT = WORDS.size() >= 3 && WORDS[2] == "cancel" ? 3 : 2;
+                    if (WORDS.size() <= AT || !parse(WORDS[AT], ms))
+                        ms = m_swipe.lastMs + std::chrono::duration_cast<std::chrono::milliseconds>(Time::steadyNow() - m_swipe.lastAt).count();
+                    swipeEnd(AT == 3, ms);
+                } else if (WORDS[1] == "tune")
+                    return tune(WORDS);
                 else
-                    return "usage: kiwi-previews swipe begin up|down | update <travel> <ms> | end [cancel]";
+                    return "usage: kiwi-previews swipe begin up|down | update <travel> <ms> | end [cancel] [<ms>] | tune [<name> <value>]";
                 return "ok";
             }
             if (WORDS.empty() || WORDS[0] == "clear") {

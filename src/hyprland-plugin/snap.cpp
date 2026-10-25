@@ -40,6 +40,7 @@
 #include <config/ConfigValue.hpp>
 #include <config/shared/complex/ComplexDataTypes.hpp>
 #include <desktop/state/FocusState.hpp>
+#include <desktop/state/ViewHitTester.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/Window.hpp>
 #include <desktop/Workspace.hpp>
@@ -133,6 +134,7 @@ namespace {
     CFunctionHook* g_moveHook   = nullptr;
     CFunctionHook* g_endHook    = nullptr;
     CFunctionHook* g_updateHook = nullptr;
+    CFunctionHook* g_layerHook  = nullptr;
 
     SP<SHyprCtlCommand> g_command;
 
@@ -595,6 +597,52 @@ namespace {
     // (Hyprland's keybinds do), until it has been dealt with
     bool g_keyed = false;
 
+    // Two windows snapped side by side share the edge between them, as two
+    // tiled halves do on a Mac: that edge dragged on either window moves on
+    // both, the gap kept. Any other edge is the one window's alone. Either
+    // way the window stays snapped, in its new shape (a drag away still
+    // gives it back the size it had before).
+    void resizeBeside(const SP<Layout::ITarget>& target, const PHLWINDOW& window) {
+        auto* snapped = snappedOf(window);
+        if (!snapped || !target->floating())
+            return;
+        const CBox WAS = snapped->box;
+        const CBox NOW = target->position();
+        snapped->box   = NOW;
+        for (auto& other : g_snapped) {
+            const auto PARTNER = other.window.lock();
+            const auto OTHER   = PARTNER ? PARTNER->layoutTarget() : nullptr;
+            if (!PARTNER || PARTNER == window || !OTHER || !OTHER->floating() || PARTNER->m_workspace != window->m_workspace ||
+                !sameBox(OTHER->position(), other.box))
+                continue;
+            // side by side, the same height, the gap between them
+            const CBox THEIRS = other.box;
+            if (std::abs(THEIRS.y - WAS.y) > 2 || std::abs(THEIRS.h - WAS.h) > 2)
+                continue;
+            const bool   LEFT_OF = THEIRS.x > WAS.x; // this one on the left
+            const double GAP     = LEFT_OF ? THEIRS.x - (WAS.x + WAS.w) : WAS.x - (THEIRS.x + THEIRS.w);
+            if (GAP < 0 || GAP > 64)
+                continue;
+            const double SHARED_WAS = LEFT_OF ? WAS.x + WAS.w : WAS.x;
+            const double SHARED_NOW = LEFT_OF ? NOW.x + NOW.w : NOW.x;
+            if (std::abs(SHARED_NOW - SHARED_WAS) < 0.5)
+                return; // an outer edge: this window's alone
+            const double MIN = OTHER->minSize().value_or(Vector2D{MIN_WINDOW_SIZE, MIN_WINDOW_SIZE}).x;
+            CBox         next = THEIRS;
+            if (LEFT_OF) {
+                const double RIGHT = THEIRS.x + THEIRS.w;
+                next.x             = std::min(SHARED_NOW + GAP, RIGHT - MIN);
+                next.w             = RIGHT - next.x;
+            } else
+                next.w = std::max(SHARED_NOW - GAP - THEIRS.x, MIN);
+            g_layoutManager->setTargetGeom(next, OTHER);
+            PARTNER->positionAnimation()->warp();
+            PARTNER->sizeAnimation()->warp();
+            other.box = OTHER->position();
+            return;
+        }
+    }
+
     void hkMouseMove(CDragStateController* self, const Vector2D& pointer) {
         using FMouseMove = void (*)(CDragStateController*, const Vector2D&);
         if (!takenAway(self, pointer))
@@ -603,6 +651,8 @@ namespace {
 
         const auto TARGET = self->target();
         const auto WINDOW = TARGET ? TARGET->window() : nullptr;
+        if (WINDOW && self->mode() == MBIND_RESIZE)
+            resizeBeside(TARGET, WINDOW);
         // a pinned window is on every desktop, and has nowhere to go on one
         if (!WINDOW || self->mode() != MBIND_MOVE || !self->dragThresholdReached() || g_untile.active || WINDOW->onSpecialWorkspace() || WINDOW->m_pinned)
             return leave();
@@ -885,6 +935,37 @@ namespace {
     }
 }
 
+namespace {
+    // A window dragged by its title bar is let go wherever the pointer is,
+    // over a panel too. hyprbars (and title-bar plugins written like it)
+    // takes a release over a layer surface for the layer's and ignores it:
+    // let go over the bar at the top edge, to fill the screen, the window
+    // stayed on the pointer until the next click. While a window is dragged
+    // no layer is under the pointer — macOS's panels don't answer it either
+    // — so the release is the title bar's, and ends the drag as it began.
+    using FLayerSurfaceAt = SP<CWLSurfaceResource> (*)(const Desktop::CViewHitTester*, const Vector2D&, std::vector<PHLLSREF>*, Vector2D*, PHLLS*, bool);
+
+    SP<CWLSurfaceResource> hkLayerSurfaceAt(const Desktop::CViewHitTester* self, const Vector2D& pos, std::vector<PHLLSREF>* layers, Vector2D* coords, PHLLS* found,
+                                            bool aboveLockscreen) {
+        if (!aboveLockscreen && g_layoutManager->dragController()->target()) {
+            if (found)
+                *found = nullptr;
+            return nullptr;
+        }
+        return reinterpret_cast<FLayerSurfaceAt>(g_layerHook->m_original)(self, pos, layers, coords, found, aboveLockscreen);
+    }
+
+    CFunctionHook* hookLayerSurfaceAt(HANDLE handle) {
+        for (const auto& fn : HyprlandAPI::findFunctionsByName(handle, "layerSurfaceAt")) {
+            if (!fn.demangled.starts_with("Desktop::CViewHitTester::layerSurfaceAt("))
+                continue;
+            const auto HOOK = HyprlandAPI::createFunctionHook(handle, fn.address, reinterpret_cast<void*>(&hkLayerSurfaceAt));
+            return HOOK && HOOK->hook() ? HOOK : nullptr;
+        }
+        return nullptr;
+    }
+}
+
 namespace Kiwi::Snap {
     bool init(HANDLE handle) {
         g_moveHook   = hook(handle, "mouseMove", MOUSE_MOVE, reinterpret_cast<void*>(&hkMouseMove));
@@ -898,6 +979,8 @@ namespace Kiwi::Snap {
             g_moveHook = g_endHook = g_updateHook = nullptr;
             return false;
         }
+        // (without it, only a title-bar plugin that ends its drags itself does)
+        g_layerHook = hookLayerSurfaceAt(handle);
         g_command = HyprlandAPI::registerHyprCtlCommand(handle,
                                                         SHyprCtlCommand{
                                                             .name  = "kiwi-snap",
@@ -946,6 +1029,6 @@ namespace Kiwi::Snap {
         g_away.clear();
         g_untile = {};
         g_split  = {};
-        g_moveHook = g_endHook = g_updateHook = nullptr;
+        g_moveHook = g_endHook = g_updateHook = g_layerHook = nullptr;
     }
 }

@@ -202,10 +202,15 @@
               # the plugin would be garbage-collected from under the shell
               mkdir -p $out/lib/kiwi-shell
               ln -s ${kiwi-plugin}/lib/kiwi-shell/libkiwi.so $out/lib/kiwi-shell/libkiwi.so
+              # and the shell's font, for where it isn't installed (loaded by
+              # the shell alone, services/font.ts): not in share/fonts, where
+              # a profile would install it for everything
+              ln -s "${pkgs.quicksand}/share/fonts/truetype/Quicksand[wght].ttf" $out/lib/kiwi-shell/Quicksand.ttf
 
               # Compilation
               ags bundle ${entry} $out/bin/.${pname}-core -d "SRC='$out/share/kiwi-shell'" \
-                -d "PLUGIN='$out/lib/kiwi-shell/libkiwi.so'"
+                -d "PLUGIN='$out/lib/kiwi-shell/libkiwi.so'" \
+                -d "QUICKSAND='$out/lib/kiwi-shell/Quicksand.ttf'"
 
               # Runtime Dependencies Wrapper
               wrapProgram $out/bin/.${pname}-core \
@@ -369,9 +374,11 @@
               lib.types.str;
 
           # an option per setting, and for a group of them ("shortcuts") an
-          # option per setting in it
+          # option per setting in it. Unset, a setting is left to Kiwi
+          # Settings: only what is set here is written, and it is laid over
+          # the user's own settings rather than replacing them all.
           optionsFor = builtins.mapAttrs (
-            _: val:
+            name: val:
             if builtins.isAttrs val then
               lib.mkOption {
                 type = lib.types.submodule { options = optionsFor val; };
@@ -380,9 +387,17 @@
             else
               lib.mkOption {
                 type = lib.types.nullOr (inferType val);
-                default = val;
+                default = null;
+                description = "Unset: as chosen in Kiwi Settings (by default ${builtins.toJSON val}).";
               }
           );
+
+          # the settings set, groups included, without the unset ones
+          setOnly =
+            attrs:
+            lib.filterAttrs (_: v: v != null && v != { }) (
+              builtins.mapAttrs (_: v: if builtins.isAttrs v then setOnly v else v) attrs
+            );
 
           settingsOptions = optionsFor defaultConfig;
         in
@@ -416,7 +431,7 @@
 
           config = lib.mkIf cfg.enable {
             xdg.configFile."kiwi-shell/nix-config.json" = lib.mkIf (cfg.settings != null) {
-              text = builtins.toJSON (lib.filterAttrs (_: v: v != null) cfg.settings);
+              text = builtins.toJSON (setOnly cfg.settings);
             };
             home.packages = [ cfg.package ];
           };

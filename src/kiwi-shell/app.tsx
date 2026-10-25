@@ -1,3 +1,5 @@
+// first: what the shell starts gets the environment it was started with
+import "./widgets/services/localVfs"
 import app from "ags/gtk4/app"
 import style from "./style.scss"
 import Bar from "./widgets/Bar/Bar"
@@ -22,6 +24,8 @@ import { logger } from "./log"
 import steamDesktopPatcher from "./widgets/services/steamDesktopPatcher";
 import nightShiftService from "./widgets/services/nightShiftSchedule"
 import { loadPlugins } from "./hypr"
+import { standOnOwnBase } from "./widgets/services/gtkBase"
+import { useShellFont } from "./widgets/services/font"
 import "./widgets/services/gestures"
 import "./widgets/services/focusTrail"
 
@@ -31,8 +35,12 @@ app.start({
   requestHandler(argv: string[], response: (response: string) => void) {
     handleCliRequest(argv, response)
   },
-  css: style,
   main() {
+    // on a base of its own, not the desktop's theme, the shell's style over it
+    standOnOwnBase()
+    app.apply_css(style)
+    // the font the settings choose, over the stylesheet's Quicksand
+    useShellFont()
     steamDesktopPatcher()
     nightShiftService()
     loadPlugins()

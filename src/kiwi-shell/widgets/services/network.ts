@@ -18,6 +18,13 @@ let watched: { client: NM.Client; id: number } | null = null
 
 function watch(net: Network.Network) {
     if (watched) watched.client.disconnect(watched.id)
+    watched = null
+    // no NetworkManager (another network manager, or none): no network
+    // devices to show, and none coming back
+    if (!net.client) {
+        log.info("no NetworkManager: the network goes unshown")
+        return
+    }
     const id = net.client.connect("device-added", (_client: NM.Client, device: NM.Device) => {
         if (!(device instanceof NM.DeviceWifi || device instanceof NM.DeviceEthernet)) return
         const current = network.get()

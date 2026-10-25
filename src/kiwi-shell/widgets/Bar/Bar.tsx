@@ -3,7 +3,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, remeasureOn } from "../monitors"
 import { createBinding, createComputed, onCleanup } from "ags"
 
-import Battery from "gi://AstalBattery"
+import { battery } from "../services/battery"
 import Network from "gi://AstalNetwork"
 import Notifd from "gi://AstalNotifd"
 
@@ -18,7 +18,6 @@ import { Icon, iconTheme, wifiIcon } from "../iconNames"
 import { themeClasses, LAYER } from "../services/theme"
 import { minuteNow } from "../services/minuteClock"
 
-const battery = Battery.get_default()
 // the current Network, not the first one (services/network.ts)
 const wiredBinding = network.as(n => n.wired)
 const wifiStateBinding = wifiProperty("state", Network.DeviceState.UNAVAILABLE)
@@ -132,7 +131,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
                 <box class="icons">
                     <QuietIcon />
                     <PreferencesIcon />
-                    {network.get().wifi && <NetworkIcon />}
+                    <NetworkIcon />
                     <BatteryIcon />
                 </box>
                 <SystemMenu />
@@ -183,10 +182,14 @@ function QuietIcon() {
     )
 }
 
+// With Wi-Fi, its signal; with a cable alone (a desktop on Ethernet),
+// whether the cable is connected; with neither, nothing. Followed, since
+// NetworkManager can come back with other devices (a USB Wi-Fi stick).
 function NetworkIcon() {
     return (
         <Gtk.Image
             class="networkIcon"
+            visible={network(n => !!(n.wifi || n.wired))}
             iconSize={Gtk.IconSize.NORMAL}
             // the cable's state and the signal's strength change on their own
             // objects, which are followed too
@@ -195,7 +198,7 @@ function NetworkIcon() {
                 const ap = get(activeAPBinding)
                 return networkIcon(
                     wired ? get(createBinding(wired, "state")) : null,
-                    get(wifiStateBinding),
+                    get(network).wifi ? get(wifiStateBinding) : null,
                     ap ? get(createBinding(ap, "strength")) : null,
                 )
             })}
@@ -219,11 +222,13 @@ function PreferencesIcon() {
     )
 }
 
-function networkIcon(wiredState: number | null, wifiState: number, strength: number | null) {
+function networkIcon(wiredState: number | null, wifiState: number | null, strength: number | null) {
 
     if (wiredState === Network.DeviceState.ACTIVATED) {
         return "network-wired-activated-symbolic"
     }
+    // no Wi-Fi at all: the cable's
+    if (wifiState === null) return "network-wired-disconnected-symbolic"
     if (
         wifiState === Network.DeviceState.UNAVAILABLE ||
         wifiState === Network.DeviceState.UNMANAGED

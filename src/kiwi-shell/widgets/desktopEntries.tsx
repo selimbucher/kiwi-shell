@@ -168,4 +168,14 @@ const dataDirs = [
 
 for (const dir of dataDirs) watchDir(dir)
 
+// Every other distribution, and Flatpak: GLib watches every XDG data dir's
+// applications for us (/usr/share, /usr/local/share, the Flatpak exports).
+// The paths above are NixOS's, whose profiles are links swapped for new
+// ones at a rebuild, which a watch on the old one never sees.
+const appInfoMonitor = Gio.AppInfoMonitor.get()
+appInfoMonitor.connect("changed", () => {
+    log.debug("[ClassMap] the installed apps changed, rebuilding...")
+    rebuildSoon()
+})
+
 buildClassMap()

@@ -1,6 +1,9 @@
+import GLib from "gi://GLib"
 import { exec, execAsync } from "ags/process"
-import { exitSession } from "../hypr"
+import { exitSession, hasFeature } from "../hypr"
 import { openChoicePrompt } from "./prompts"
+import { notify } from "../notify"
+import { isLocked } from "./services/screen"
 
 // ─── Power ────────────────────────────────────────────────────────────────────
 // What the power menu and Spotlight's actions do, the same from either.
@@ -37,14 +40,29 @@ const run = (command: string) => () => {
 export const sleep = () => {
   if (!canHibernate) return run("systemctl sleep")()
   openChoicePrompt("Sleep",
-    "Sleep keeps everything in memory and wakes instantly. Hibernate powers off and wakes in a few seconds with the security key.",
+    "Sleep keeps everything in memory and wakes instantly. Hibernate saves everything to disk and powers off; it takes a few seconds to wake.",
     [
       { label: "Hibernate", run: run("systemctl hibernate") },
       { label: "Sleep", primary: true, run: run("systemctl sleep") },
     ])
 }
 
-export const lock = run("hyprlock")
+// Locked by hyprlock where it is installed; otherwise the session is asked
+// to lock (loginctl), which whatever locker the user runs with their idle
+// daemon answers. The shell doesn't bring a locker of its own: one without
+// the system's login setup (PAM) for it would lock with no way back in.
+// Should nothing lock, it says so rather than leave the screen open.
+export const lock = () => {
+  if (GLib.find_program_in_path("hyprlock")) return run("hyprlock")()
+  execAsync(["loginctl", "lock-session"]).catch(e => console.error("loginctl lock-session:", e))
+  // (the plugin says when the session is locked, screen.cpp)
+  if (!hasFeature("stacking")) return
+  GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2500, () => {
+    if (!isLocked())
+      notify("The screen didn't lock", "No screen locker answered. Install hyprlock, or set one up with your idle daemon (hypridle's lock_cmd).", { urgency: 2 })
+    return GLib.SOURCE_REMOVE
+  })
+}
 export const shutDown = confirmed("Shut Down", "Shut down the computer?", "Shut Down", run("poweroff"))
 export const restart = confirmed("Restart", "Restart the computer?", "Restart", run("reboot"))
 export const logOut = confirmed("Log Out", "End the session? Unsaved work in open apps is lost.", "Log Out", exitSession)

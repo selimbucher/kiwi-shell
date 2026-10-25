@@ -36,17 +36,20 @@ function tick() {
     aim()
 }
 
-Gio.DBus.system.signal_subscribe(
-    "org.freedesktop.login1",
-    "org.freedesktop.login1.Manager",
-    "PrepareForSleep",
-    "/org/freedesktop/login1",
-    null,
-    Gio.DBusSignalFlags.NONE,
-    (_conn, _sender, _path, _iface, _signal, params) => {
-        const [goingToSleep] = params.deepUnpack() as [boolean]
-        if (!goingToSleep) tick()
-    },
-)
+// (no system bus, a container say: the next tick puts it right instead)
+try {
+    Gio.DBus.system.signal_subscribe(
+        "org.freedesktop.login1",
+        "org.freedesktop.login1.Manager",
+        "PrepareForSleep",
+        "/org/freedesktop/login1",
+        null,
+        Gio.DBusSignalFlags.NONE,
+        (_conn, _sender, _path, _iface, _signal, params) => {
+            const [goingToSleep] = params.deepUnpack() as [boolean]
+            if (!goingToSleep) tick()
+        },
+    )
+} catch { /* no wake-ups heard */ }
 
 aim()

@@ -14,6 +14,8 @@ const [seen, setSeen] = createState(true)
 export const screenSeen = seen
 
 let locked = false
+/** Whether the session is locked, as the plugin last said. */
+export const isLocked = () => locked
 // the displays switched off, by name
 const off = new Set<string>()
 

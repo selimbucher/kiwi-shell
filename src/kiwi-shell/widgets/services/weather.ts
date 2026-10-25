@@ -211,19 +211,22 @@ function start() {
         void refresh()
         return GLib.SOURCE_CONTINUE
     })
-    const sleep = Gio.DBus.system.signal_subscribe(
-        "org.freedesktop.login1", "org.freedesktop.login1.Manager", "PrepareForSleep",
-        "/org/freedesktop/login1", null, Gio.DBusSignalFlags.NONE,
-        (_c, _s, _p, _i, _n, params) => {
-            const [goingToSleep] = params.deepUnpack() as [boolean]
-            if (!goingToSleep && stale()) void refresh()
-        })
+    let sleep = 0
+    try {
+        sleep = Gio.DBus.system.signal_subscribe(
+            "org.freedesktop.login1", "org.freedesktop.login1.Manager", "PrepareForSleep",
+            "/org/freedesktop/login1", null, Gio.DBusSignalFlags.NONE,
+            (_c, _s, _p, _i, _n, params) => {
+                const [goingToSleep] = params.deepUnpack() as [boolean]
+                if (!goingToSleep && stale()) void refresh()
+            })
+    } catch { /* no system bus: the timer and the network are enough */ }
     const network = AstalNetwork.get_default()
     const online = network.connect("notify::connectivity", () => {
         if (network.connectivity === AstalNetwork.Connectivity.FULL && stale()) void refresh()
     })
     subscriptions = [
-        () => Gio.DBus.system.signal_unsubscribe(sleep),
+        () => { if (sleep) Gio.DBus.system.signal_unsubscribe(sleep) },
         () => network.disconnect(online),
     ]
 }

@@ -10,6 +10,7 @@
 //   stacking.cpp  tiled and floating windows stacked in one order
 //   snap.cpp      a window dragged against an edge of the screen tiled there, or filling it
 //   layers.cpp    the moment right after a layer is drawn, for the other two
+//   fingers.cpp   how far the fingers went on the trackpad, for previews.cpp's gesture
 //   requests.hpp  reading the shell's requests, shared by the parts
 //
 // They are one plugin because one is one thing to build, to enable and to
@@ -29,7 +30,7 @@ namespace Kiwi {
     // with `hyprctl kiwi-version` and won't use a plugin that says otherwise:
     // on Arch the plugin is built by hyprpm from the repository, the shell by
     // the AUR package from a release, and the two need not be the same.
-    constexpr int PROTOCOL = 11; // 11: kiwisnapped event, kiwi-snap (snap.cpp), kiwigenie names the monitor
+    constexpr int PROTOCOL = 12; // 12: kiwigesture let says how far on the trackpad, no close; kiwipreviews at; an empty flying set flies
 
     // right after a layer surface (or, with popups, its popups) is drawn
     namespace Layers {
@@ -48,6 +49,15 @@ namespace Kiwi {
     namespace Previews {
         bool init(HANDLE handle);
         void exit();
+    }
+
+    // A swipe's travel as the fingers went, libinput's acceleration undone:
+    // in its unaccelerated units (0.0951 mm), as GNOME and niri have it.
+    namespace Fingers {
+        // a swipe beginning: the touchpad's acceleration as it is set now
+        void     begin();
+        // one of its deltas as Hyprland has it, at the time it does
+        Vector2D travel(const Vector2D& delta, uint32_t timeMs);
     }
 
     namespace Genie {
@@ -72,6 +82,18 @@ namespace Kiwi {
 
     // the session locked, a display switched off: told on the event socket
     namespace Screen {
+        bool init(HANDLE handle);
+        void exit();
+    }
+
+    // an app's own minimize button minimizing its window (minimize.cpp)
+    namespace Minimize {
+        bool init(HANDLE handle);
+        void exit();
+    }
+
+    // floating windows opening where their app's last was left (memory.cpp)
+    namespace Memory {
         bool init(HANDLE handle);
         void exit();
     }

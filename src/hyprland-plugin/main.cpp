@@ -30,6 +30,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
     // its shape is drawn in the stacking's pass
     const bool SNAP = STACKING && Kiwi::Snap::init(handle);
     const bool SCREEN = Kiwi::Screen::init(handle);
+    const bool MEMORY   = Kiwi::Memory::init(handle);
+    const bool MINIMIZE = Kiwi::Minimize::init(handle);
     if (!GEOMETRY && !PREVIEWS && !GENIE && !DESKTOPS && !STACKING)
         throw std::runtime_error("[kiwi] none of its parts could start");
 
@@ -46,13 +48,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
             (PREVIEWS ? "window previews" : "(no window previews)") + ", " +
             (GENIE ? "minimize and restore animation" : "(no minimize animation)") + ", " + (DESKTOPS ? "desktops" : "(no desktops)") + ", " +
             (STACKING ? "one stacking order" : "(tiled windows under floating ones)") + ", " + (SNAP ? "snapping to the edges" : "(no snapping)") + ", " +
-            (SCREEN ? "screen lock and power events" : "(no screen events)"),
+            (SCREEN ? "screen lock and power events" : "(no screen events)") + ", " + (MEMORY ? "windows opening where they were left" : "(no window memory)") + ", " +
+            (MINIMIZE ? "apps' own minimize buttons" : "(no minimizing from apps)"),
         .author  = "selim",
         .version = "0.2.0",
     };
 }
 
 APICALL EXPORT void pluginExit() {
+    Kiwi::Minimize::exit();
+    Kiwi::Memory::exit();
     Kiwi::Screen::exit();
     Kiwi::Snap::exit();
     Kiwi::Stacking::exit();
