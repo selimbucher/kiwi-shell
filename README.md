@@ -85,12 +85,13 @@ Then log out and back in: Hyprland keeps the plugin it loaded.
 | Notifications | Four fingers left |
 | Classic workspace switcher | None |
 
-Change them in Kiwi Settings → Keybinds, or in Home Manager, like any other setting:
+Change them in Kiwi Settings → Keybinds (+ adds another), or in Home Manager, like any other setting:
 
 ```nix
 services.kiwi-shell.settings.shortcuts = {
   mission_control = "Ctrl+Up";
   workspace_switcher = "Super+Tab";   # held like Alt+Tab
+  launcher = [ "Super" "Super+space" ];   # several for one action
 };
 ```
 

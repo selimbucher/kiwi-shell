@@ -5,7 +5,9 @@ import { logger } from "./log"
 const log = logger("shortcuts")
 
 // The shell's own shortcuts, configurable as "shortcuts": { "launcher": "Super", ... }.
-// A lone modifier ("Super") is a tap; anything else is modifiers + key. The
+// A lone modifier ("Super") is a tap; anything else is modifiers + key. A
+// list ("mission_control": ["Ctrl+Up", "F3"]) gives an action several, as
+// macOS's keyboard settings can't but plenty of keyboards want. The
 // optional ones are unset ("") until the user sets them: the classic
 // workspace switcher (held like the app switcher, through the desktops) and
 // the notification center.
@@ -101,24 +103,81 @@ function valid(name: ShortcutName, s: Shortcut | null): s is Shortcut {
     return !s.tap && (s.mods.length > 0 || /^(F\d+|XF86)/i.test(s.key))
 }
 
-function configuredShortcut(name: ShortcutName): Shortcut | null {
-    const configured: string | undefined = conf().shortcuts?.[name]
-    if (configured) {
-        const parsed = parseShortcut(configured)
-        if (valid(name, parsed)) return parsed
-        log.warn(`ignoring shortcuts.${name} = "${configured}", using ${DEFAULT_SHORTCUTS[name] || "none"}`)
+// the keys a shortcut is pressed on, which no other action may have: a
+// switcher goes backwards with Shift too. Its confirm on the modifier's
+// release isn't one: a tap on that modifier and any switcher held on it
+// share the release (shadowing tells them apart, see Launcher.tsx).
+function pressedOn(name: ShortcutName, s: Shortcut): string[] {
+    if (name === "app_switcher" || name === "workspace_switcher") return [combo(s), combo(s, "SHIFT")]
+    return [combo(s)]
+}
+
+// config.json's text for one action: a string, or a list of them
+function configuredTexts(name: ShortcutName): string[] {
+    const value: unknown = conf().shortcuts?.[name]
+    const texts = Array.isArray(value) ? value : [value]
+    return texts.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+}
+
+// Every action's shortcuts, worked out once per change of the setting. The
+// unusable are left out, with a warning; one with none left falls back to
+// its default (none, for the optional ones). Keys set for two actions go to
+// the one listed first in DEFAULT_SHORTCUTS: one key, one thing, as the
+// Hyprland config's binds on kiwi's keys are taken off too.
+let resolvedFor = ""
+let resolvedShortcuts = {} as Record<ShortcutName, Shortcut[]>
+
+function allShortcuts(): Record<ShortcutName, Shortcut[]> {
+    const key = JSON.stringify(conf().shortcuts ?? {})
+    if (key === resolvedFor) return resolvedShortcuts
+    resolvedFor = key
+
+    const claimed = new Map<string, ShortcutName>()
+    const result = {} as Record<ShortcutName, Shortcut[]>
+    for (const name of Object.keys(DEFAULT_SHORTCUTS) as ShortcutName[]) {
+        const configured = configuredTexts(name)
+        let list = configured.flatMap(text => {
+            const parsed = parseShortcut(text)
+            if (valid(name, parsed)) return [parsed]
+            log.warn(`ignoring shortcuts.${name} "${text}"`)
+            return []
+        })
+        if (!list.length) {
+            if (configured.length) log.warn(`no usable shortcuts.${name}, using ${DEFAULT_SHORTCUTS[name] || "none"}`)
+            const fallback = parseShortcut(DEFAULT_SHORTCUTS[name])
+            list = fallback ? [fallback] : []
+        }
+        result[name] = []
+        for (const s of list) {
+            const keys = pressedOn(name, s).map(normalizeCombo)
+            const owner = keys.map(k => claimed.get(k)).find(Boolean)
+            if (owner === name) continue // the same keys twice
+            if (owner) {
+                log.warn(`shortcuts.${name} ${combo(s)} is ${owner}'s already, leaving it out`)
+                continue
+            }
+            for (const k of keys) claimed.set(k, name)
+            result[name].push(s)
+        }
     }
-    return parseShortcut(DEFAULT_SHORTCUTS[name])
+    resolvedShortcuts = result
+    return result
 }
 
-export function shortcut(name: Exclude<ShortcutName, OptionalShortcutName>): Shortcut {
-    return configuredShortcut(name)!
+/** The shortcuts of an action that always has one, as set or by default. */
+export function shortcuts(name: Exclude<ShortcutName, OptionalShortcutName>): Shortcut[] {
+    return allShortcuts()[name]
 }
 
-/** An optional shortcut, or null when it isn't set. */
-export function optionalShortcut(name: OptionalShortcutName): Shortcut | null {
-    return configuredShortcut(name)
+/** An optional action's shortcuts, none when it isn't set. */
+export function optionalShortcuts(name: OptionalShortcutName): Shortcut[] {
+    return allShortcuts()[name]
 }
+
+// the modifiers a held switcher's shortcuts hold, each once: its confirm
+// and its escape are the modifier's, however many keys go with it
+export const heldModifiers = (list: Shortcut[]): Shortcut[] =>
+    list.filter((s, i) => list.findIndex(o => o.mods[0] === s.mods[0]) === i)
 
 // ─── binds left by a kiwi that ran with other shortcuts ──────────────────────
 // Only possible when the config changed while kiwi wasn't running (a reload
@@ -143,18 +202,14 @@ const DESCRIPTIONS: Record<ShortcutName, string[]> = {
 // so these would otherwise stay until the next config reload.
 const RETIRED = ["kiwi: launcher toggle", "kiwi: workspaces confirm", "kiwi: workspaces escape"]
 
-// every combo kiwi binds in the root submap for the shortcut
+// every combo kiwi binds in the root submap for the shortcuts
 function wantedCombos(name: ShortcutName): string[] {
-    if (name === "workspace_switcher" || name === "notification_center") {
-        const s = optionalShortcut(name)
-        if (!s) return []
-        return name === "workspace_switcher"
-            ? [combo(s), combo(s, "SHIFT"), `${s.mods[0]} + ${heldModifierKey(s)}`, `${s.mods[0]} + escape`]
-            : [combo(s)]
-    }
-    const s = shortcut(name)
-    if (name === "app_switcher") return [combo(s), combo(s, "SHIFT"), `${s.mods[0]} + ${heldModifierKey(s)}`]
-    return [combo(s)]
+    return allShortcuts()[name].flatMap(s => {
+        if (name === "workspace_switcher")
+            return [combo(s), combo(s, "SHIFT"), `${s.mods[0]} + ${heldModifierKey(s)}`, `${s.mods[0]} + escape`]
+        if (name === "app_switcher") return [combo(s), combo(s, "SHIFT"), `${s.mods[0]} + ${heldModifierKey(s)}`]
+        return [combo(s)]
+    })
 }
 
 enqueueBindJob("leftover shortcut binds", async () => {
@@ -221,7 +276,7 @@ function spoken(keys: string): string {
 }
 
 const resolved = () =>
-    JSON.stringify((Object.keys(DEFAULT_SHORTCUTS) as ShortcutName[]).map(configuredShortcut))
+    JSON.stringify(allShortcuts())
 
 let current = resolved()
 conf.subscribe(() => {

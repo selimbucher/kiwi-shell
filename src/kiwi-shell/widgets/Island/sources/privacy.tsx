@@ -77,13 +77,16 @@ let castsSince = 0
 let castTimer = 0
 const casting = () => casts > 0 && GLib.get_monotonic_time() - castsSince >= CAST_AFTER_MS * 1000
 
+// The microphone a stream hears: the one it was sent to, or the default for
+// one that follows it (no target, as most apps do).
+const micOf = (stream: AstalWp.Stream) =>
+    (stream.target_serial >= 0 ? wp.audio.get_microphones()?.find(m => m.serial === stream.target_serial) : undefined)
+        ?? wp.audio.defaultMicrophone
+
 function update() {
     const recorders = wp.audio.get_recorders() ?? []
-    // muted: recording the default microphone while it's muted, so silence
-    const mic = recorders.filter(hearsMicrophone).map(r => {
-        const def = wp.audio.defaultMicrophone
-        return { app: appOf(r), muted: !!def?.mute && r.target_serial === def.serial }
-    })
+    // muted: recording a microphone that is muted, so silence
+    const mic = recorders.filter(hearsMicrophone).map(r => ({ app: appOf(r), muted: !!micOf(r)?.mute }))
 
     const sources = wp.video?.get_sources() ?? []
     const videoRecorders = wp.video?.get_recorders() ?? []
@@ -268,6 +271,8 @@ const watched = new Map<AstalWp.Node, number[]>()
 function rewatch() {
     const nodes: AstalWp.Node[] = [
         ...(wp.audio.get_recorders() ?? []),
+        ...(wp.audio.get_microphones() ?? []),
+        // (an object of its own, not the one in the list)
         ...(wp.audio.defaultMicrophone ? [wp.audio.defaultMicrophone] : []),
         ...(wp.video?.get_sources() ?? []),
         ...(wp.video?.get_recorders() ?? []),
@@ -281,7 +286,7 @@ function rewatch() {
         if (watched.has(node)) continue
         const ids = [node.connect("notify::state", update)]
         if (node instanceof AstalWp.Stream) ids.push(node.connect("notify::target-serial", update))
-        if (node === wp.audio.defaultMicrophone) ids.push(node.connect("notify::mute", update))
+        if (node instanceof AstalWp.Endpoint) ids.push(node.connect("notify::mute", update))
         watched.set(node, ids)
     }
     update()
@@ -289,6 +294,7 @@ function rewatch() {
 
 wp.audio.connect("notify::recorders", rewatch)
 for (const signal of ["notify::sources", "notify::recorders"]) wp.video?.connect(signal, rewatch)
+wp.audio.connect("notify::microphones", rewatch)
 wp.audio.connect("notify::default-microphone", rewatch)
 rewatch()
 

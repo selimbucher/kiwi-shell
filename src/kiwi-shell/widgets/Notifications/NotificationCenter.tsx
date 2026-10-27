@@ -10,8 +10,8 @@ import { themeClasses, LAYER } from "../services/theme"
 import { AnimatedColumn } from "./AnimatedColumn"
 import { CARD_WIDTH, rowFactory } from "./NotificationCard"
 import { centerOpen, closeCenter, layout, openCenter, setBannerHover } from "./store"
-import { applyBinds, currentBinds, registerBindSetup } from "../../hypr"
-import { optionalShortcut, combo, type Shortcut } from "../../shortcuts"
+import { applyBinds, currentBinds, registerBindSetup, type BindOp } from "../../hypr"
+import { optionalShortcuts, combo, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { logger } from "../../log"
 
@@ -43,31 +43,31 @@ export function closeNc() {
 // Unset unless the user sets shortcuts.notification_center.
 
 const TOGGLE = globalShortcut("notification-center", "Notification Center: open or close", "press", toggleNc)
-let registered: Shortcut | null = null
+let registered: Shortcut[] = []
 
 async function registerNotificationCenterBind() {
-    // rebindAll has unbound the last one by now
-    registered = null
-    const s = optionalShortcut("notification_center")
-    if (!s) return
+    // rebindAll has unbound the last ones by now
+    registered = []
+    const wanted = optionalShortcuts("notification_center")
+    if (!wanted.length) return
+    let binds: any[]
     try {
-        const binds = await currentBinds()
-        if (binds.some((b: any) => b.description === "kiwi: notification center" && b.key === s.key && b.modmask === s.modmask)) {
-            registered = s
-            return
-        }
+        binds = await currentBinds()
     } catch (e) {
         log.error("failed to query binds, skipping the notification center bind:", e as Error)
         return
     }
-    if (await applyBinds([{ bind: combo(s), action: TOGGLE, description: "kiwi: notification center" }], "notification center bind")) {
-        registered = s
-        log.info(`registered notification center bind on ${combo(s)}`)
+    const ops: BindOp[] = wanted
+        .filter(s => !binds.some((b: any) => b.description === "kiwi: notification center" && b.key === s.key && b.modmask === s.modmask))
+        .map(s => ({ bind: combo(s), action: TOGGLE, description: "kiwi: notification center" }))
+    if (!ops.length || await applyBinds(ops, "notification center bind")) {
+        registered = wanted
+        if (ops.length) log.info(`registered notification center binds on ${wanted.map(s => combo(s)).join(", ")}`)
     }
 }
 
 registerBindSetup("notificationcenter", registerNotificationCenterBind,
-    () => registered ? [{ unbind: combo(registered) }] : [])
+    () => registered.map(s => ({ unbind: combo(s) })))
 
 // Banners and the center share one layer surface: a column of fixed width
 // anchored to the top, right and bottom edge. Its size never depends on the

@@ -106,6 +106,8 @@ namespace Kiwi {
         // against an edge, or back from minimized): that tile, for the layout
         // looking for the one to split
         std::optional<PHLWINDOW> splitting(const Vector2D& pos, uint16_t properties);
+        // a window still where a snap put it: the size it had before
+        std::optional<Vector2D> sizeBefore(const PHLWINDOW& window);
         void exit();
     }
 }

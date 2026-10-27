@@ -376,21 +376,26 @@
           # an option per setting, and for a group of them ("shortcuts") an
           # option per setting in it. Unset, a setting is left to Kiwi
           # Settings: only what is set here is written, and it is laid over
-          # the user's own settings rather than replacing them all.
-          optionsFor = builtins.mapAttrs (
-            name: val:
-            if builtins.isAttrs val then
-              lib.mkOption {
-                type = lib.types.submodule { options = optionsFor val; };
-                default = { };
-              }
-            else
-              lib.mkOption {
-                type = lib.types.nullOr (inferType val);
-                default = null;
-                description = "Unset: as chosen in Kiwi Settings (by default ${builtins.toJSON val}).";
-              }
-          );
+          # the user's own settings rather than replacing them all. A
+          # shortcut is one key combo or a list of them.
+          optionsFor =
+            group:
+            builtins.mapAttrs (
+              name: val:
+              if builtins.isAttrs val then
+                lib.mkOption {
+                  type = lib.types.submodule { options = optionsFor name val; };
+                  default = { };
+                }
+              else
+                lib.mkOption {
+                  type = lib.types.nullOr (
+                    if group == "shortcuts" then lib.types.either lib.types.str (lib.types.listOf lib.types.str) else inferType val
+                  );
+                  default = null;
+                  description = "Unset: as chosen in Kiwi Settings (by default ${builtins.toJSON val}).";
+                }
+            );
 
           # the settings set, groups included, without the unset ones
           setOnly =
@@ -399,7 +404,7 @@
               builtins.mapAttrs (_: v: if builtins.isAttrs v then setOnly v else v) attrs
             );
 
-          settingsOptions = optionsFor defaultConfig;
+          settingsOptions = optionsFor null defaultConfig;
         in
         {
           options.services.kiwi-shell = {

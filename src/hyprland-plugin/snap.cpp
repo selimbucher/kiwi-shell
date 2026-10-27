@@ -55,11 +55,15 @@
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <managers/fullscreen/FullscreenController.hpp>
 #include <managers/input/InputManager.hpp>
+#include <managers/SessionLockManager.hpp>
+#include <pointer/cursor/CursorShapeOverrideController.hpp>
 #include <output/Monitor.hpp>
 #include <render/OpenGL.hpp>
 #include <render/Renderer.hpp>
 #include <render/pass/PassElement.hpp>
 #include <state/MonitorState.hpp>
+
+#include <linux/input-event-codes.h>
 
 #include <algorithm>
 #include <array>
@@ -79,6 +83,8 @@ namespace {
     constexpr auto MOUSE_MOVE         = "Layout::Supplementary::CDragStateController::mouseMove(Hyprutils::Math::Vector2D const&)";
     constexpr auto DRAG_END           = "Layout::Supplementary::CDragStateController::dragEnd()";
     constexpr auto UPDATE_DRAG_WINDOW = "Layout::Supplementary::CDragStateController::updateDragWindow()";
+    constexpr auto DRAG_BEGIN         = "Layout::Supplementary::CDragStateController::dragBegin(Hyprutils::Memory::CSharedPointer<Layout::ITarget>, eMouseBindMode, "
+                                        "std::optional<Layout::eRectCorner>, bool)";
 
     // the pointer this close to an edge of the screen is against it
     constexpr double EDGE = 3.0;
@@ -135,6 +141,7 @@ namespace {
     CFunctionHook* g_endHook    = nullptr;
     CFunctionHook* g_updateHook = nullptr;
     CFunctionHook* g_layerHook  = nullptr;
+    CFunctionHook* g_beginHook  = nullptr;
 
     SP<SHyprCtlCommand> g_command;
 
@@ -179,6 +186,12 @@ namespace {
     template struct SDragField<SBeginSize, &CDragStateController::m_beginDragSizeXY>;
     template struct SDragField<SThresholdReached, &CDragStateController::m_dragThresholdReached>;
     template struct SDragField<SDraggingTiled, &CDragStateController::m_draggingTiled>;
+    // which of a window's edges the pointer is on, as its shape shows it
+    struct SBorderIcon {
+        using type = eBorderIconDirection CInputManager::*;
+        friend type field(SBorderIcon);
+    };
+    template struct SDragField<SBorderIcon, &CInputManager::m_borderIconDirection>;
 
     // ─── Boxes ────────────────────────────────────────────────────────────────
 
@@ -593,15 +606,91 @@ namespace {
     CHyprSignalListener g_stageListener;
     CHyprSignalListener g_keyListener;
     CHyprSignalListener g_moveListener;
+    CHyprSignalListener g_pointerListener;
+    CHyprSignalListener g_buttonListener;
     // a key going down or up while a window is dragged, which ends the drag
     // (Hyprland's keybinds do), until it has been dealt with
     bool g_keyed = false;
 
-    // Two windows snapped side by side share the edge between them, as two
-    // tiled halves do on a Mac: that edge dragged on either window moves on
-    // both, the gap kept. Any other edge is the one window's alone. Either
-    // way the window stays snapped, in its new shape (a drag away still
-    // gives it back the size it had before).
+    // The line between snapped windows that meet across a gap: dragged on
+    // one of them, it moves on every window along it, as the line between
+    // tiled windows does on a Mac (a half's edge takes both quarters beside
+    // it, and the quarter above or below too). `vertical`: a line from top to
+    // bottom; `before`: the dragged window is left of it (above it); `from`,
+    // `to`: where the dragged window's edge on it was and is.
+    void moveLine(const PHLWINDOW& window, const CBox& was, bool vertical, bool before, double from, double to) {
+        // the gap between two snapped windows, at most
+        constexpr double GAP_MAX = 64;
+        // along the line, and across it
+        const auto START = [&](const CBox& b) { return vertical ? b.y : b.x; };
+        const auto SPAN  = [&](const CBox& b) { return vertical ? b.h : b.w; };
+        const auto NEAR  = [&](const CBox& b) { return vertical ? b.x : b.y; };
+        const auto FAR   = [&](const CBox& b) { return vertical ? b.x + b.w : b.y + b.h; };
+        // side by side along the line, by more than rounding
+        const auto BESIDE = [&](const CBox& a, const CBox& b) { return std::min(START(a) + SPAN(a), START(b) + SPAN(b)) - std::max(START(a), START(b)) > 2; };
+
+        struct SOnLine {
+            SSnapped*           snapped;
+            SP<Layout::ITarget> target;
+            bool                before; // left of the line (above it)
+            double              gap;    // to the line where the dragged edge is
+            bool                along = false;
+        };
+        std::vector<SOnLine> candidates;
+        for (auto& other : g_snapped) {
+            const auto OTHER  = other.window.lock();
+            const auto TARGET = OTHER ? OTHER->layoutTarget() : nullptr;
+            if (!OTHER || OTHER == window || !TARGET || !TARGET->floating() || OTHER->m_workspace != window->m_workspace || !sameBox(TARGET->position(), other.box))
+                continue;
+            const CBox BOX = other.box;
+            if (std::abs((before ? FAR(BOX) : NEAR(BOX)) - from) <= 2)
+                candidates.push_back({.snapped = &other, .target = TARGET, .before = before, .gap = 0});
+            else if (const double GAP = before ? NEAR(BOX) - from : from - FAR(BOX); GAP >= 0 && GAP <= GAP_MAX)
+                candidates.push_back({.snapped = &other, .target = TARGET, .before = !before, .gap = GAP});
+        }
+        // the windows along it: across from the dragged one, and from those,
+        // and so on
+        std::vector<std::pair<CBox, bool>> along{{was, before}};
+        for (bool grew = true; grew;) {
+            grew = false;
+            for (auto& c : candidates) {
+                if (c.along || std::ranges::none_of(along, [&](const auto& a) { return a.second != c.before && BESIDE(a.first, c.snapped->box); }))
+                    continue;
+                c.along = grew = true;
+                along.emplace_back(c.snapped->box, c.before);
+            }
+        }
+        for (const auto& c : candidates) {
+            if (!c.along)
+                continue;
+            const CBox     BOX = c.snapped->box;
+            const Vector2D MIN = c.target->minSize().value_or(Vector2D{MIN_WINDOW_SIZE, MIN_WINDOW_SIZE});
+            const double   LEAST = vertical ? MIN.x : MIN.y;
+            // its edge on the line: the dragged one's, or across the gap
+            const double LINE = c.before == before ? to : before ? to + c.gap : to - c.gap;
+            CBox         next = BOX;
+            if (c.before)
+                (vertical ? next.w : next.h) = std::max(LINE - NEAR(BOX), LEAST);
+            else {
+                const double END = FAR(BOX);
+                const double AT  = std::min(LINE, END - LEAST);
+                (vertical ? next.x : next.y) = AT;
+                (vertical ? next.w : next.h) = END - AT;
+            }
+            if (sameBox(next, BOX))
+                continue;
+            g_layoutManager->setTargetGeom(next, c.target);
+            if (const auto OTHER = c.snapped->window.lock()) {
+                OTHER->positionAnimation()->warp();
+                OTHER->sizeAnimation()->warp();
+            }
+            c.snapped->box = c.target->position();
+        }
+    }
+
+    // A snapped window resized stays snapped, in its new shape (a drag away
+    // still gives it back the size it had before), and the lines it shares
+    // with the windows snapped beside it move with its edges.
     void resizeBeside(const SP<Layout::ITarget>& target, const PHLWINDOW& window) {
         auto* snapped = snappedOf(window);
         if (!snapped || !target->floating())
@@ -609,38 +698,115 @@ namespace {
         const CBox WAS = snapped->box;
         const CBox NOW = target->position();
         snapped->box   = NOW;
-        for (auto& other : g_snapped) {
-            const auto PARTNER = other.window.lock();
-            const auto OTHER   = PARTNER ? PARTNER->layoutTarget() : nullptr;
-            if (!PARTNER || PARTNER == window || !OTHER || !OTHER->floating() || PARTNER->m_workspace != window->m_workspace ||
-                !sameBox(OTHER->position(), other.box))
+        const auto MOVED = [](double was, double now) { return std::abs(now - was) >= 0.5; };
+        if (MOVED(WAS.x, NOW.x))
+            moveLine(window, WAS, true, false, WAS.x, NOW.x);
+        if (MOVED(WAS.x + WAS.w, NOW.x + NOW.w))
+            moveLine(window, WAS, true, true, WAS.x + WAS.w, NOW.x + NOW.w);
+        if (MOVED(WAS.y, NOW.y))
+            moveLine(window, WAS, false, false, WAS.y, NOW.y);
+        if (MOVED(WAS.y + WAS.h, NOW.y + NOW.h))
+            moveLine(window, WAS, false, true, WAS.y + WAS.h, NOW.y + NOW.h);
+    }
+
+    // ─── The line between stacked windows ─────────────────────────────────
+    // Under a snapped window, the one snapped below it has its title bar,
+    // which takes a press for a move, and Hyprland finds a window's edges
+    // from its body: the line between the two was the pixel or two of gap.
+    // The gap and the top of the bar below are the line: a press there
+    // resizes the window above at its bottom edge (moveLine takes the one
+    // below along), and the pointer shows it.
+
+    PHLWINDOWREF g_lineHeld;          // the window above, while the line is held
+    bool         g_lineShown = false; // the pointer's shape is the line's
+
+    // the snapped window whose bottom edge is the line under the pointer
+    PHLWINDOW aboveLine(const Vector2D& pointer) {
+        // the line reaches this far into the bar below, and the body above
+        constexpr double INTO_BAR  = 8;
+        constexpr double INTO_BODY = 3;
+        constexpr double GAP_MAX   = 64;
+        const auto       placed    = [](const SSnapped& s) {
+            const auto WINDOW = s.window.lock();
+            const auto TARGET = WINDOW ? WINDOW->layoutTarget() : nullptr;
+            return WINDOW && WINDOW->m_workspace && WINDOW->m_workspace->isVisible() && TARGET && TARGET->floating() && sameBox(TARGET->position(), s.box) ? WINDOW
+                                                                                                                                                               : nullptr;
+        };
+        for (const auto& upper : g_snapped) {
+            const auto ABOVE = placed(upper);
+            if (!ABOVE)
                 continue;
-            // side by side, the same height, the gap between them
-            const CBox THEIRS = other.box;
-            if (std::abs(THEIRS.y - WAS.y) > 2 || std::abs(THEIRS.h - WAS.h) > 2)
-                continue;
-            const bool   LEFT_OF = THEIRS.x > WAS.x; // this one on the left
-            const double GAP     = LEFT_OF ? THEIRS.x - (WAS.x + WAS.w) : WAS.x - (THEIRS.x + THEIRS.w);
-            if (GAP < 0 || GAP > 64)
-                continue;
-            const double SHARED_WAS = LEFT_OF ? WAS.x + WAS.w : WAS.x;
-            const double SHARED_NOW = LEFT_OF ? NOW.x + NOW.w : NOW.x;
-            if (std::abs(SHARED_NOW - SHARED_WAS) < 0.5)
-                return; // an outer edge: this window's alone
-            const double MIN = OTHER->minSize().value_or(Vector2D{MIN_WINDOW_SIZE, MIN_WINDOW_SIZE}).x;
-            CBox         next = THEIRS;
-            if (LEFT_OF) {
-                const double RIGHT = THEIRS.x + THEIRS.w;
-                next.x             = std::min(SHARED_NOW + GAP, RIGHT - MIN);
-                next.w             = RIGHT - next.x;
-            } else
-                next.w = std::max(SHARED_NOW - GAP - THEIRS.x, MIN);
-            g_layoutManager->setTargetGeom(next, OTHER);
-            PARTNER->positionAnimation()->warp();
-            PARTNER->sizeAnimation()->warp();
-            other.box = OTHER->position();
+            const CBox BODY = ABOVE->getWindowMainSurfaceBox();
+            for (const auto& lower : g_snapped) {
+                const auto BELOW = placed(lower);
+                if (!BELOW || BELOW == ABOVE || BELOW->m_workspace != ABOVE->m_workspace)
+                    continue;
+                const CBox   WITH_BAR = BELOW->getWindowBoxUnified(Desktop::View::RESERVED_EXTENTS);
+                const double GAP      = WITH_BAR.y - (BODY.y + BODY.h);
+                if (GAP < 0 || GAP > GAP_MAX || pointer.x < std::max(BODY.x, WITH_BAR.x) || pointer.x > std::min(BODY.x + BODY.w, WITH_BAR.x + WITH_BAR.w))
+                    continue;
+                if (pointer.y >= BODY.y + BODY.h - INTO_BODY && pointer.y <= WITH_BAR.y + INTO_BAR)
+                    return ABOVE;
+            }
+        }
+        return nullptr;
+    }
+
+    void showLine(const Vector2D& pointer) {
+        const bool ON = !g_layoutManager->dragController()->target() && !g_pSessionLockManager->isSessionLocked() && aboveLine(pointer);
+        if (ON)
+            Pointer::Cursor::overrideController->setOverride("ns-resize", Pointer::Cursor::CURSOR_OVERRIDE_WINDOW_EDGE);
+        else if (g_lineShown)
+            Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_WINDOW_EDGE);
+        g_lineShown = ON;
+    }
+
+    void holdLine(const IPointer::SButtonEvent& e, Event::SCallbackInfo& info) {
+        if (e.button != BTN_LEFT)
+            return;
+        if (e.state == WL_POINTER_BUTTON_STATE_RELEASED) {
+            if (!g_lineHeld)
+                return;
+            // (the press never reached Hyprland, so neither does this)
+            g_lineHeld.reset();
+            if (g_layoutManager->dragController()->target())
+                g_layoutManager->endDragTarget();
+            info.cancelled = true;
             return;
         }
+        if (g_layoutManager->dragController()->target() || g_pSessionLockManager->isSessionLocked())
+            return;
+        const auto ABOVE = aboveLine(g_pInputManager->getMouseCoordsInternal());
+        if (!ABOVE)
+            return;
+        g_lineHeld = ABOVE;
+        g_layoutManager->beginDragTarget(ABOVE->layoutTarget(), MBIND_RESIZE, Layout::CORNER_BOTTOM);
+        info.cancelled = true;
+    }
+
+    // A window's side taken by its border resizes that side alone, as the
+    // pointer's shape there says, and a corner both. Hyprland takes the
+    // corner of the window's quarter the pointer is in: along the gap
+    // between two snapped halves, a drag meant to widen one gave both
+    // another height. A resize bind (Super and a drag inside the window)
+    // keeps Hyprland's corners.
+    using FDragBegin = void (*)(CDragStateController*, SP<Layout::ITarget>, eMouseBindMode, std::optional<Layout::eRectCorner>, bool);
+
+    void hkDragBegin(CDragStateController* self, SP<Layout::ITarget> target, eMouseBindMode mode, std::optional<Layout::eRectCorner> edge, bool exclusiveDeviceGrab) {
+        if (mode == MBIND_RESIZE && !edge && g_pInputManager) {
+            switch (g_pInputManager.get()->*field(SBorderIcon{})) {
+                case BORDERICON_UP: edge = Layout::CORNER_TOP; break;
+                case BORDERICON_DOWN: edge = Layout::CORNER_BOTTOM; break;
+                case BORDERICON_LEFT: edge = Layout::CORNER_LEFT; break;
+                case BORDERICON_RIGHT: edge = Layout::CORNER_RIGHT; break;
+                case BORDERICON_UP_LEFT: edge = Layout::CORNER_TOPLEFT; break;
+                case BORDERICON_UP_RIGHT: edge = Layout::CORNER_TOPRIGHT; break;
+                case BORDERICON_DOWN_LEFT: edge = Layout::CORNER_BOTTOMLEFT; break;
+                case BORDERICON_DOWN_RIGHT: edge = Layout::CORNER_BOTTOMRIGHT; break;
+                default: break;
+            }
+        }
+        reinterpret_cast<FDragBegin>(g_beginHook->m_original)(self, std::move(target), mode, edge, exclusiveDeviceGrab);
     }
 
     void hkMouseMove(CDragStateController* self, const Vector2D& pointer) {
@@ -749,6 +915,17 @@ namespace {
         if (!MONITOR)
             return;
         const auto OTHER = zoneIn(zone == ZONE_LEFT ? ZONE_RIGHT : ZONE_LEFT, SPACE->workArea());
+        // not when windows snapped there have it (two quarters, the other
+        // half): Snap Assist's pictures would lie over them, and a click on
+        // either window would pick one to fill the half instead
+        const bool TAKEN = std::ranges::any_of(g_snapped, [&](const SSnapped& s) {
+            const auto THERE  = s.window.lock();
+            const auto TARGET = THERE ? THERE->layoutTarget() : nullptr;
+            return THERE && THERE != WINDOW && THERE->m_workspace == WINDOW->m_workspace && TARGET && TARGET->floating() && sameBox(TARGET->position(), s.box) &&
+                OTHER.containsPoint(s.box.middle());
+        });
+        if (TAKEN)
+            return;
         g_pEventManager->postEvent(SHyprIPCEvent{
             .event = "kiwisnapped",
             .data  = std::format("{:x},{},{},{},{},{},{}", reinterpret_cast<uintptr_t>(WINDOW.get()), zone == ZONE_LEFT ? "left" : "right", MONITOR->m_name,
@@ -981,6 +1158,8 @@ namespace Kiwi::Snap {
         }
         // (without it, only a title-bar plugin that ends its drags itself does)
         g_layerHook = hookLayerSurfaceAt(handle);
+        // (without it, a window's sides resize as its corners do)
+        g_beginHook = hook(handle, "dragBegin", DRAG_BEGIN, reinterpret_cast<void*>(&hkDragBegin));
         g_command = HyprlandAPI::registerHyprCtlCommand(handle,
                                                         SHyprCtlCommand{
                                                             .name  = "kiwi-snap",
@@ -1001,6 +1180,8 @@ namespace Kiwi::Snap {
         });
         // (told before the layout of the workspace it goes to has it)
         g_moveListener = Event::bus()->m_events.window.moveToWorkspace.listen([](PHLWINDOW window, PHLWORKSPACE workspace) { moving(window, workspace); });
+        g_pointerListener = Event::bus()->m_events.input.mouse.move.listen([](Vector2D pointer, Event::SCallbackInfo&) { showLine(pointer); });
+        g_buttonListener  = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent e, Event::SCallbackInfo& info) { holdLine(e, info); });
         return true;
     }
 
@@ -1010,6 +1191,14 @@ namespace Kiwi::Snap {
         const auto WINDOW = g_split.window.lock();
         g_split           = {};
         return WINDOW;
+    }
+
+    std::optional<Vector2D> sizeBefore(const PHLWINDOW& window) {
+        const auto* SNAPPED = snappedOf(window);
+        const auto  TARGET  = window->layoutTarget();
+        if (!SNAPPED || !TARGET || !sameBox(TARGET->position(), SNAPPED->box))
+            return std::nullopt;
+        return SNAPPED->size;
     }
 
     void underWindow(const PHLWINDOW& window, const PHLMONITOR& monitor) {
@@ -1024,11 +1213,17 @@ namespace Kiwi::Snap {
         g_stageListener.reset();
         g_keyListener.reset();
         g_moveListener.reset();
+        g_pointerListener.reset();
+        g_buttonListener.reset();
+        if (g_lineShown)
+            Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_WINDOW_EDGE);
+        g_lineShown = false;
+        g_lineHeld.reset();
         g_command.reset();
         g_snapped.clear();
         g_away.clear();
         g_untile = {};
         g_split  = {};
-        g_moveHook = g_endHook = g_updateHook = g_layerHook = nullptr;
+        g_moveHook = g_endHook = g_updateHook = g_layerHook = g_beginHook = nullptr;
     }
 }

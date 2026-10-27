@@ -9,7 +9,7 @@ import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { applyBinds, currentBinds, registerBindSetup, dialect, type BindOp } from "../../hypr"
-import { shortcut, combo, type Shortcut } from "../../shortcuts"
+import { shortcuts, combo, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { search, GROUP_LABEL, type Result } from "./providers"
 import { evaluate, formatNumber } from "./calc"
@@ -56,44 +56,45 @@ const results: Accessor<Result[]> = createComputed(get => {
 // hyprctl instead, a dispatcher that is shadowed like any other, and has it
 // send the press shortcut.
 
-let registered: Shortcut | null = null
+let registered: Shortcut[] = []
 
 const toggle = () => isVisible() ? hideLauncher() : showLauncher()
 const PRESS = globalShortcut("launcher", "Spotlight: open or close", "press", toggle)
 const TAP = globalShortcut("launcher-tap", "Spotlight: open or close on a tap", "release", toggle)
 
+// every shortcut set for it, e.g. a tap of Super and Super+Space
 async function registerLauncherBind() {
-    const s = shortcut("launcher")
-    let haveToggle = false
+    const wanted = shortcuts("launcher")
+    let binds: any[]
     try {
         // a bind of the Hyprland config on these keys is gone by now
         // (shortcuts.ts): kiwi's shortcuts take their keys
-        const binds = await currentBinds()
-        haveToggle = binds.some((b: any) =>
-            b.description === "kiwi: launcher" && b.key === s.key && b.modmask === s.modmask)
+        binds = await currentBinds()
     } catch (e) {
         log.error("failed to query binds, skipping setup:", e)
         return
     }
-    if (haveToggle) {
-        registered = s
-        log.debug("launcher bind already in place")
+    const ops: BindOp[] = []
+    for (const s of wanted) {
+        if (binds.some((b: any) => b.description === "kiwi: launcher" && b.key === s.key && b.modmask === s.modmask))
+            continue
+        const action = !s.tap ? PRESS
+            : await dialect() === "lua" ? TAP
+            : { exec: "hyprctl dispatch global kiwi-shell:launcher" }
+        ops.push({ bind: combo(s), action, description: "kiwi: launcher", flags: { release: s.tap } })
+    }
+    if (!ops.length) {
+        registered = wanted
+        log.debug("launcher binds already in place")
         return
     }
-
-    const action = !s.tap ? PRESS
-        : await dialect() === "lua" ? TAP
-        : { exec: "hyprctl dispatch global kiwi-shell:launcher" }
-    if (await applyBinds([{
-        bind: combo(s), action,
-        description: "kiwi: launcher", flags: { release: s.tap },
-    }], "launcher bind")) {
-        registered = s
-        log.info(`registered launcher bind on ${combo(s)}${s.tap ? " (tap)" : ""}`)
+    if (await applyBinds(ops, "launcher bind")) {
+        registered = wanted
+        log.info(`registered launcher binds on ${wanted.map(s => combo(s) + (s.tap ? " (tap)" : "")).join(", ")}`)
     }
 }
 
-const launcherUnbinds = (): BindOp[] => registered ? [{ unbind: combo(registered) }] : []
+const launcherUnbinds = (): BindOp[] => registered.map(s => ({ unbind: combo(s) }))
 
 registerBindSetup("launcher", registerLauncherBind, launcherUnbinds)
 

@@ -11,7 +11,7 @@ import AstalCava from "gi://AstalCava"
 import Hyprland from "gi://AstalHyprland"
 
 import { conf } from "../../config"
-import { giconForEntry } from "../../appIcon"
+import { entryForClient, giconForEntry } from "../../appIcon"
 import { loadThumbnail } from "../../services/wallpaper"
 import { coverFile, fetchedCover, isWebCover } from "../../services/covers"
 import { screenSeen } from "../../services/screen"
@@ -185,6 +185,14 @@ function windowOf(player: Mpris.Player): Hyprland.Client | undefined {
         .sort((a, b) => a.focus_history_id - b.focus_history_id)[0] : undefined
 }
 
+// the app it is: the desktop entry it names, or its window's (a browser
+// names none)
+function entryOf(player: Mpris.Player): string {
+    if (player.entry) return `${player.entry}.desktop`
+    const window = windowOf(player)
+    return window ? entryForClient(window) : ""
+}
+
 function showApp(player: Mpris.Player) {
     const window = windowOf(player)
     if (window) {
@@ -299,7 +307,7 @@ function Cover({ player, size }: { player: Mpris.Player; size: number }) {
                 {(now: Gdk.Texture | typeof NO_COVER | null) => {
                     const waited = before === null
                     before = now
-                    if (now === NO_COVER) return <Gtk.Image class="island-cover-none" gicon={giconForEntry(`${player.entry ?? ""}.desktop`)}
+                    if (now === NO_COVER) return <Gtk.Image class="island-cover-none" gicon={playerPids.as(() => giconForEntry(entryOf(player)))}
                         pixelSize={size} /> as Gtk.Widget
                     const widget = new CoverArt()
                     widget.size = size

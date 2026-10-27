@@ -315,7 +315,16 @@ namespace {
             if (!w->m_isFloating || Fullscreen::controller()->isFullscreen(w) || !w->m_workspace || !w->m_workspace->m_space)
                 return false;
 
-            const auto box = boxOf(w);
+            // Snapped (to a half, a quarter, the whole screen): the frame is
+            // the snap's, not the app's. It is kept at the size the window
+            // had before, around where it was; with none of its own known,
+            // the old one is kept.
+            auto box = boxOf(w);
+            if (const auto BEFORE = Kiwi::Snap::sizeBefore(w)) {
+                if (near(BEFORE->x, box.w) && near(BEFORE->y, box.h))
+                    return false;
+                box = CBox{box.middle() - *BEFORE / 2.0, *BEFORE};
+            }
             if (near(box, placed))
                 return false;
 

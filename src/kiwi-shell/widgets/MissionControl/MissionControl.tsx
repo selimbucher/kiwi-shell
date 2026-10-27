@@ -5,6 +5,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import GLib from "gi://GLib"
 import Cairo from "gi://cairo"
 import GObject from "gi://GObject"
+import Graphene from "gi://Graphene"
 import Pango from "gi://Pango"
 import { createState, createRoot, onCleanup, type Accessor } from "ags"
 import Hyprland from "gi://AstalHyprland"
@@ -17,7 +18,7 @@ import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "..
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { focusClient } from "../Dock/dock-state"
 import { applyBinds, currentBinds, registerBindSetup, moveWindowToWorkspace, type BindOp } from "../../hypr"
-import { shortcut, combo, type Shortcut, type ShortcutName, type OptionalShortcutName } from "../../shortcuts"
+import { shortcuts, combo, type Shortcut, type ShortcutName, type OptionalShortcutName } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { spread, type Box, type Slot } from "./spread"
 import {
@@ -376,8 +377,7 @@ async function registerBinds() {
     const ops: BindOp[] = []
     const wanted: Shortcut[] = []
     // a bind of the Hyprland config on these keys is gone by now (shortcuts.ts)
-    for (const { name, action, description } of BINDS) {
-        const s = shortcut(name)
+    for (const { name, action, description } of BINDS) for (const s of shortcuts(name)) {
         const on = (b: any) => b.submap === "" && b.key === s.key && b.modmask === s.modmask
         wanted.push(s)
         if (binds.some(b => on(b) && b.description === description)) continue
@@ -1065,7 +1065,23 @@ class Scene {
         if (!Number.isFinite(shown)) return
         this.flown = true
         this.names.jump(Math.min(1, Math.max(0, shown)))
+        // the compositor fades Mission Control with the flight, and the ×,
+        // a surface of its own, with it
+        setCloseRide(Math.min(1, Math.max(0, shown)))
         this.animate()
+    }
+
+    /** Where a desktop's × goes this frame: on its picture's top-left corner. */
+    closeCorner(id: number): CloseTarget | null {
+        const item = this.items.get(id)
+        const window = mcWindow
+        if (!item || !window) return null
+        const [ok, point] = this.bar.compute_point(window, new Graphene.Point({ x: item.x.value + RING_CORNER, y: this.pictureTop() + RING_CORNER }))
+        if (!ok) return null
+        // the × is placed on the window's surface, which starts outside its
+        // CSS padding
+        const [dx, dy] = window.get_surface_transform()
+        return { desktop: id, x: point.x + dx, y: point.y + dy }
     }
 
     /** The bar's own height now, folded to open: the pointer above it opens it. */
@@ -1748,6 +1764,11 @@ class Scene {
         const top = Math.round(this.pictureTop())
         const items = this.v.desktops.map(d => this.items.get(d.id)).filter((i): i is Item => !!i)
         for (const item of items) this.bar.move(item.picture, Math.round(item.x.value), top)
+        // the × on its picture as the bar opens or folds and the desktops
+        // move along it
+        const shown = closeShown.get()
+        const corner = shown && this.closeCorner(shown.desktop)
+        if (shown && corner && (Math.abs(corner.x - shown.x) >= 0.5 || Math.abs(corner.y - shown.y) >= 0.5)) setCloseShown(corner)
 
         // the names: a row of pills folded, the pictures' captions open
         const widths = items.map(item => item.name.measure(Gtk.Orientation.HORIZONTAL, -1)[1])
@@ -1813,9 +1834,16 @@ const [closeTarget, setCloseTarget] = createState<CloseTarget | null>(null)
 // where the × is drawn: the target, and for the moment it fades the one it
 // leaves (CloseButton)
 const [closeShown, setCloseShown] = createState<CloseTarget | null>(null)
-// slower than the desktop pictures' rings (missionControl.scss): at their
-// 110 ms a thing this small seemed to pop in and out
+// as the desktop's ring fades (missionControl.scss, .mc-thumb-canvas)
 const CLOSE_FADE_MS = 160
+// the ring's corner: 2 px round a picture rounded by 6, its middle crosses the
+// corner's diagonal a pixel inside the picture's own corner
+const RING_CORNER = 1
+// how much of Mission Control the compositor shows while the windows fly
+// (Scene.flight): the × fades with it
+const [closeRide, setCloseRide] = createState(1)
+// the × gone at once rather than faded: Mission Control has gone
+let closeGoesAtOnce = false
 
 // The ring a desktop's picture gets while pointed at comes and goes with its
 // ×, by the same reckoning: by GTK's own hover it went the moment the pointer
@@ -1836,7 +1864,8 @@ let closeSource = 0
 function settleClose() {
     if (closeSource) GLib.source_remove(closeSource)
     closeSource = 0
-    const wanted = () => closing.get() || reordering || scene?.isZooming() ? null : hovering.button ? closeTarget.get() : hovering.desktop
+    // closing, it stays where it is and goes with Mission Control
+    const wanted = () => closing.get() ? closeTarget.get() : reordering || scene?.isZooming() ? null : hovering.button ? closeTarget.get() : hovering.desktop
     const apply = () => {
         const want = wanted()
         const now = closeTarget.get()
@@ -1880,10 +1909,7 @@ function closeHoverAt(x: number, y: number) {
             const inPicture = x >= b.get_x() && x < b.get_x() + b.get_width() && y >= b.get_y() && y < b.get_y() + b.get_height()
             const nearClose = Math.hypot(x - b.get_x(), y - b.get_y()) <= CLOSE_SIZE / 2 + CLOSE_REACH
             if (!inPicture && !nearClose) continue
-            // the × is placed on the window's surface, which starts outside
-            // its CSS padding
-            const [dx, dy] = window.get_surface_transform()
-            found = { desktop, x: b.get_x() + dx, y: b.get_y() + dy }
+            found = scene?.closeCorner(desktop) ?? null
             break
         }
     }
@@ -1921,17 +1947,25 @@ function CloseButton({ monitor }: { monitor: Accessor<Gdk.Monitor> }) {
                 // eased by the transition before it, so it couldn't be gone
                 // at once for the next desktop.
                 let fade = 0
+                // its own fade; shown times what of Mission Control shows
+                let level = 0
+                const paint = () => self.get_child()?.set_opacity(level * closeRide.get())
+                const stop = () => {
+                    if (fade) self.get_child()?.remove_tick_callback(fade)
+                    fade = 0
+                }
                 const fadeTo = (to: number, then?: () => void) => {
                     const button = self.get_child()
                     if (!button) return
-                    if (fade) button.remove_tick_callback(fade)
-                    const from = button.get_opacity()
+                    stop()
+                    const from = level
                     let start = -1
                     fade = button.add_tick_callback((_w, clock) => {
                         const now = clock.get_frame_time() / 1000
                         if (start < 0) start = now
                         const t = Math.min(1, (now - start) / CLOSE_FADE_MS)
-                        button.set_opacity(from + (to - from) * easeOutCubic(t))
+                        level = from + (to - from) * easeOutCubic(t)
+                        paint()
                         if (t < 1) return GLib.SOURCE_CONTINUE
                         fade = 0
                         then?.()
@@ -1939,14 +1973,24 @@ function CloseButton({ monitor }: { monitor: Accessor<Gdk.Monitor> }) {
                     })
                 }
                 const fadeIn = () => {
-                    self.get_child()?.set_opacity(0)
+                    level = 0
+                    paint()
                     fadeTo(1)
                 }
+                onCleanup(closeRide.subscribe(paint))
                 const follow = () => {
                     const want = closeTarget.get()
                     const shown = closeShown.get()
+                    if (!want && closeGoesAtOnce) {
+                        closeGoesAtOnce = false
+                        stop()
+                        level = 0
+                        paint()
+                        setCloseShown(null)
+                        return
+                    }
                     if (want) {
-                        setCloseShown(want)
+                        setCloseShown(scene?.closeCorner(want.desktop) ?? want)
                         // showing already: on another desktop anew, else back
                         // (the map fades a new one in)
                         if (shown && shown.desktop !== want.desktop) fadeIn()
@@ -1980,9 +2024,13 @@ function CloseButton({ monitor }: { monitor: Accessor<Gdk.Monitor> }) {
     )
 }
 
-// gone with the view it was for, and before the windows fly home
-view.subscribe(forgetClose)
-closing.subscribe(() => { if (closing.get()) forgetClose() })
+// gone with the view it was for; with Mission Control gone, at once (it
+// faded with it, if the windows flew)
+view.subscribe(() => {
+    if (!view.get() && closeTarget.get()) closeGoesAtOnce = true
+    forgetClose()
+})
+isOpen.subscribe(() => setCloseRide(1))
 
 // a desktop is being dragged along the bar
 let reordering = false

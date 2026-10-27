@@ -12,7 +12,7 @@ import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { applyBinds, currentBinds, registerBindSetup, type BindOp } from "../../hypr"
-import { optionalShortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
+import { optionalShortcuts, combo, heldModifierKey, heldModifiers, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { desktopsOn, windowsByDesktop, goToDesktop } from "../MissionControl/desktops"
 
@@ -59,9 +59,10 @@ const [wsWindows, setWsWindows] = createState<Map<number, MiniWindow[]>>(new Map
 // (fires on every plain release — the shell no-ops it while the switcher is
 // closed), and modifier+escape to abort. A launcher tap on the same modifier
 // is unrelated to our release bind and keeps working — outside rebindAll we
-// never unbind the modifier key.
+// never unbind the modifier key. Several shortcuts each go through the
+// desktops, a confirm and an escape on each one's modifier.
 
-let registered: Shortcut | null = null
+let registered: Shortcut[] = []
 
 const openAndCycle = (step: 1 | -1) => {
     if (!isVisible()) showSwitcher()
@@ -77,51 +78,46 @@ const CLOSE = globalShortcut("workspaces-close", "Workspace switcher: close",
     "release", () => setVisibility(false))
 
 async function registerSuperTabBinds() {
-    // rebindAll has unbound the last one by now
-    registered = null
-    const s = optionalShortcut("workspace_switcher")
-    if (!s) return
-    const mod = s.mods[0]
-    const next = combo(s)
-    const previous = combo(s, "SHIFT")
-    const confirm = `${mod} + ${heldModifierKey(s)}`
-    const escape = `${mod} + escape`
-    let haveConfirm = false
-    let haveEscape = false
+    // rebindAll has unbound the last ones by now
+    registered = []
+    const list = optionalShortcuts("workspace_switcher")
+    if (!list.length) return
+    let binds: any[]
     try {
         // a bind of the Hyprland config on these keys is gone by now
         // (shortcuts.ts): kiwi's shortcuts take their keys
-        const binds = await currentBinds()
-        const onCombo = (b: any, description: string, c: string) =>
-            b.description === description && `${b.modmask}` === `${s.modmask}` &&
-            b.key === c.split(" + ").pop()
-        haveConfirm = binds.some((b: any) => onCombo(b, "kiwi: workspaces switch", confirm))
-        haveEscape = binds.some((b: any) => onCombo(b, "kiwi: workspaces close", escape))
+        binds = await currentBinds()
     } catch (e) {
         log.error("failed to query binds, skipping setup:", e)
         return
     }
+    const have = (s: Shortcut, description: string, c: string) => binds.some((b: any) =>
+        b.description === description && `${b.modmask}` === `${s.modmask}` && b.key === c.split(" + ").pop())
 
-    const ops: BindOp[] = [
-        { unbind: next },
-        { unbind: previous },
-        { bind: next, action: NEXT,
+    const ops: BindOp[] = list.flatMap((s): BindOp[] => [
+        { unbind: combo(s) },
+        { unbind: combo(s, "SHIFT") },
+        { bind: combo(s), action: NEXT,
             description: "kiwi: workspaces next", flags: { repeating: true } },
-        { bind: previous, action: PREVIOUS,
+        { bind: combo(s, "SHIFT"), action: PREVIOUS,
             description: "kiwi: workspaces prev", flags: { repeating: true } },
-    ]
+    ])
     // never unbind the modifier key here (would take tap-to-launch binds with
     // it), so only add ours when it isn't registered yet
-    if (!haveConfirm)
-        ops.push({ bind: confirm, action: CONFIRM,
-            description: "kiwi: workspaces switch", flags: { release: true, transparent: true } })
-    if (!haveEscape)
-        ops.push({ bind: escape, action: CLOSE,
-            description: "kiwi: workspaces close", flags: { release: true } })
+    for (const s of heldModifiers(list)) {
+        const confirm = `${s.mods[0]} + ${heldModifierKey(s)}`
+        const escape = `${s.mods[0]} + escape`
+        if (!have(s, "kiwi: workspaces switch", confirm))
+            ops.push({ bind: confirm, action: CONFIRM,
+                description: "kiwi: workspaces switch", flags: { release: true, transparent: true } })
+        if (!have(s, "kiwi: workspaces close", escape))
+            ops.push({ bind: escape, action: CLOSE,
+                description: "kiwi: workspaces close", flags: { release: true } })
+    }
 
     if (await applyBinds(ops, "workspace switcher binds")) {
-        registered = s
-        log.info(`registered workspace switcher binds on ${next}`)
+        registered = list
+        log.info(`registered workspace switcher binds on ${list.map(s => combo(s)).join(", ")}`)
     }
 }
 
@@ -133,16 +129,13 @@ isVisible.subscribe(() => {
     else live.hidden()
 })
 
-registerBindSetup("workspaces", registerSuperTabBinds, () => {
-    if (!registered) return []
-    const mod = registered.mods[0]
-    return [
-        { unbind: combo(registered) },
-        { unbind: combo(registered, "SHIFT") },
-        { unbind: `${mod} + ${heldModifierKey(registered)}` },
-        { unbind: `${mod} + escape` },
-    ]
-})
+registerBindSetup("workspaces", registerSuperTabBinds, () => [
+    ...registered.flatMap(s => [{ unbind: combo(s) }, { unbind: combo(s, "SHIFT") }]),
+    ...heldModifiers(registered).flatMap(s => [
+        { unbind: `${s.mods[0]} + ${heldModifierKey(s)}` },
+        { unbind: `${s.mods[0]} + escape` },
+    ]),
+])
 
 // The display's desktops, in their order (MissionControl/desktops.ts), and
 // their windows stacked as the compositor has them (windowsByDesktop).

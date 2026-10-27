@@ -15,8 +15,8 @@ import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/
 import { entryForClient, AppIconImage, iconFileForEntry } from "../appIcon"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
-import { applyBinds, registerBindSetup, closeWindow, clientSelector, type BindOp } from "../../hypr"
-import { shortcut, combo, heldModifierKey, type Shortcut } from "../../shortcuts"
+import { applyBinds, currentBinds, registerBindSetup, closeWindow, clientSelector, type BindOp } from "../../hypr"
+import { shortcuts, combo, heldModifierKey, heldModifiers, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { isOpen as missionControlOpen } from "../MissionControl/MissionControl"
 
@@ -44,8 +44,12 @@ hyprland.connect("notify::focused-client", () => {
 // (shortcuts.ts). The modifier release binds must live in the root submap: a
 // bind matches the submap active at key PRESS, and the modifier goes down
 // before the submap is entered (isVisible no-ops the stray fires).
+//
+// Several shortcuts (Alt+Tab and Super+Tab) all enter the one submap,
+// which cycles on any of them, and each modifier's release confirms: the
+// one held is the one let go.
 
-let registered: Shortcut | null = null
+let registered: Shortcut[] = []
 
 const openAndStep = (step: 1 | -1) => {
     if (!isVisible()) {
@@ -63,74 +67,103 @@ const CONFIRM = globalShortcut("apps-confirm", "App switcher: switch to the sele
     "release", executeSelectedAndClose)
 const CLOSE = globalShortcut("apps-close", "App switcher: close", "release", hideAppSwitcher)
 
-// what a registration on `s` binds, root and submap, for unbinding
-function appSwitcherUnbinds(s: Shortcut): BindOp[] {
-    const release = `${s.mods[0]} + ${heldModifierKey(s)}`
+const release = (s: Shortcut) => `${s.mods[0]} + ${heldModifierKey(s)}`
+
+// the root's entries, and everything in the submap
+function keyUnbinds(list: Shortcut[]): BindOp[] {
+    const keys = list.flatMap(s => [{ unbind: combo(s) }, { unbind: combo(s, "SHIFT") }])
     return [
-        { unbind: combo(s) },
-        { unbind: combo(s, "SHIFT") },
-        { unbind: release },
+        ...keys,
         { submap: "app_switcher", ops: [
-            { unbind: combo(s) },
-            { unbind: combo(s, "SHIFT") },
-            { unbind: release },
-            { unbind: `${s.mods[0]} + left` },
-            { unbind: `${s.mods[0]} + right` },
+            ...keys,
+            ...heldModifiers(list).flatMap(s => [
+                { unbind: release(s) },
+                { unbind: `${s.mods[0]} + left` },
+                { unbind: `${s.mods[0]} + right` },
+                { unbind: `${s.mods[0]} + escape` },
+            ]),
             { unbind: "escape" },
-            { unbind: `${s.mods[0]} + escape` },
         ] },
     ]
 }
 
+// what a registration on `list` binds, root and submap, for unbinding
+function appSwitcherUnbinds(list: Shortcut[]): BindOp[] {
+    if (!list.length) return []
+    return [...keyUnbinds(list), ...heldModifiers(list).map(s => ({ unbind: release(s) }))]
+}
+
 async function registerAltTabBinds() {
-    const s = shortcut("app_switcher")
-    const entry = combo(s)
-    const back = combo(s, "SHIFT")
-    const release = `${s.mods[0]} + ${heldModifierKey(s)}`
+    registered = []
+    // none, when another action has its keys (shortcuts.ts)
+    const list = shortcuts("app_switcher")
+    if (!list.length) return
+    const held = heldModifiers(list)
+
+    // The modifier's release is never unbound here: a tap of the same
+    // modifier opens Spotlight from the same key (Launcher.tsx), and the
+    // workspace switcher may confirm on it too. Ours go on where missing.
+    let binds: any[]
+    try {
+        binds = await currentBinds()
+    } catch (e) {
+        log.error("failed to query binds, skipping setup:", e)
+        return
+    }
+    const missing = (s: Shortcut, description: string) => !binds.some((b: any) =>
+        b.submap === "" && b.description === description && b.modmask === s.modmask && b.key === heldModifierKey(s))
 
     // applied atomically and in order. Submap definitions append on
     // redefinition, hence the unbinds inside it first.
     const ok = await applyBinds([
         // clear any previous incarnation of the scheme first
-        ...appSwitcherUnbinds(s),
-        // root: entry, and the modifier-release confirm (see comment above)
-        { bind: entry, action: NEXT, description: "kiwi: apps open" },
-        { bind: entry, action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
-        { bind: back, action: PREVIOUS, description: "kiwi: apps open backwards" },
-        { bind: back, action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
-        { bind: release, action: CONFIRM, description: "kiwi: apps confirm",
-            flags: { release: true, transparent: true } },
-        { bind: release, action: { submap: "reset" }, description: "kiwi: apps submap reset",
-            flags: { release: true, transparent: true } },
+        ...keyUnbinds(list),
+        // root: the entries, and the modifier-release confirm (see comment above)
+        ...list.flatMap((s): BindOp[] => [
+            { bind: combo(s), action: NEXT, description: "kiwi: apps open" },
+            { bind: combo(s), action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
+            { bind: combo(s, "SHIFT"), action: PREVIOUS, description: "kiwi: apps open backwards" },
+            { bind: combo(s, "SHIFT"), action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
+        ]),
+        ...held.flatMap((s): BindOp[] => [
+            ...(missing(s, "kiwi: apps confirm") ? [{ bind: release(s), action: CONFIRM, description: "kiwi: apps confirm",
+                flags: { release: true, transparent: true } }] : []),
+            ...(missing(s, "kiwi: apps submap reset") ? [{ bind: release(s), action: { submap: "reset" }, description: "kiwi: apps submap reset",
+                flags: { release: true, transparent: true } }] : []),
+        ]),
         // submap: cycling while held, escape failsafes
         { submap: "app_switcher", ops: [
-            { bind: entry, action: NEXT, description: "kiwi: apps cycle",
-                flags: { repeating: true } },
-            { bind: back, action: PREVIOUS, description: "kiwi: apps cycle back",
-                flags: { repeating: true } },
-            // the arrows move the selection too while the modifier is held
-            { bind: `${s.mods[0]} + left`, action: PREVIOUS, description: "kiwi: apps cycle back",
-                flags: { repeating: true } },
-            { bind: `${s.mods[0]} + right`, action: NEXT, description: "kiwi: apps cycle",
-                flags: { repeating: true } },
+            ...list.flatMap((s): BindOp[] => [
+                { bind: combo(s), action: NEXT, description: "kiwi: apps cycle",
+                    flags: { repeating: true } },
+                { bind: combo(s, "SHIFT"), action: PREVIOUS, description: "kiwi: apps cycle back",
+                    flags: { repeating: true } },
+            ]),
+            ...held.flatMap((s): BindOp[] => [
+                // the arrows move the selection too while the modifier is held
+                { bind: `${s.mods[0]} + left`, action: PREVIOUS, description: "kiwi: apps cycle back",
+                    flags: { repeating: true } },
+                { bind: `${s.mods[0]} + right`, action: NEXT, description: "kiwi: apps cycle",
+                    flags: { repeating: true } },
+                { bind: `${s.mods[0]} + escape`, action: CLOSE, description: "kiwi: apps close",
+                    flags: { release: true } },
+                { bind: `${s.mods[0]} + escape`, action: { submap: "reset" }, description: "kiwi: apps submap reset",
+                    flags: { release: true } },
+            ]),
             { bind: "escape", action: CLOSE, description: "kiwi: apps close",
                 flags: { release: true } },
             { bind: "escape", action: { submap: "reset" }, description: "kiwi: apps submap reset",
                 flags: { release: true } },
-            { bind: `${s.mods[0]} + escape`, action: CLOSE, description: "kiwi: apps close",
-                flags: { release: true } },
-            { bind: `${s.mods[0]} + escape`, action: { submap: "reset" }, description: "kiwi: apps submap reset",
-                flags: { release: true } },
         ] },
     ], "app switcher binds")
     if (ok) {
-        registered = s
-        log.info(`registered app switcher binds on ${entry} (root + app_switcher submap)`)
+        registered = list
+        log.info(`registered app switcher binds on ${list.map(s => combo(s)).join(", ")} (root + app_switcher submap)`)
     }
 }
 
 registerBindSetup("appswitcher", registerAltTabBinds,
-    () => registered ? appSwitcherUnbinds(registered) : [])
+    () => appSwitcherUnbinds(registered))
 
 // ─── Opening and cycling ──────────────────────────────────────────────────────
 function showAppSwitcher() {
