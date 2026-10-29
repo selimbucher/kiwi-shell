@@ -106,7 +106,21 @@ function entryFromPid(pid: number | undefined): string | null {
 // chain per *theme*, not per name — a generic name inside the ThemedIcon
 // would shadow an app icon that only exists further down the chain.
 
+// Asked again and again for the same few apps (each dock icon, flyout and
+// switcher tile, Spotlight row), each a desktop file read and a handful of
+// theme lookups: kept until the apps or the icon theme change.
+const icons = new Map<string, Gio.Icon>()
+mapVersion.subscribe(() => icons.clear())
+const display0 = Gdk.Display.get_default()
+if (display0) Gtk.IconTheme.get_for_display(display0).connect("changed", () => icons.clear())
+
 export function giconForEntry(entry: string): Gio.Icon {
+    let icon = icons.get(entry)
+    if (!icon) icons.set(entry, icon = lookUpIcon(entry))
+    return icon
+}
+
+function lookUpIcon(entry: string): Gio.Icon {
     const appInfo = GioUnix.DesktopAppInfo.new(entry)
     const iconStr = appInfo?.get_string("Icon")
     if (iconStr && GLib.path_is_absolute(iconStr)) {

@@ -4,7 +4,6 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createBinding, For, onCleanup } from "ags"
 import { readFile, writeFileAsync } from "ags/file"
-import { exec, execAsync } from "ags/process"
 
 import { conf } from "./config"
 import { themeClasses, LAYER } from "./services/theme"
@@ -69,17 +68,27 @@ const [kind, setKind] = createState<"wifi" | "choice">("wifi")
 
 
 const [wifiSSID, setWifiSSID] = createState("")
-let pw!: Gtk.Entry
+let pw!: Gtk.PasswordEntry
 const [pwInvalid, setpwInvalid] = createState(false)
 
-export function openWifiPrompt(ssid: string, invalid = false) {
+// what the password is for: joining the network, by whoever asked
+let submitWifi: (password: string) => void = () => {}
+
+export function openWifiPrompt(ssid: string, invalid: boolean, submit: (password: string) => void) {
     // a question still open goes unanswered
     if (asking) settle(null)
     pw.text = ""
+    submitWifi = submit
     setpwInvalid(invalid)
     setWifiSSID(ssid)
     setKind("wifi")
     setShowPrompt(true)
+}
+
+function submitWifiPassword() {
+    const password = pw.text
+    setShowPrompt(false)
+    submitWifi(password)
 }
 
 // A question with buttons for answers: the power menu's confirmations, a
@@ -155,14 +164,13 @@ function ChoicePrompt() {
 
 function WifiPrompt() {
     pw = (
-        <entry
+        <Gtk.PasswordEntry
             class="single-entry"
             placeholderText="Password"
-            visibility={false}
-            //onChanged={self => print("changed: ", self.text)}
-            onActivate={self => submitWifiPassword(wifiSSID(), self.text)}
+            showPeekIcon
+            onActivate={submitWifiPassword}
         />
-    )
+    ) as Gtk.PasswordEntry
     const title = (
         <label class="prompt-header" xalign={0}
             label={pwInvalid.as(invalid => invalid ? "Wrong Password" : "Wi-Fi Connection")} />
@@ -196,33 +204,8 @@ function WifiPrompt() {
                 spacing={8}
             >
                 <button onClicked={self => setShowPrompt(false)}>Cancel</button>
-                <button
-                    class="primary"
-                    onClicked={self => {
-                        submitWifiPassword(wifiSSID(), pw.text)
-                    }}
-                >Submit</button>
+                <button class="primary" onClicked={submitWifiPassword}>Join</button>
             </box>
         </box>
     )
-}
-
-
-async function submitWifiPassword(ssid, password) {
-    setShowPrompt(false)
-    try {
-        await execAsync(["nmcli", "device", "wifi", "connect", ssid, "password", password])
-    } catch (e) {
-        let errorLabel = "Failed to connect to Wi-Fi. Error: "+e
-        if (String(e).includes("Insufficient privileges")) {
-            // show error to user
-            log.error("Insufficient privileges. Add yourself to the 'network' group to fix this.")
-        } else if (String(e).includes("Secrets were required, but not provided") ||
-            String(e).includes("property is invalid")) {
-            setpwInvalid(true)
-            setShowPrompt(true)
-            return;
-        }
-        log.error(errorLabel)        
-    }
 }

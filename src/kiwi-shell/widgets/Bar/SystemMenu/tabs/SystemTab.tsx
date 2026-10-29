@@ -15,8 +15,9 @@ import { Icon, powerProfileIcon, volumeIcon, brightnessIcon } from "../../../ico
 import { brightness, setBrightnessLevel, brightnessAvailable, brightnessWritable } from "../../../brightness"
 import { closeSystemMenu } from "../SystemMenu";
 import { conf } from "../../../config";
+import { notify } from "../../../../notify";
+import { nightShift, turnNightShift } from "../../../services/nightShiftSchedule";
 
-export const [nightShift, setNightShift] = createState(false);
 
 const nightShiftTemp = 4000;
 
@@ -158,16 +159,7 @@ function OptionButtons(){
       <box class="row" spacing={spacing}>
         <button
           class={nightShift.as(b => b ? 'option active' : 'option')}
-          onClicked={() =>{
-              if (nightShift.get()) {
-                setNightShift(false);
-                execAsync("killall hyprsunset")
-              } else {
-                setNightShift(true);
-                execAsync(`hyprsunset -t ${conf().nightshift_intensity}`)
-              }
-
-          }}
+          onClicked={() => turnNightShift(!nightShift.get())}
           >
           <box>
             <Icon iconName="night-light-symbolic" pixelSize={17}/>
@@ -177,6 +169,7 @@ function OptionButtons(){
         </button>
         <button
           class="option"
+          tooltipText={micMutedBinding.as(m => m ? "Unmute the Microphone" : "Mute the Microphone")}
           onClicked={() => {
             mic.mute = !micMutedBinding.get()
           }}
@@ -188,6 +181,7 @@ function OptionButtons(){
            pixelSize={17}/>
         </button>
          <button class="option"
+         tooltipText={dontDisturb.as(d => d ? "Turn Off Do Not Disturb" : "Do Not Disturb")}
          onClicked={() => {
             notifd.dont_disturb = !dontDisturb.get()
           }}
@@ -196,8 +190,13 @@ function OptionButtons(){
           <Gtk.Image iconName={dontDisturb.as(b => b ? "notifications-disabled-symbolic" : "notifications-symbolic")} pixelSize={17}/>
         </button>
         <button class="option"
+        tooltipText="Kiwi Settings"
         onClicked={() => {
-          subprocess(["kiwi-settings"])
+          try {
+            subprocess(["kiwi-settings"])
+          } catch (e) {
+            notify("Kiwi Settings couldn't be opened", String((e as Error).message ?? e), { icon: "dialog-error-symbolic" })
+          }
           closeSystemMenu()
         }}
         >

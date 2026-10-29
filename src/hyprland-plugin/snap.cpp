@@ -21,7 +21,7 @@
 // A window snapped to a half, floating, leaves the other half free, and the
 // shell is told where:
 //
-//     kiwisnapped>>0x<address>,left|right,<monitor>,<x>,<y>,<w>,<h>
+//     kiwisnapped>><address>,left|right,<monitor>,<x>,<y>,<w>,<h>
 //
 // It may offer the desktop's other windows for it, as macOS's Split View
 // does, and puts the one picked there with
@@ -41,6 +41,7 @@
 #include <config/shared/complex/ComplexDataTypes.hpp>
 #include <desktop/state/FocusState.hpp>
 #include <desktop/state/ViewHitTester.hpp>
+#include <desktop/state/ViewState.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/Window.hpp>
 #include <desktop/Workspace.hpp>
@@ -58,6 +59,7 @@
 #include <managers/SessionLockManager.hpp>
 #include <pointer/cursor/CursorShapeOverrideController.hpp>
 #include <output/Monitor.hpp>
+#include <protocols/LayerShell.hpp>
 #include <render/OpenGL.hpp>
 #include <render/Renderer.hpp>
 #include <render/pass/PassElement.hpp>
@@ -447,7 +449,8 @@ namespace {
             const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
             if (!MONITOR)
                 return {};
-            return m_box.copy().translate(-MONITOR->m_position).scale(MONITOR->m_scale).expand(PREVIEW_BORDER * MONITOR->m_scale + 2).round();
+            // the pass wants it unscaled: it scales it itself
+            return m_box.copy().translate(-MONITOR->m_position).expand(PREVIEW_BORDER + 2).round();
         }
 
       private:
@@ -720,6 +723,24 @@ namespace {
     PHLWINDOWREF g_lineHeld;          // the window above, while the line is held
     bool         g_lineShown = false; // the pointer's shape is the line's
 
+    // The line is the two windows' own: a layer's surface or menu over it
+    // (Mission Control, Spotlight, a notification), or another window, takes
+    // a press there as it would anywhere else.
+    bool lineUncovered(const Vector2D& pointer, const PHLWINDOW& above, const PHLWINDOW& below) {
+        if (const auto MONITOR = State::monitorState()->query().vec(pointer).run()) {
+            Vector2D coords;
+            PHLLS    found;
+            if (Desktop::viewState()->hitTest().layerPopupSurfaceAt(pointer, MONITOR, &coords, &found))
+                return false;
+            for (const auto LAYER : {ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ZWLR_LAYER_SHELL_V1_LAYER_TOP})
+                if (Desktop::viewState()->hitTest().layerSurfaceAt(pointer, &MONITOR->m_layerSurfaceLayers[LAYER], &coords, &found))
+                    return false;
+        }
+        const auto AT =
+            Desktop::viewState()->hitTest().windowAt(pointer, Desktop::View::ALLOW_FLOATING | Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
+        return !AT || AT == above || AT == below;
+    }
+
     // the snapped window whose bottom edge is the line under the pointer
     PHLWINDOW aboveLine(const Vector2D& pointer) {
         // the line reaches this far into the bar below, and the body above
@@ -746,7 +767,7 @@ namespace {
                 if (GAP < 0 || GAP > GAP_MAX || pointer.x < std::max(BODY.x, WITH_BAR.x) || pointer.x > std::min(BODY.x + BODY.w, WITH_BAR.x + WITH_BAR.w))
                     continue;
                 if (pointer.y >= BODY.y + BODY.h - INTO_BODY && pointer.y <= WITH_BAR.y + INTO_BAR)
-                    return ABOVE;
+                    return lineUncovered(pointer, ABOVE, BELOW) ? ABOVE : nullptr;
             }
         }
         return nullptr;

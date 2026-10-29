@@ -1,5 +1,6 @@
 import { Gtk, Gdk } from "ags/gtk4"
 import { logger } from "../../log"
+import { ROOT } from "../config"
 
 const log = logger("theme")
 
@@ -29,6 +30,7 @@ const GTK_THEME = "Default"
 const GTK_THEME_CSS = "/org/gtk/libgtk/theme/Default/Default-dark.css"
 
 export function standOnOwnBase() {
+    iconsToFallBackOn()
     if (Adw) {
         Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_DARK)
         layOver(ADWAITA_CSS)
@@ -80,4 +82,13 @@ function holdGtkTheme() {
     settings.connect("notify::gtk-theme-name", hold)
     settings.connect("notify::gtk-application-prefer-dark-theme", hold)
     if ("gtk_interface_color_scheme" in settings) settings.connect("notify::gtk-interface-color-scheme", hold)
+}
+
+// The icons the shell asks for that some themes don't have (Adwaita has no
+// bed, no CPU, no padlock by those names): GTK looks among loose icons in its
+// search path only once every theme has said no, so a theme's own always
+// wins, and none is left as a broken-image square.
+function iconsToFallBackOn() {
+    const display = Gdk.Display.get_default()
+    if (display) Gtk.IconTheme.get_for_display(display).add_search_path(`${ROOT}/assets/icons`)
 }

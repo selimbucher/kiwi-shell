@@ -130,9 +130,13 @@ function save() {
 const closing = new Set<number>()
 
 // What Hyprland has now brought into the list: a workspace on a monitor is
-// that monitor's desktop, and no other's.
+// that monitor's desktop, and no other's. From AstalHyprland's own list,
+// which its events keep: asked of Hyprland here, every island update and
+// Mission Control opening waited on it, a frame at a time mid-slide.
 function reconcile() {
-    const workspaces = query("workspaces").filter(w => w.id > 0)
+    const workspaces = hyprland.get_workspaces()
+        .filter(w => w.id > 0 && w.monitor)
+        .map(w => ({ id: w.id, monitor: w.monitor.get_name() }))
     for (const id of closing)
         if (!workspaces.some(w => w.id === id)) closing.delete(id)
     for (const [name, ids] of desktops) {
@@ -334,10 +338,11 @@ export async function moveDesktop(monitor: string, from: number, to: number): Pr
  * there: like macOS, going past either end goes nowhere.
  */
 export function neighbour(step: 1 | -1): number | null {
-    const monitor = focusedMonitor()
+    // (Astal's: nothing asked of Hyprland between the key and the slide)
+    const monitor = hyprland.get_focused_monitor()
     if (!monitor) return null
-    const ids = desktopsOn(monitor.name)
-    const index = ids.indexOf(monitor.active)
+    const ids = desktopsOn(monitor.get_name())
+    const index = ids.indexOf(monitor.get_active_workspace()?.get_id() ?? -1)
     return ids[index + step] ?? null
 }
 

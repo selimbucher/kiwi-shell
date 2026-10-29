@@ -41,7 +41,10 @@ namespace Kiwi::Layers {
             g_hook = HyprlandAPI::createFunctionHook(handle, fn.address, reinterpret_cast<void*>(&hkRenderLayer));
             break;
         }
-        return g_hook && g_hook->hook();
+        // (a hook that wouldn't take isn't one: what draws after layers can't)
+        if (g_hook && !g_hook->hook())
+            g_hook = nullptr;
+        return g_hook != nullptr;
     }
 
     bool available() {

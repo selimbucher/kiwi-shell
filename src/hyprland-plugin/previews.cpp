@@ -852,6 +852,7 @@ namespace {
 
         void clear() {
             m_armed = false;
+            acked   = false;
             m_pending.clear();
             m_armListeners.clear();
             m_armSurfaces.clear();
@@ -886,6 +887,7 @@ namespace {
                 return;
             }
             m_armed = false;
+            acked   = false;
             m_pending.clear();
             if (m_closing)
                 return;

@@ -4,8 +4,8 @@
 // dies instantly in bluetoothd with "No agent available for request type N" /
 // "device_confirm_passkey: Operation not permitted" before the device gets a
 // say. Registering as NoInputNoOutput makes bluez negotiate "just works"
-// pairing, which is all a shell without pairing dialogs can honestly offer:
-// mice/headphones pair, PIN-entry keyboards still need a real agent.
+// pairing: mice and headphones pair, and an older keyboard is shown the code
+// bluez makes up for it to type (showCode).
 import Gio from "gi://Gio"
 import GLib from "gi://GLib"
 import AstalBluetooth from "gi://AstalBluetooth"
@@ -109,6 +109,38 @@ function ask(invocation: Gio.DBusMethodInvocation, device: string, text: string)
   })
 }
 
+// A code for the user to type on the device (an older keyboard): said, until
+// the device is paired, bluez gives up, or Cancel, which stops the pairing.
+// Only logged, nothing told the user, and the pairing timed out.
+let showing: { device: string, code: string } | null = null
+
+function showCode(device: string, code: string) {
+  if (showing?.device === device && showing.code === code) return
+  withdraw?.()
+  showing = { device, code }
+  const known = deviceAt(device)
+  const escape = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+  const close = openChoicePrompt("Bluetooth Pairing",
+    escape(`Type ${code} on “${nameOf(device)}”, then press Enter.`), [], () => {
+      if (withdraw !== done) return
+      withdraw = null
+      showing = null
+      try {
+        known?.cancel_pairing()
+      } catch (e) {
+        log.warn("couldn't stop the pairing:", e as Error)
+      }
+    })
+  const pairedId = known?.connect("notify::paired", () => { if (known.paired) done() })
+  const done = () => {
+    if (pairedId) known?.disconnect(pairedId)
+    if (withdraw === done) withdraw = null
+    showing = null
+    close()
+  }
+  withdraw = done
+}
+
 const agentImpl = {
   Release() {
     log.debug("agent released by bluez")
@@ -119,8 +151,8 @@ const agentImpl = {
       "kiwi-shell has no PIN entry UI",
     )
   },
-  DisplayPinCode(_device: string, pincode: string) {
-    log.info("peer displays PIN", pincode)
+  DisplayPinCode(device: string, pincode: string) {
+    showCode(device, pincode)
   },
   RequestPasskeyAsync(_params: unknown[], invocation: Gio.DBusMethodInvocation) {
     invocation.return_dbus_error(
@@ -128,8 +160,8 @@ const agentImpl = {
       "kiwi-shell has no passkey entry UI",
     )
   },
-  DisplayPasskey(_device: string, passkey: number, _entered: number) {
-    log.info("peer displays passkey", String(passkey).padStart(6, "0"))
+  DisplayPasskey(device: string, passkey: number, _entered: number) {
+    showCode(device, String(passkey).padStart(6, "0"))
   },
   RequestConfirmationAsync([device, passkey]: [string, number], invocation: Gio.DBusMethodInvocation) {
     const code = String(passkey).padStart(6, "0")

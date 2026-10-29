@@ -49,7 +49,6 @@ const ICON_OVERRIDES: Record<string, Record<string, string>> = {
         "display-brightness-symbolic": "display-brightness-off-symbolic",
     },
     "Adwaita": {
-        "tweaks-app-symbolic": "bluetooth-symbolic",
         "preferences-desktop-wallpaper-symbolic": "folder-pictures-symbolic",
         // "audio-input-microphone-muted-symbolic": "microphone-disabled-symbolic",
         "pin-symbolic": "view-pin-symbolic",
@@ -57,7 +56,6 @@ const ICON_OVERRIDES: Record<string, Record<string, string>> = {
         "-": "battery-empty-charging-symbolic"
     },
     "Tela": {
-      "tweaks-app-symbolic": "bluetooth-symbolic",
       "preferences-desktop-wallpaper-symbolic": "cs-backgrounds-symbolic",
       "utilities-tweak-tool-symbolic": "preferences-system-symbolic"
     },

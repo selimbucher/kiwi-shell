@@ -185,6 +185,14 @@
 
 // ─── Center rows ──────────────────────────────────────────────────────────────
 
+.nc-calendar {
+    margin-bottom: 8px;
+    &:hover {
+        background-color: var(--k-panel);
+    }
+    @include calendar;
+}
+
 .nc-header {
     margin: 0 12px 4px 12px;
     padding: 6px 6px 6px 16px;

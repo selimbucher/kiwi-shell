@@ -176,7 +176,8 @@ export default function Desktops({ monitor }: { monitor: string }) {
                 else b.remove_css_class(name)
             }
             row.widen(b, mark.current || mark.filled, !built)
-            b.set_tooltip_text(`Desktop ${i + 1}`)
+            // the one shown opens Mission Control: said, it's found
+            b.set_tooltip_text(mark.current ? `Desktop ${i + 1} (click for Mission Control)` : `Desktop ${i + 1}`)
         })
         built = true
     }

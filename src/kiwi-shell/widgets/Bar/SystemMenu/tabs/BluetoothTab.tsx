@@ -14,15 +14,6 @@ const log = logger("bluetooth")
 import { bluetoothTabOpen } from "../SystemMenu"
 import { openChoicePrompt } from "../../../prompts"
 
-function hasBluetoothAdapter(): boolean {
-  try {
-    const dir = GLib.Dir.open("/sys/class/bluetooth", 0)
-    return dir.read_name() !== null
-  } catch {
-    return false
-  }
-}
-
 // bluez tears the Adapter1 object down and registers a fresh one on every
 // suspend/hibernate resume (the controller re-enumerates, firmware reloads,
 // "MGMT ver" reappears in dmesg). A cached Adapter is therefore a dead proxy
@@ -30,13 +21,17 @@ function hasBluetoothAdapter(): boolean {
 // nowhere, and the tab claims Bluetooth is off while the AirPods are playing.
 // Never hold the adapter — read it off the Astal singleton each time, and bind
 // to the singleton's is-powered, which Astal re-syncs as adapters come and go.
-const bluetooth = hasBluetoothAdapter() ? AstalBluetooth.get_default() : null
-if (bluetooth) registerBluetoothAgent()
+// (bluez coming up after the shell, or a USB dongle plugged in, brings the
+// adapter later: nothing here is decided once at startup)
+const bluetooth = AstalBluetooth.get_default()
+registerBluetoothAgent()
 
 const liveAdapter = (): AstalBluetooth.Adapter | undefined =>
   bluetooth?.adapter ?? undefined
 
 const [adapterState, setAdapterState] = createState(liveAdapter())
+/** Whether there is a Bluetooth adapter now. */
+export const hasAdapter = adapterState.as(a => a !== undefined)
 
 // Seen by other devices and open to their pairing only while the Bluetooth
 // tab is open, as a Mac is while its Bluetooth settings are: the rest of the
@@ -111,6 +106,8 @@ const bluetoothEnabledBinding = createComputed((get) =>
 // right-click menu on them went with it. The flag marks the writes that come
 // from the adapter so the handler only ever acts on a click.
 let syncingSwitch = false
+// how long a power change has to show on the adapter
+const POWER_SETTLE_MS = 1500
 
 // the device being paired, "Pairing…" on its row
 const [pairingAddress, setPairingAddress] = createState("")
@@ -218,17 +215,22 @@ export default function BluetoothTab({ visible }) {
             }
             follow()
             onCleanup(bluetoothEnabledBinding.subscribe(follow))
-          }}
-          onStateSet={(self, state) => {
-            if (syncingSwitch) return false
-            const adapter = liveAdapter()
-            if (adapter && state !== adapter.powered) {
-              // a synchronous bluez call: it returns once the controller has
-              // actually changed state, and the is-powered update that follows
-              // finds the switch already there
-              adapter.set_powered(state)
-            }
-            return false
+            ;(self as Gtk.Switch).connect("state-set", (_self: Gtk.Switch, state: boolean) => {
+              if (syncingSwitch) return false
+              const adapter = liveAdapter()
+              if (adapter && state !== adapter.powered) {
+                // a synchronous bluez call: it returns once the controller has
+                // actually changed state, and the is-powered update that follows
+                // finds the switch already there. One refused (rfkill, airplane
+                // mode) changes nothing, and the switch goes back to say so.
+                adapter.set_powered(state)
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, POWER_SETTLE_MS, () => {
+                  follow()
+                  return GLib.SOURCE_REMOVE
+                })
+              }
+              return false
+            })
           }}
         />
       </box>

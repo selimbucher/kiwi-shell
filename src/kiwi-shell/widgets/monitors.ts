@@ -1,5 +1,5 @@
 import app from "ags/gtk4/app"
-import { Gdk, Gtk } from "ags/gtk4"
+import { Astal, Gdk, Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
 import { Accessor, createBinding, createComputed, onCleanup } from "ags"
 import Hyprland from "gi://AstalHyprland"
@@ -19,6 +19,20 @@ export const popupGdkMonitor: Accessor<Gdk.Monitor | undefined> = createComputed
     const focused = get(createBinding(hyprland, "focusedMonitor"))
     return monitors.find(m => m.get_connector() === focused?.name) ?? primary
 })
+
+/**
+ * popupGdkMonitor, held while `shown`: a switcher held open stays on the
+ * display it opened on. With focus following the mouse, the pointer crossing
+ * to the other display took it there mid-hold, its cards built again.
+ */
+export function heldPopupMonitor(shown: Accessor<boolean>): Accessor<Gdk.Monitor | undefined> {
+    let held: Gdk.Monitor | undefined
+    return createComputed(get => {
+        const popup = get(popupGdkMonitor)
+        if (!get(shown) || !held) held = popup
+        return held
+    })
+}
 
 // The main (first) monitor: where the switchers live, and the one display
 // whose dock stays up on its own.
@@ -65,4 +79,24 @@ export function remeasureOn(
             return GLib.SOURCE_REMOVE
         })
     }))
+}
+
+/**
+ * The keyboard for a menu of the bar while it is open: the bar takes none
+ * otherwise (a click on it must not take the typing from the window), and
+ * its menus had no Escape, arrows or Tab.
+ */
+export function keyboardWhileOpen(popover: Gtk.Popover) {
+    let before: Astal.Keymode | null = null
+    popover.connect("show", () => {
+        const root = popover.get_root()
+        if (!(root instanceof Astal.Window) || root.keymode !== Astal.Keymode.NONE) return
+        before = root.keymode
+        root.keymode = Astal.Keymode.ON_DEMAND
+    })
+    popover.connect("closed", () => {
+        const root = popover.get_root()
+        if (root instanceof Astal.Window && before !== null) root.keymode = before
+        before = null
+    })
 }

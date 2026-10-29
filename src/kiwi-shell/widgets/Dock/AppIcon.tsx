@@ -5,7 +5,7 @@ import Pango from "gi://Pango"
 import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient, registerDockIcon, clientsBinding as windowsBinding } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
-import { letGoOnClose } from "./dock-utils"
+import { letGoOnClose, launchApp } from "./dock-utils"
 import { mapVersion, canonicalEntry } from "../desktopEntries"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
@@ -149,6 +149,9 @@ export function AppIcon({ entry, menuSlot }: { entry: string, menuSlot: MenuSlot
     return (
         <box class="app-icon-container">
             <button
+                // what it is, while there are no windows whose previews say
+                // so: a closed app's icon was nameless
+                tooltipText={clientsBinding.as(clients => clients.length === 0 ? name : null)}
                 onclicked={() => {
                     cancelOpen()
                     cancelClose()
@@ -157,9 +160,8 @@ export function AppIcon({ entry, menuSlot }: { entry: string, menuSlot: MenuSlot
                     if (clients.length === 0) {
                         // (a window of no installed app — a script's, a
                         // Wine game's — has nothing to start again)
-                        if (!application) return
+                        if (!application || !launchApp(application)) return
                         launchBounce(setHop, client => entryForClient(client) === canonicalEntry(entry))
-                        application.launch([], null)
                         return
                     }
                     // several windows → window picker with previews,
@@ -229,10 +231,13 @@ export function AppIcon({ entry, menuSlot }: { entry: string, menuSlot: MenuSlot
                         cancelOpen()
                         if (clickedEntry === entry) return
                         clickedEntry = null
+                        // the first hover waits; from one icon's previews on
+                        // to the next, as on a Windows taskbar, they come at once
+                        const browsing = openFlyout?.get_visible() ?? false
                         openTimer = setTimeout(() => {
                             if (clientsBinding().length > 0 && !menu.visible)
                                 previews.popup()
-                        }, PREVIEW_HOVER_OPEN_MS)
+                        }, browsing ? 0 : PREVIEW_HOVER_OPEN_MS)
                     })
                     hover.connect("leave", () => {
                         log.debug(`[preview:${entry}] icon LEAVE`)
@@ -540,7 +545,7 @@ function AppContextMenu(entry, clientsBinding, application, name, pinned, onPinC
             // lives inside the very button that triggers them
             icon: <AppIconImage entry={entry} pixelSize={20} cssClass="context-menu-icon" /> as Gtk.Widget,
             sensitive: !!application,
-            onClick: () => application?.launch([], null),
+            onClick: () => { if (application) launchApp(application) },
         },
         ...(actions.length ? [{ separator: true } as ContextMenuItem, ...actions] : []),
         { separator: true },

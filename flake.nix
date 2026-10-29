@@ -148,8 +148,16 @@
             astal4
             battery
             network
-            hyprland
-            wireplumber
+            # a window's new title taken from its event, not every window
+            # asked for again (and all of theirs notified) at each one
+            (hyprland.overrideAttrs (old: {
+              patches = (old.patches or [ ]) ++ [ ./patches/astal-hyprland-title.patch ];
+            }))
+            # the default speaker and microphone back on their nodes once
+            # wireplumber has restarted, not left on the ones gone
+            (wireplumber.overrideAttrs (old: {
+              patches = (old.patches or [ ]) ++ [ ./patches/astal-wireplumber-default.patch ];
+            }))
             # the position asked of a player only while shown (poll-position:
             # the island's card), not every second as long as it's there
             (mpris.overrideAttrs (old: {
@@ -212,6 +220,17 @@
                 -d "PLUGIN='$out/lib/kiwi-shell/libkiwi.so'" \
                 -d "QUICKSAND='$out/lib/kiwi-shell/Quicksand.ttf'"
 
+              # ags's bundle is a script that decodes 4 MB of base64 into
+              # $XDG_RUNTIME_DIR at every start, most of it a source map gjs
+              # never reads: a third of a second before anything ran. Unpacked
+              # here once, it starts from the store.
+              js=$out/share/kiwi-shell/kiwi.js
+              awk '/<<EOF/ { on = 1; next } /^EOF$/ { on = 0 } on' $out/bin/.${pname}-core \
+                | base64 --decode | sed '/^\/\/# sourceMappingURL=data:/d' > $js
+              run=$(tail -n 1 $out/bin/.${pname}-core)
+              case "$run" in *'-m $file $@'*) ;; *) echo "unexpected ags launcher: $run" >&2; exit 1 ;; esac
+              printf '#!%s\nexec env %s\n' "${pkgs.runtimeShell}" "''${run/'-m $file $@'/-m $js \"\$@\"}" > $out/bin/.${pname}-core
+
               # Runtime Dependencies Wrapper
               wrapProgram $out/bin/.${pname}-core \
                 --prefix PATH : "${
@@ -233,9 +252,12 @@
                 --prefix LD_LIBRARY_PATH : "${app-capture}/lib" \
                 --prefix LD_LIBRARY_PATH : "${hyprland-shortcuts}/lib" \
                 --prefix LD_LIBRARY_PATH : "${kiwi-surface}/lib" \
+                --suffix XDG_DATA_DIRS : "${pkgs.adwaita-icon-theme}/share" \
                 --set GIO_USE_VFS local
-                # (no gvfs: its web downloader can hang for good, and with it
-                # every media player AstalMpris would list; services/covers.ts)
+                # (GTK's own icons last, after any installed: where the desktop
+                # sets no icon theme, or one that isn't there, every icon was
+                # missing. No gvfs: its web downloader can hang for good, and
+                # with it every media player AstalMpris would list; services/covers.ts)
 
               # Start Wrapper: argv/instance guards, log rotation, capped tee to the log
               cat << 'EOF' > $out/bin/${pname}

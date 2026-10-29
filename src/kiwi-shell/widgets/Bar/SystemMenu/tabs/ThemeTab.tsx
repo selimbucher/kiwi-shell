@@ -208,8 +208,17 @@ function WallpaperGrid() {
                     self.append(add)
                     markCurrent()
                 }
-                rebuild()
-                onCleanup(wallpapers.subscribe(rebuild))
+                // filled when on show: hidden (another picker chosen) it
+                // decoded all of the wallpapers for nothing
+                let built = ""
+                const fill = () => {
+                    const list = wallpapers.get().join("\n")
+                    if (!self.get_mapped() || list === built) return
+                    built = list
+                    rebuild()
+                }
+                self.connect("map", fill)
+                onCleanup(wallpapers.subscribe(fill))
                 onCleanup(wallpaperPath.subscribe(markCurrent))
             }}
         />

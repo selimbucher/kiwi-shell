@@ -3,6 +3,7 @@ import { createBinding, For, onCleanup } from "ags"
 import Gtk from "gi://Gtk?version=4.0"
 import GLib from "gi://GLib?version=2.0"
 import { exec } from "ags/process"
+import { keyboardWhileOpen } from "../monitors"
 
 const tray = AstalTray.get_default()
 const trayItems = createBinding(tray, 'items')
@@ -35,10 +36,33 @@ export default function Tray() {
         >
             <For each={trayItems}>
                 {item =>
-                    <menubutton class="tray-item">
+                    <menubutton
+                        class="tray-item"
+                        tooltipMarkup={createBinding(item, "tooltipMarkup")}
+                        $={(self: Gtk.MenuButton) => {
+                            // A click opens the item's menu, as on a Mac; a
+                            // right-click does too, as on Windows; and one
+                            // with no menu at all is asked to come forward
+                            // (its window), where a click did nothing.
+                            const click = new Gtk.GestureClick({ button: 0 })
+                            click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+                            click.connect("pressed", (gesture: Gtk.GestureClick) => {
+                                const button = gesture.get_current_button()
+                                if (button === 3) {
+                                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                                    self.popup()
+                                } else if (button === 1 && !item.get_menu_model()) {
+                                    gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+                                    item.activate(0, 0)
+                                }
+                            })
+                            self.add_controller(click)
+                        }}
+                    >
                         <TrayIcon item={item} />
                         <Gtk.PopoverMenu
                             menuModel={item.get_menu_model()}
+                            $={(self: Gtk.PopoverMenu) => keyboardWhileOpen(self)}
                             onRealize={(self) => {
                                 const actionGroup = item.get_action_group()
                                 if (actionGroup) {

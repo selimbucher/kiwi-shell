@@ -7,12 +7,12 @@ import Hyprland from "gi://AstalHyprland"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
-import { popupGdkMonitor, destroyWindow } from "../monitors"
+import { heldPopupMonitor, destroyWindow } from "../monitors"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
 import { wallpaperPath, loadThumbnail } from "../services/wallpaper"
 import { applyBinds, currentBinds, registerBindSetup, type BindOp } from "../../hypr"
-import { optionalShortcuts, combo, heldModifierKey, heldModifiers, type Shortcut } from "../../shortcuts"
+import { optionalShortcuts, combo, releaseCombos, heldModifiers, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { desktopsOn, windowsByDesktop, goToDesktop } from "../MissionControl/desktops"
 
@@ -45,6 +45,8 @@ interface MiniWindow {
 }
 
 export const [isVisible, setVisibility] = createState(false)
+// (on the display it opened on, until closed)
+const shownOn = heldPopupMonitor(isVisible)
 const [selectedId, setSelectedId] = createState(1)
 const [displayedIds, setDisplayedIds] = createState<number[]>([])
 const [wsWindows, setWsWindows] = createState<Map<number, MiniWindow[]>>(new Map())
@@ -105,11 +107,11 @@ async function registerSuperTabBinds() {
     // never unbind the modifier key here (would take tap-to-launch binds with
     // it), so only add ours when it isn't registered yet
     for (const s of heldModifiers(list)) {
-        const confirm = `${s.mods[0]} + ${heldModifierKey(s)}`
         const escape = `${s.mods[0]} + escape`
-        if (!have(s, "kiwi: workspaces switch", confirm))
-            ops.push({ bind: confirm, action: CONFIRM,
-                description: "kiwi: workspaces switch", flags: { release: true, transparent: true } })
+        for (const confirm of releaseCombos(s))
+            if (!have(s, "kiwi: workspaces switch", confirm))
+                ops.push({ bind: confirm, action: CONFIRM,
+                    description: "kiwi: workspaces switch", flags: { release: true, transparent: true } })
         if (!have(s, "kiwi: workspaces close", escape))
             ops.push({ bind: escape, action: CLOSE,
                 description: "kiwi: workspaces close", flags: { release: true } })
@@ -132,7 +134,7 @@ isVisible.subscribe(() => {
 registerBindSetup("workspaces", registerSuperTabBinds, () => [
     ...registered.flatMap(s => [{ unbind: combo(s) }, { unbind: combo(s, "SHIFT") }]),
     ...heldModifiers(registered).flatMap(s => [
-        { unbind: `${s.mods[0]} + ${heldModifierKey(s)}` },
+        ...releaseCombos(s).map(c => ({ unbind: c })),
         { unbind: `${s.mods[0]} + escape` },
     ]),
 ])
@@ -171,7 +173,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
     // open: every open gets a fresh snapshot, and closed cards let go of
     // their frames.
     const layout = createComputed(get => get(isVisible)
-        ? layoutCards(get(displayedIds), get(popupGdkMonitor) ?? gdkmonitor)
+        ? layoutCards(get(displayedIds), get(shownOn) ?? gdkmonitor)
         : { height: CARD_HEIGHT, rows: [] })
 
     // the pane hangs in the widget that cuts the holes: a mask covers
@@ -214,7 +216,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
             visible={isVisible}
             name="ags-workspace-switcher"
             class={themeClasses(t => `WorkspaceSwitcher ${t}`)}
-            gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
+            gdkmonitor={createComputed(get => get(shownOn) ?? gdkmonitor)}
             exclusivity={Astal.Exclusivity.NORMAL}
             anchor={Astal.WindowAnchor.CENTER | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}
             application={app}

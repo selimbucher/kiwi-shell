@@ -29,18 +29,26 @@ const BINARY: Record<string, { power: number, right?: boolean, apply: (a: number
     "^": { power: 3, right: true, apply: (a, b) => a ** b },
 }
 
+// The language's decimal mark: where it is a comma (German, French), "1,5"
+// is one and a half, not fifteen; a point is taken too, as a keypad types it.
+const COMMA_DECIMAL = new Intl.NumberFormat().formatToParts(1.5).find(p => p.type === "decimal")?.value === ","
+const NUMBER = COMMA_DECIMAL
+    ? /^\d*(?:[.,]\d+)?(?:[eE][+-]?\d+)?/
+    // thousands separators belong to the number, not between numbers:
+    // skipping them in this loop splits "1,234" into 1 and 234
+    : /^(?:\d{1,3}(?:,\d{3})+|\d+)?(?:\.\d+)?(?:[eE][+-]?\d+)?/
+
 function tokenize(text: string): Token[] | null {
     const tokens: Token[] = []
     let i = 0
     while (i < text.length) {
         const c = text[i]
         if (c === " ") { i++; continue }
-        if (/[\d.]/.test(c)) {
-            // thousands separators belong to the number, not between numbers:
-            // skipping them in this loop splits "1,234" into 1 and 234
-            const match = /^(?:\d{1,3}(?:,\d{3})+|\d+)?(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(i))
+        if (/[\d.,]/.test(c)) {
+            const match = NUMBER.exec(text.slice(i))
             if (!match || !match[0]) return null
-            tokens.push({ kind: "num", value: parseFloat(match[0].replace(/,/g, "")) })
+            const digits = COMMA_DECIMAL ? match[0].replace(",", ".") : match[0].replace(/,/g, "")
+            tokens.push({ kind: "num", value: parseFloat(digits) })
             i += match[0].length
             continue
         }
@@ -71,8 +79,9 @@ function parse(tokens: Token[]): number | null {
         const token = peek()
         if (!token) return null
         if (token.kind === "num") { at++; return token.value }
-        if (token.kind === "op" && token.value === "-") { at++; const v = primary(); return v === null ? null : -v }
-        if (token.kind === "op" && token.value === "+") { at++; return primary() }
+        // a sign takes in a power, as written: -2^2 is -4
+        if (token.kind === "op" && token.value === "-") { at++; const v = expression(BINARY["^"].power); return v === null ? null : -v }
+        if (token.kind === "op" && token.value === "+") { at++; return expression(BINARY["^"].power) }
         if (token.kind === "op" && token.value === "(") {
             at++
             const value = expression(0)
@@ -131,10 +140,10 @@ export function evaluate(text: string): number | null {
 
 /** Enough digits to be exact, without 0.30000000000000004. */
 export function formatNumber(value: number): string {
-    if (Number.isInteger(value) && Math.abs(value) < 1e15) return value.toLocaleString("en-US")
+    if (Number.isInteger(value) && Math.abs(value) < 1e15) return value.toLocaleString()
     const rounded = parseFloat(value.toPrecision(12))
     if (Math.abs(rounded) >= 1e15 || (Math.abs(rounded) < 1e-6 && rounded !== 0)) {
         return rounded.toExponential(6).replace(/\.?0+e/, "e")
     }
-    return rounded.toLocaleString("en-US", { maximumFractionDigits: 10 })
+    return rounded.toLocaleString(undefined, { maximumFractionDigits: 10 })
 }

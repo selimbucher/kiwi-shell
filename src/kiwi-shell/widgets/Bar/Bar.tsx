@@ -1,6 +1,6 @@
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
-import { destroyWindow, remeasureOn } from "../monitors"
+import { destroyWindow, keyboardWhileOpen, remeasureOn } from "../monitors"
 import { createBinding, createComputed, onCleanup } from "ags"
 
 import { battery } from "../services/battery"
@@ -11,12 +11,13 @@ import SystemMenu, { systemMenuOpen, closeSystemMenu } from "./SystemMenu/System
 import { closeNc } from "../Notifications/NotificationCenter"
 import Island from "../Island/Island"
 import PowerMenu from "./PowerMenu"
+import { toggleLauncher } from "../Launcher/Launcher"
 import Tray, { hasTrayItems } from "./Tray"
 import { conf } from "../config"
 import { network, wifiProperty } from "../services/network"
 import { Icon, iconTheme, wifiIcon } from "../iconNames"
 import { themeClasses, LAYER } from "../services/theme"
-import { minuteNow } from "../services/minuteClock"
+import { minuteNow, twelveHours, clockTime } from "../services/minuteClock"
 
 // the current Network, not the first one (services/network.ts)
 const wiredBinding = network.as(n => n.wired)
@@ -122,12 +123,22 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
 }) {
     // formatted in-process — no `date` spawn every second. With the date in
     // the island, the weekday short and the time.
-    const time = createComputed(get => get(minuteNow).format(
-        get(conf).island?.center === "date" ? "%a %H:%M" : "%a %b %d  %H:%M") ?? "")
+    const time = createComputed(get => {
+        const t = get(minuteNow)
+        get(twelveHours)
+        return `${t.format(get(conf).island?.center === "date" ? "%a" : "%a %b %d ")} ${clockTime(t)}`
+    })
 
     return (
         <box class="MenuButtons">
-            <menubutton class="toggle-powermenu">
+            {/* Spotlight for the pointer too, as macOS has it in its menu
+                bar: a key alone (Super) left no way in without the keyboard,
+                and with it none to an app not in the dock */}
+            <button class="powermenu-toggle spotlight-toggle" tooltipText="Spotlight: search apps, windows and the web"
+                onClicked={toggleLauncher}>
+                <Gtk.Image iconName="system-search-symbolic" pixelSize={14} />
+            </button>
+            <menubutton class="toggle-powermenu" tooltipText="Control Center">
                 <box class="icons">
                     <QuietIcon />
                     <PreferencesIcon />
@@ -136,10 +147,11 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
                 </box>
                 <SystemMenu />
             </menubutton>
-            <button class="toggle-nc" onclicked={toggleNc} $={(self) => onToggleNcReady(self)}>
+            <button class="toggle-nc" onclicked={toggleNc} $={(self) => onToggleNcReady(self)}
+                tooltipText={minuteNow(now => `${now.format("%A, %e %B %Y")?.replace(/\s+/g, " ")}\nClick for notifications`)}>
                 <label class={conf(c => c.island?.center === "date" ? "time only" : "time")} label={time} />
             </button>
-            <menubutton class={"powermenu-toggle"}>
+            <menubutton class={"powermenu-toggle"} tooltipText="Shut Down, Restart, Sleep…">
                 <Gtk.Image
                     class="power-icon"
                     iconName={"system-shutdown-symbolic"}
@@ -150,6 +162,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
                     hasArrow={false}
                     autohide={true}
                     onShow={() => closeNc()}
+                    $={(self: Gtk.Popover) => keyboardWhileOpen(self)}
                 >
                     <PowerMenu />
                 </popover>
@@ -158,12 +171,28 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
     )
 }
 
+// "2:05" for 7500 s; nothing for an estimate UPower doesn't have yet
+const duration = (seconds: number) =>
+    seconds > 0 ? `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, "0")}` : ""
+
 function BatteryIcon() {
+    // the level and how long it lasts, under the pointer: the icon alone says
+    // neither to the minute
+    const tooltip = createComputed(get => {
+        const percent = `${Math.round(get(createBinding(battery, "percentage")) * 100)}%`
+        if (get(createBinding(battery, "charging"))) {
+            const full = duration(get(createBinding(battery, "timeToFull")))
+            return full ? `${percent}, full in ${full}` : `${percent}, charging`
+        }
+        const left = duration(get(createBinding(battery, "timeToEmpty")))
+        return left ? `${percent}, ${left} left` : percent
+    })
     return (
         <Gtk.Image
             visible={hasBattery}
             class="batteryIcon"
             pixelSize={16}
+            tooltipText={tooltip}
             iconName={createBinding(battery, "battery_icon_name")}
         />
     )

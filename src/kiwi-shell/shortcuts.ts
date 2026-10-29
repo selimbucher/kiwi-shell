@@ -37,11 +37,11 @@ const TITLES: Record<ShortcutName, string> = {
     notification_center: "Show Notifications",
 }
 
-const MODIFIERS: Record<string, { name: string; key: string; mask: number }> = {
-    super: { name: "SUPER", key: "SUPER_L", mask: 64 },
-    alt: { name: "ALT", key: "ALT_L", mask: 8 },
-    ctrl: { name: "CTRL", key: "CONTROL_L", mask: 4 },
-    shift: { name: "SHIFT", key: "SHIFT_L", mask: 1 },
+const MODIFIERS: Record<string, { name: string; key: string; right: string; mask: number }> = {
+    super: { name: "SUPER", key: "SUPER_L", right: "SUPER_R", mask: 64 },
+    alt: { name: "ALT", key: "ALT_L", right: "ALT_R", mask: 8 },
+    ctrl: { name: "CTRL", key: "CONTROL_L", right: "CONTROL_R", mask: 4 },
+    shift: { name: "SHIFT", key: "SHIFT_L", right: "SHIFT_R", mask: 1 },
 }
 
 export type Shortcut = {
@@ -87,9 +87,18 @@ const normalizeCombo = (c: string) => {
 export const combo = (s: Shortcut, ...extraMods: string[]) =>
     [...s.mods, ...extraMods, s.key].join(" + ")
 
-// the key whose release ends a hold-to-switch shortcut
-export const heldModifierKey = (s: Shortcut) =>
-    MODIFIERS[s.mods[0].toLowerCase()].key
+// the releases that end a hold-to-switch shortcut: the modifier's key on
+// either side (held on the right one, a release of the left never came and
+// the switcher kept the keyboard)
+export const releaseCombos = (s: Shortcut) => {
+    const m = MODIFIERS[s.mods[0].toLowerCase()]
+    return [m.key, m.right].map(key => `${s.mods[0]} + ${key}`)
+}
+
+// the combos a shortcut is bound on: a tap is a tap of either side's key
+export const bindCombos = (s: Shortcut) => s.tap
+    ? [combo(s), `${s.mods[0]} + ${MODIFIERS[s.mods[0].toLowerCase()].right}`]
+    : [combo(s)]
 
 // The switchers are held: exactly one modifier, whose release confirms, and
 // no Shift, which they add for going backwards. Only the launcher can be a
@@ -109,7 +118,7 @@ function valid(name: ShortcutName, s: Shortcut | null): s is Shortcut {
 // share the release (shadowing tells them apart, see Launcher.tsx).
 function pressedOn(name: ShortcutName, s: Shortcut): string[] {
     if (name === "app_switcher" || name === "workspace_switcher") return [combo(s), combo(s, "SHIFT")]
-    return [combo(s)]
+    return bindCombos(s)
 }
 
 // config.json's text for one action: a string, or a list of them
@@ -206,9 +215,9 @@ const RETIRED = ["kiwi: launcher toggle", "kiwi: workspaces confirm", "kiwi: wor
 function wantedCombos(name: ShortcutName): string[] {
     return allShortcuts()[name].flatMap(s => {
         if (name === "workspace_switcher")
-            return [combo(s), combo(s, "SHIFT"), `${s.mods[0]} + ${heldModifierKey(s)}`, `${s.mods[0]} + escape`]
-        if (name === "app_switcher") return [combo(s), combo(s, "SHIFT"), `${s.mods[0]} + ${heldModifierKey(s)}`]
-        return [combo(s)]
+            return [combo(s), combo(s, "SHIFT"), ...releaseCombos(s), `${s.mods[0]} + escape`]
+        if (name === "app_switcher") return [combo(s), combo(s, "SHIFT"), ...releaseCombos(s)]
+        return bindCombos(s)
     })
 }
 
@@ -271,7 +280,7 @@ function spoken(keys: string): string {
     const key = parts.pop()!
     const word = (w: string) => w.charAt(0) + w.slice(1).toLowerCase()
     const mods = parts.map(m => m === "CTRL" ? "Ctrl" : word(m))
-    if (Object.values(MODIFIERS).some(m => m.key === key)) return mods.join("+")
+    if (Object.values(MODIFIERS).some(m => m.key === key || m.right === key)) return mods.join("+")
     return [...mods, key.length > 1 && key === key.toUpperCase() ? word(key) : key].join("+")
 }
 

@@ -363,6 +363,7 @@ export class LiveTiles {
 
     hidden() {
         this.active = false
+        this.ackNext = false
         clearPreviews(this.options.set)
         ++this.generation
     }
@@ -424,27 +425,15 @@ export class LiveTiles {
         if (pane.waiting && tiles.length === 0 && this.tiles.size > 0) return
 
         const measured = ++this.generation
-        const waiters = this.takenWaiters.splice(0)
         const { set, namespace, motion, popup, squareTop, fly, shadow, bars } = this.options
         const ack = this.ackNext
         this.ackNext = false
         showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly, shadow, bars, ack }, () => {
             if (measured === this.generation) this.pane?.show()
-            for (const then of waiters) then()
         })
     }
 
-    private takenWaiters: (() => void)[] = []
     private ackNext = false
-
-    /**
-     * `then` once the compositor has the tiles as they are now: a tile taken
-     * out or put back is drawn that way from the shell's next frame.
-     */
-    whenTaken(then: () => void) {
-        this.takenWaiters.push(then)
-        this.measure()
-    }
 
     /**
      * `then` once the compositor draws the tiles as they are now: from the
@@ -458,6 +447,9 @@ export class LiveTiles {
         const once = () => {
             if (done) return
             done = true
+            const left = drawnWaiters.get(set)?.filter(w => w !== once)
+            if (left?.length) drawnWaiters.set(set, left)
+            else drawnWaiters.delete(set)
             then()
         }
         drawnWaiters.set(set, [...drawnWaiters.get(set) ?? [], once])

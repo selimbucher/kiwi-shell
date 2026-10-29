@@ -1,5 +1,7 @@
 import { Gtk } from "ags/gtk4"
-import { createState, createBinding, createComputed, onCleanup } from "ags"
+import Gio from "gi://Gio"
+import GLib from "gi://GLib"
+import { createState, createBinding, createComputed, createRoot, onCleanup } from "ags"
 import { battery } from "../../services/battery"
 
 import { CircularProgress } from "../../Misc"
@@ -11,40 +13,45 @@ import ThemeTab from "./tabs/ThemeTab"
 import PerformanceTab from "./tabs/PerformanceTab"
 
 import { conf } from "../../config"
-import { minuteNow } from "../../services/minuteClock"
+import { minuteNow, twelveHours, clockTime } from "../../services/minuteClock"
 import { Icon } from "../../iconNames"
 import { playSound } from "../../sound"
 import { closeNc } from "../../Notifications/NotificationCenter"
-import { debugMode } from "../../../log"
+import { keyboardWhileOpen } from "../../monitors"
+import { debugMode, logger } from "../../../log"
+const log = logger("system-menu")
 
-import AstalBluetooth from "gi://AstalBluetooth?version=0.1"
 import BluetoothTab from "./tabs/BluetoothTab"
 import {
+  hasAdapter,
   startBluetoothDiscovery,
   stopBluetoothDiscovery,
 } from "./tabs/BluetoothTab"
 import { notify, closeNotification } from "../../../notify"
 import { network } from "../../services/network"
 
-// present when the machine has Wi-Fi at all
-const wifi = network.get().wifi
-
-// .adapter is null when no bluetooth controller is present
-const bluetooth: AstalBluetooth.Adapter | undefined =
-  AstalBluetooth.get_default().adapter ?? undefined
+// whether the machine has Wi-Fi, and Bluetooth, now: a USB adapter plugged
+// in, or NetworkManager and bluez starting after the shell, bring them later
+const hasWifi = createComputed((get) => !!get(network).wifi)
 
 const hasBattery = battery.get_is_present()
 
 const batPercent = createBinding(battery, "percentage")
 const batCharging = createBinding(battery, "charging")
 
+// The charger plugged in: UPower's OnBattery going false. Charging alone
+// also comes and goes with a charge limit and on resume, and played it unasked.
 if (hasBattery) {
-  batCharging.subscribe(() => {
-    if (!battery.charging) {
-      return
-    }
-    playSound("charging.mp3")
-  })
+  try {
+    Gio.DBus.system.signal_subscribe("org.freedesktop.UPower", "org.freedesktop.DBus.Properties",
+      "PropertiesChanged", "/org/freedesktop/UPower", "org.freedesktop.UPower", Gio.DBusSignalFlags.NONE,
+      (_c, _sender, _path, _iface, _signal, params) => {
+        const [, changed] = params.deep_unpack() as [string, Record<string, GLib.Variant>]
+        if (changed.OnBattery?.unpack() === false) playSound("charging.mp3")
+      })
+  } catch (e) {
+    log.warn("no charger sound without the system bus:", e as Error)
+  }
 }
 
 // Low/critical battery notifications: warn once at 10%, alert once at 5%
@@ -110,24 +117,35 @@ performanceTabOpen.subscribe(() =>
 )
 
 const tabs = [
-  { name: "settings", icon: "system-settings-symbolic", enabled: true },
-  { name: "network", icon: "network-wireless-symbolic", enabled: wifi },
+  { name: "settings", title: "General", icon: "system-settings-symbolic", enabled: true },
+  { name: "network", title: "Wi-Fi", icon: "network-wireless-symbolic", enabled: hasWifi },
   {
     name: "bluetooth",
+    title: "Bluetooth",
     icon: "bluetooth-active-symbolic",
-    enabled: bluetooth,
+    enabled: hasAdapter,
   },
   {
     name: "performance",
+    title: "Performance",
     icon: "power-profile-balanced-symbolic",
     enabled: true,
   },
   {
     name: "theme",
+    title: "Wallpaper & Style",
     icon: "preferences-desktop-wallpaper-symbolic",
     enabled: true,
   },
 ]
+// a tab whose hardware went (a dongle pulled out) gives way to the first
+for (const tab of tabs) {
+  if (typeof tab.enabled === "boolean") continue
+  const index = tabs.indexOf(tab)
+  tab.enabled.subscribe(() => {
+    if (!(tab.enabled as typeof hasWifi).get() && activeTab.get() === index) setActiveTab(0)
+  })
+}
 
 export default function SystemMenu() {
   return (
@@ -135,9 +153,31 @@ export default function SystemMenu() {
       hasArrow={false}
       class="system-menu-popover"
       autohide={debugMode((b) => !b)}
-      $={(self) => {
+      $={(self: Gtk.Popover) => {
         systemMenuPopovers.add(self)
-        onCleanup(() => systemMenuPopovers.delete(self))
+        keyboardWhileOpen(self)
+        // Built a moment after the shell is up, or at a first opening that
+        // comes sooner: its five tabs, wallpaper pictures and all, took a
+        // tenth of a second of every start, on every display.
+        let dispose: (() => void) | null = null
+        const build = () => {
+          if (dispose) return
+          createRoot((done) => {
+            dispose = done
+            self.set_child(<SystemMenuContent /> as Gtk.Widget)
+          })
+        }
+        let soon = GLib.timeout_add(GLib.PRIORITY_LOW, BUILD_AFTER_MS, () => {
+          soon = 0
+          build()
+          return GLib.SOURCE_REMOVE
+        })
+        self.connect("show", build)
+        onCleanup(() => {
+          systemMenuPopovers.delete(self)
+          if (soon) GLib.source_remove(soon)
+          dispose?.()
+        })
       }}
       onShow={() => {
         setSystemMenuOpen(true)
@@ -156,12 +196,15 @@ export default function SystemMenu() {
         try {
           stopBluetoothDiscovery()
         } catch {}
+        // opened again on General, as macOS's Control Center is: from the
+        // Wi-Fi icon it came up on whatever tab was last, the wallpapers say
+        setActiveTab(0)
       }}
-    >
-      <SystemMenuContent />
-    </popover>
+    />
   )
 }
+
+const BUILD_AFTER_MS = 2500
 
 function SystemMenuContent() {
   const TabButton = (index: number, tab: (typeof tabs)[0]) => (
@@ -169,9 +212,11 @@ function SystemMenuContent() {
       class={activeTab((t) =>
         t === index ? "tab-button active" : "tab-button",
       )}
+      visible={tab.enabled}
+      tooltipText={tab.title}
       onClicked={() => {
         setActiveTab(index)
-        if (bluetooth && index == 2) {
+        if (hasAdapter.get() && index == 2) {
           try {
             startBluetoothDiscovery()
           } catch {}
@@ -180,7 +225,7 @@ function SystemMenuContent() {
             stopBluetoothDiscovery()
           } catch (err) {}
         }
-        if (wifi && index == 1) {
+        if (hasWifi.get() && index == 1) {
           rescanWifi()
         }
       }}
@@ -238,12 +283,12 @@ function SystemMenuContent() {
         hexpand={false}
         spacing={6}
       >
-        {tabs.map((tab, i) => (tab.enabled ? TabButton(i, tab) : ""))}
+        {tabs.map((tab, i) => TabButton(i, tab))}
       </box>
       <box class="tab-container" hexpand={true}>
         <SystemTab visible={activeTab((t) => t === 0)} />
-        {wifi && <NetworkTab visible={activeTab((t) => t === 1)} />}
-        {bluetooth && <BluetoothTab visible={activeTab((t) => t === 2)} />}
+        <NetworkTab visible={activeTab((t) => t === 1)} />
+        <BluetoothTab visible={activeTab((t) => t === 2)} />
         <PerformanceTab visible={activeTab((t) => t === 3)} />
         <ThemeTab visible={activeTab((t) => t === 4)} />
       </box>
@@ -266,7 +311,8 @@ function batteryBarColor(percentage, isCharging, primaryColor) {
 
 function Time() {
   // formatted in-process — no `date` spawn every second
-  const time = minuteNow(t => t.format("%H:%M") ?? "")
+  // (the big clock without its AM or PM, as a phone's lock screen has it)
+  const time = createComputed(get => { get(twelveHours); return clockTime(get(minuteNow), false) })
   return (
     <box class="time">
       <label label={time} />

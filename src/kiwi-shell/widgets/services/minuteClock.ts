@@ -53,3 +53,26 @@ try {
 } catch { /* no wake-ups heard */ }
 
 aim()
+
+// ─── 12 or 24 hours ───────────────────────────────────────────────────────────
+// The desktop's clock-format (Kiwi Settings' switch, GNOME's Settings), 24
+// unless it says 12. Not the language's: en_US is most Linux setups' English,
+// counting to 24 or not.
+const INTERFACE = "org.gnome.desktop.interface"
+const interfaceSchema = Gio.SettingsSchemaSource.get_default()?.lookup(INTERFACE, true)
+const interfaceSettings = interfaceSchema?.has_key("clock-format") ? new Gio.Settings({ schema_id: INTERFACE }) : null
+const reads12 = () => interfaceSettings?.get_string("clock-format") === "12h"
+const [twelveHours, setTwelveHours] = createState(reads12())
+interfaceSettings?.connect("changed::clock-format", () => setTwelveHours(reads12()))
+export { twelveHours }
+
+/** "14:05", or "2:05 PM" where the clock counts to 12; `suffix` false leaves the PM off. */
+export function clockTime(t: GLib.DateTime, suffix = true): string {
+    if (!twelveHours.get()) return t.format("%H:%M") ?? ""
+    return (t.format(suffix ? "%l:%M %p" : "%l:%M") ?? "").trim()
+}
+
+/** The hour alone: "14", or "2 PM". */
+export function clockHour(t: GLib.DateTime): string {
+    return (twelveHours.get() ? t.format("%l %p") : t.format("%H"))?.trim() ?? ""
+}

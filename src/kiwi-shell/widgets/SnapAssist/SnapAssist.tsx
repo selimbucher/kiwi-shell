@@ -11,8 +11,9 @@ import { snapWindow } from "../../hypr"
 import { destroyWindow } from "../monitors"
 import { themeClasses, LAYER } from "../services/theme"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
-import { isMinimized, isValidClient } from "../Dock/dock-state"
+import { isMinimized } from "../Dock/dock-state"
 import { spread, type Box } from "../MissionControl/spread"
+import { monitorNamed, windowsByDesktop } from "../MissionControl/desktops"
 import { isOpen as missionControlOpen } from "../MissionControl/MissionControl"
 
 const log = logger("snap-assist")
@@ -42,7 +43,9 @@ type Offer = {
     monitor: string
     // the free half: the window there with its bar, in global logical pixels
     rect: Box
-    windows: Hyprland.Client[]
+    // the display's logical size
+    screen: { width: number, height: number }
+    windows: { client: Hyprland.Client, box: Box }[]
 }
 
 const [offer, setOffer] = createState<Offer | null>(null)
@@ -63,7 +66,9 @@ const addressOf = (client: Hyprland.Client) => client.get_address()
 const near = (a: number, b: number) => Math.abs(a - b) < 6
 
 // a window put in the free half by this offer: its own snap says nothing
+// (and when the other half is taken, there is no snap of its to say it)
 let placing: string | null = null
+const PLACED_MS = 500
 
 function offered(args: string) {
     const [address, side, monitorName, ...numbers] = args.split(",")
@@ -74,21 +79,23 @@ function offered(args: string) {
     const [x, y, width, height] = numbers.map(Number)
     if (side !== "left" && side !== "right" || ![x, y, width, height].every(Number.isFinite)) return
     if (missionControlOpen.get() || !livePreviews()) return
-    const monitor = hyprland.get_monitors().find(m => m.name === monitorName)
-    const desktop = monitor?.activeWorkspace?.id
-    if (desktop === undefined) return
-    const onDesktop = hyprland.get_clients().filter(c =>
-        isValidClient(c) && !isMinimized(c) && c.workspace?.id === desktop && c.get_mapped())
+    // where the windows are now, from the compositor: Astal's geometry goes
+    // stale once a window is moved by hand
+    const screen = monitorNamed(monitorName)
+    if (!screen) return
+    const onDesktop = (windowsByDesktop().get(screen.active) ?? []).filter(w => !isMinimized(w.client))
     // the free half filled already: a window snapped there
-    const filled = onDesktop.some(c => near(c.x, x) && near(c.x + c.width, x + width) && c.y >= y - 6 && near(c.y + c.height, y + height))
+    const filled = onDesktop.some(w => near(w.x, x) && near(w.x + w.width, x + width) && w.y >= y - 6 && near(w.y + w.height, y + height))
     const windows = onDesktop
-        .filter(c => addressOf(c) !== address.replace(/^0x/, ""))
+        .filter(w => addressOf(w.client) !== address.replace(/^0x/, ""))
         // the most recently used first
-        .sort((a, b) => a.focusHistoryId - b.focusHistoryId)
+        .sort((a, b) => a.focusHistory - b.focusHistory)
+        .map(w => ({ client: w.client, box: { x: w.x, y: w.y, width: w.width, height: w.height } }))
     if (filled || windows.length === 0) return
     log.debug(`offering ${windows.length} windows for the ${side === "left" ? "right" : "left"} half`)
     setDisplay(monitorName)
-    setOffer({ snapped: address.replace(/^0x/, ""), side, monitor: monitorName, rect: { x, y, width, height }, windows })
+    setOffer({ snapped: address.replace(/^0x/, ""), side, monitor: monitorName, rect: { x, y, width, height },
+        screen: { width: screen.width, height: screen.height }, windows })
 }
 
 // The window picked grows out of its picture into the half, as in macOS's
@@ -104,9 +111,13 @@ function pick(client: Hyprland.Client, picture: Gtk.Widget) {
         ? { x: origin.x + bounds.get_x(), y: origin.y + bounds.get_y(), width: bounds.get_width(), height: bounds.get_height() }
         : undefined
     picture.set_opacity(0)
-    placing = addressOf(client)
+    const placed = placing = addressOf(client)
     setOffer(null)
-    void snapWindow(addressOf(client), o.side === "left" ? "right" : "left", from)
+    void snapWindow(addressOf(client), o.side === "left" ? "right" : "left", from).finally(() =>
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, PLACED_MS, () => {
+            if (placing === placed) placing = null
+            return GLib.SOURCE_REMOVE
+        }))
 }
 
 const monitorOf = (connector: string) =>
@@ -174,8 +185,7 @@ export default function SnapAssist() {
     let built: (() => void) | null = null
     const build = (o: Offer) => createRoot(dispose => {
         const area = { x: PAD, y: PAD, width: o.rect.width - 2 * PAD, height: o.rect.height - 2 * PAD - TITLE_HEIGHT }
-        const screen = hyprland.get_monitors().find(m => m.name === o.monitor) ?? { width: o.rect.width * 2, height: o.rect.height }
-        const slots = spread(o.windows.map(c => ({ item: c, box: { x: c.x, y: c.y, width: c.width, height: c.height } })), area, screen, SPREAD)
+        const slots = spread(o.windows.map(w => ({ item: w.client, box: w.box })), area, o.screen, SPREAD)
         const widgets: Gtk.Widget[] = []
         choices = []
         chosen = -1

@@ -1,0 +1,35 @@
+--- a/src/wireplumber.c
++++ b/src/wireplumber.c
+@@ -266,6 +266,16 @@
+     }
+ }
+ 
++// The default speaker and microphone follow the default named in the
++// metadata, but only to a node already here: after wireplumber restarts, the
++// new default is named before its node comes (its device later still), and
++// they stayed on the one gone, volume and mute going nowhere. Each new
++// endpoint asks again.
++static void astal_wp_wp_default_may_be_here(AstalWpWp *self) {
++    AstalWpWpPrivate *priv = astal_wp_wp_get_instance_private(self);
++    if (priv->defaults != NULL) g_signal_emit_by_name(priv->defaults, "changed");
++}
++
+ static void astal_wp_wp_check_delayed_endpoints(AstalWpWp *self, guint device_id) {
+     AstalWpWpPrivate *priv = astal_wp_wp_get_instance_private(self);
+     GList *eps = g_hash_table_get_values(priv->delayed_endpoints);
+@@ -286,6 +296,7 @@
+                 astal_wp_wp_update_metadata(self, astal_wp_node_get_id(ASTAL_WP_NODE(endpoint)));
+                 g_signal_emit_by_name(self, "node-added", endpoint);
+                 g_object_notify(G_OBJECT(self), "nodes");
++                astal_wp_wp_default_may_be_here(self);
+             }
+         }
+     }
+@@ -371,6 +382,7 @@
+         astal_wp_wp_update_metadata(self, astal_wp_node_get_id(astal_node));
+         g_signal_emit_by_name(self, "node-added", astal_node);
+         g_object_notify(G_OBJECT(self), "nodes");
++        if (ASTAL_WP_IS_ENDPOINT(astal_node)) astal_wp_wp_default_may_be_here(self);
+     } else if (WP_IS_DEVICE(object)) {
+         WpDevice *node = WP_DEVICE(object);
+         AstalWpDevice *device = g_object_new(ASTAL_WP_TYPE_DEVICE, "device", node, NULL);

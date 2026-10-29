@@ -3,14 +3,19 @@ import { notify } from "../notify"
 const log = logger("config")
 import { readFile, writeFileAsync, monitorFile } from "ags/file"
 import { createState } from "ags"
-import { exec } from "ags/process"
 import { Gdk } from "ags/gtk4"
 import App from "ags/app"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 
-const HOME = GLib.getenv("HOME")
-const CONFIG_FOLDER = `${HOME}/.config/kiwi-shell`
+// (kiwi-settings and the home-manager module write here too). Older kiwis
+// kept it in ~/.config whatever XDG_CONFIG_HOME said: one there, and none
+// where it says, is the one.
+export const CONFIG_FOLDER = (() => {
+    const folder = `${GLib.get_user_config_dir()}/kiwi-shell`
+    const legacy = `${GLib.get_home_dir()}/.config/kiwi-shell`
+    return !GLib.file_test(folder, GLib.FileTest.IS_DIR) && GLib.file_test(legacy, GLib.FileTest.IS_DIR) ? legacy : folder
+})()
 const CONFIG_FILE = `${CONFIG_FOLDER}/config.json`
 const HYPR_FILE = `${CONFIG_FOLDER}/hypr.conf`
 
@@ -18,7 +23,7 @@ export const ROOT = typeof SRC !== "undefined" ? SRC : App.configDir
 const DEFAULT_CONFIG_FILE = `${ROOT}/defaultConfig.json`
 const NIX_CONFIG_FILE = `${CONFIG_FOLDER}/nix-config.json`
 
-exec(`mkdir -p ${CONFIG_FOLDER}`)
+GLib.mkdir_with_parents(CONFIG_FOLDER, 0o755)
 
 const borderOpacity = 0.7
 
@@ -40,7 +45,30 @@ function nixConfig(): Record<string, any> {
 }
 
 function effective(defaults: Record<string, any>, user: Record<string, any>) {
-    return deepMerge(deepMerge(defaults, migrate(user)), nixConfig())
+    return deepMerge(deepMerge(defaults, sane(defaults, migrate(user))), sane(defaults, nixConfig()))
+}
+
+// A setting of another kind than its default's (typed by hand, left by an
+// older version: "island": null) is left out with a warning, the default in
+// its place, rather than taking the shell down where it is read. A text may
+// also be a list of texts (shortcuts); keys without a default pass as they are.
+function sane(defaults: Record<string, any>, user: Record<string, any>, path = ""): Record<string, any> {
+    if (!user || typeof user !== "object" || Array.isArray(user)) return {}
+    const result: Record<string, any> = {}
+    for (const key in user) {
+        const fallback = defaults?.[key]
+        const value = user[key]
+        const kind = (v: unknown) => Array.isArray(v) ? "array" : v === null ? "null" : typeof v
+        let ok = fallback === undefined || fallback === null || kind(value) === kind(fallback)
+        if (kind(fallback) === "string" && Array.isArray(value)) ok = value.every(v => typeof v === "string")
+        if (kind(fallback) === "number" && !Number.isFinite(value)) ok = false
+        if (!ok) {
+            log.warn(`ignoring ${path}${key}: ${JSON.stringify(value)} isn't a ${kind(fallback)}`)
+            continue
+        }
+        result[key] = kind(fallback) === "object" ? sane(fallback, value, `${path}${key}.`) : value
+    }
+    return result
 }
 
 function deepMerge(defaults: Record<string, any>, overrides: Record<string, any>): Record<string, any> {
@@ -78,9 +106,12 @@ function loadConfig() {
     const defaultContent = readFile(DEFAULT_CONFIG_FILE)
     const defaultConfig = JSON.parse(defaultContent)
 
-    try { readFile(CONFIG_FILE) }
-    catch {
-        exec(`cp --no-preserve=mode ${DEFAULT_CONFIG_FILE} ${CONFIG_FILE}`)
+    if (!GLib.file_test(CONFIG_FILE, GLib.FileTest.EXISTS)) {
+        try {
+            GLib.file_set_contents(CONFIG_FILE, defaultContent)
+        } catch (e) {
+            log.error(`could not write ${CONFIG_FILE}:`, e as Error)
+        }
     }
 
     // A file that doesn't read (a comma too many typed by hand, a write cut
@@ -92,7 +123,7 @@ function loadConfig() {
     } catch (e) {
         log.error(`could not read ${CONFIG_FILE}, using the defaults:`, e as Error)
         notify("Settings could not be read", `kiwi is using its default settings until config.json reads again: ${(e as Error).message}`, { urgency: 2 })
-        return deepMerge(defaultConfig, nixConfig())
+        return deepMerge(defaultConfig, sane(defaultConfig, nixConfig()))
     }
 }
 

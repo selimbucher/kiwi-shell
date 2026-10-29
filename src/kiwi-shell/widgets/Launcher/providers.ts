@@ -1,3 +1,4 @@
+import { notify } from "../../notify"
 import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
 import GLib from "gi://GLib"
@@ -8,8 +9,10 @@ import { execAsync } from "ags/process"
 import { logger } from "../../log"
 import { mapVersion } from "../desktopEntries"
 import { entryForClient, giconForEntry } from "../appIcon"
-import { clientSelector, focusWindow } from "../../hypr"
-import { lock, logOut, restart, shutDown } from "../power"
+import { focusClient, isMinimized, restoreClient } from "../Dock/dock-state"
+import { lock, logOut, restart, shutDown, sleep } from "../power"
+import { openMissionControl } from "../MissionControl/MissionControl"
+import { openNc } from "../Notifications/NotificationCenter"
 import { conf } from "../config"
 
 const log = logger("launcher")
@@ -63,7 +66,10 @@ function appResult(application: Apps.Application): Result {
         detail: application.get_description() || undefined,
         iconName: application.get_icon_name() || "application-x-executable",
         verb: "Open",
-        activate: () => application.launch(),
+        activate: () => {
+            if (!application.launch())
+                notify(`“${application.get_name()}” couldn't be opened`, "", { icon: "dialog-error-symbolic" })
+        },
     }
 }
 
@@ -93,20 +99,18 @@ function tier(application: Apps.Application, needle: string): number {
 // Within a tier the apps opened from here most come first (AstalApps counts
 // every launch() in its cache). A typo matches no tier; only then does the
 // fuzzy score get a say.
-function appResults(text: string, limit: number): Result[] {
+function appResults(text: string, limit: number): { results: Result[], best: number } {
     const needle = text.trim().toLowerCase()
     let scored = apps.get_list()
         .map(application => ({ application, tier: tier(application, needle) }))
         .filter(s => s.tier > 0)
     if (scored.length === 0)
         scored = apps.fuzzy_query(text).map(application => ({ application, tier: 0 }))
-    return scored
-        .sort((a, b) => b.tier - a.tier
-            || b.application.frequency - a.application.frequency
-            || a.application.name.length - b.application.name.length
-            || a.application.name.localeCompare(b.application.name))
-        .slice(0, limit)
-        .map(s => appResult(s.application))
+    scored.sort((a, b) => b.tier - a.tier
+        || b.application.frequency - a.application.frequency
+        || a.application.name.length - b.application.name.length
+        || a.application.name.localeCompare(b.application.name))
+    return { results: scored.slice(0, limit).map(s => appResult(s.application)), best: scored[0]?.tier ?? 0 }
 }
 
 // ─── Open windows ─────────────────────────────────────────────────────────────
@@ -135,17 +139,18 @@ function windowResults(text: string, limit: number): Result[] {
         .slice(0, limit)
         .map(({ client }) => {
             const entry = entryForClient(client)
-            const workspace = client.workspace?.name
             const appName = (entry && GioUnix.DesktopAppInfo.new(entry)?.get_name()) || client.class
+            // brought forward, or out of the dock where minimized
+            const minimized = isMinimized(client)
             return {
                 key: `win:${client.address}`,
                 group: "windows" as Group,
                 name: client.title || appName,
-                detail: workspace ? `${appName} — Workspace ${workspace}` : appName,
+                detail: minimized ? `${appName}, minimized` : appName,
                 gicon: entry ? giconForEntry(entry) : undefined,
                 iconName: entry ? undefined : "window-symbolic",
                 verb: "Switch",
-                activate: () => { focusWindow(clientSelector(client)) },
+                activate: () => minimized ? restoreClient(client) : focusClient(client),
             }
         })
 }
@@ -177,13 +182,22 @@ type Action = {
 }
 
 const ACTIONS: Action[] = [
+    // what is otherwise only a key or a swipe away, found by name
+    {
+        name: "Mission Control", icon: "view-grid-symbolic", verb: "Open",
+        keywords: ["desktops", "spaces", "windows", "overview", "expose"], activate: openMissionControl,
+    },
+    {
+        name: "Notification Center", icon: "notifications-symbolic", verb: "Open",
+        keywords: ["notifications"], activate: openNc,
+    },
     {
         name: "Lock Screen", icon: "system-lock-screen-symbolic",
         keywords: ["lock"], activate: lock,
     },
     {
         name: "Sleep", icon: "weather-clear-night-symbolic",
-        keywords: ["suspend"], activate: () => run("systemctl sleep"),
+        keywords: ["suspend", "hibernate"], activate: sleep,
     },
     {
         name: "Log Out", icon: "system-log-out-symbolic",
@@ -211,8 +225,8 @@ const ACTIONS: Action[] = [
 // Only from the start of a word, and only from two characters up: "Shut Down"
 // turning up because a query happened to contain a "u" is how a search box
 // ends up powering the machine off.
-function actionResults(text: string, limit: number): Result[] {
-    if (text.length < 2) return []
+function actionResults(text: string, limit: number): { results: Result[], best: number } {
+    if (text.length < 2) return { results: [], best: 0 }
     const needle = text.toLowerCase()
     const scored: { action: Action, score: number }[] = []
     for (const action of ACTIONS) {
@@ -225,18 +239,17 @@ function actionResults(text: string, limit: number): Result[] {
         }
         if (score > 0) scored.push({ action, score })
     }
-    return scored
-        .sort((a, b) => b.score - a.score || a.action.name.localeCompare(b.action.name))
-        .slice(0, limit)
-        .map(({ action }) => ({
-            key: `action:${action.name}`,
-            group: "actions" as Group,
-            name: action.name,
-            detail: action.detail,
-            iconName: action.icon,
-            verb: action.verb ?? "Run",
-            activate: action.activate,
-        }))
+    scored.sort((a, b) => b.score - a.score || a.action.name.localeCompare(b.action.name))
+    const results = scored.slice(0, limit).map(({ action }) => ({
+        key: `action:${action.name}`,
+        group: "actions" as Group,
+        name: action.name,
+        detail: action.detail,
+        iconName: action.icon,
+        verb: action.verb ?? "Run",
+        activate: action.activate,
+    }))
+    return { results, best: scored[0]?.score ?? 0 }
 }
 
 // ─── Web search ───────────────────────────────────────────────────────────────
@@ -304,9 +317,15 @@ export function search(text: string, answer: Answer | null, limit: number): Resu
     const room = limit - results.length
     const windows = windowResults(text, 3)
     const actions = actionResults(text, 3)
-    results.push(...appResults(text, Math.max(2, Math.min(4, room - windows.length - actions.length - 1))))
+    const found = appResults(text, Math.max(2, Math.min(4, room - actions.results.length - windows.length - 1)))
+    // An action named by what was typed ("sleep", "lock") is what was meant,
+    // ahead of an app that only lists the word among its keywords (Blanket,
+    // for sleep, took Enter); an app's own name still comes first.
+    const actionsFirst = actions.best >= 3 && found.best <= 3
+    if (actionsFirst) results.push(...actions.results)
+    results.push(...found.results)
     results.push(...windows)
-    results.push(...actions)
+    if (!actionsFirst) results.push(...actions.results)
     const trimmed = results.slice(0, limit - 1)
     trimmed.push(webResult(text))
     return trimmed

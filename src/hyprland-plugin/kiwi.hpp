@@ -30,7 +30,7 @@ namespace Kiwi {
     // with `hyprctl kiwi-version` and won't use a plugin that says otherwise:
     // on Arch the plugin is built by hyprpm from the repository, the shell by
     // the AUR package from a release, and the two need not be the same.
-    constexpr int PROTOCOL = 13; // 13: kiwi-previews ack and a tile's bar alpha, kiwipreviews drawn; 12: kiwigesture let says how far on the trackpad, no close; kiwipreviews at; an empty flying set flies
+    constexpr int PROTOCOL = 13; // 13: kiwi-previews ack and a tile's bar alpha, kiwipreviews drawn, kiwi-parts; 12: kiwigesture let says how far on the trackpad, no close; kiwipreviews at; an empty flying set flies
 
     // right after a layer surface (or, with popups, its popups) is drawn
     namespace Layers {

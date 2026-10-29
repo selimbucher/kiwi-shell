@@ -7,7 +7,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, primaryGdkMonitor, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, clientsBinding, list, unpinnedList, restoring, setDockOverlap, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
+import { hyprland, clientsBinding, list, unpinnedList, restoring, setDockOverlap, setDockBand, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
@@ -268,24 +268,25 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // of it. The whole auto-hide decision is these numbers; they cannot be
     // allowed to be a guess.
     // keyed by address without the 0x, as windowgeometry names them
-    const liveWindows = (): Map<string, { x: number, y: number, w: number, h: number, ws: number }> => {
+    type Box = { x: number, y: number, w: number, h: number, ws: number }
+    const windowsOf = (reply: string): Map<string, Box> => {
         try {
-            return new Map(JSON.parse(hyprland.message("j/clients"))
+            return new Map(JSON.parse(reply)
                 .filter((c: any) => c.mapped && !c.hidden)
                 .map((c: any) => [String(c.address).replace(/^0x/, ""), {
                     x: c.at[0], y: c.at[1], w: c.size[0], h: c.size[1],
                     ws: c.workspace?.id ?? -1,
                 }]))
         } catch {
-            // IPC down or a reply we cannot read: nothing is known to cover
-            // the strip, so the dock shows. A visible dock is the safe end.
+            // a reply we cannot read: nothing is known to cover the strip,
+            // so the dock shows. A visible dock is the safe end.
             return new Map()
         }
     }
     // the last full look, which a windowgeometry event updates in place: a
     // drag reports every frame, and asking for every window each time would
     // cost a round trip to the compositor per frame
-    let windows = liveWindows()
+    let windows = new Map<string, Box>()
 
     // is the cursor inside the area that keeps the dock alive? That is the
     // strip the pill occupies (its horizontal span only — leaving sideways
@@ -354,8 +355,8 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 return GLib.SOURCE_REMOVE
             }
             // an open context menu counts as presence (it usually extends
-            // above the strip)
-            if (cursorInStrip() || menuOpen())
+            // above the strip), and then the pointer needn't be asked after
+            if (menuOpen() || cursorInStrip())
                 lastEvidence = GLib.get_monotonic_time()
             if (GLib.get_monotonic_time() - lastEvidence
                 > DOCK_HIDE_TIMEOUT * 1000) {
@@ -370,7 +371,8 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     let wasShown = false
     const showDock = createComputed(get => (wasShown = (() => {
         const config = get(conf)
-        if (get(list).length + get(unpinnedList).length == 0)
+        // Home and Trash are in it too, apps or none
+        if (get(list).length + get(unpinnedList).length == 0 && !config.dock_home && !config.dock_trash)
             return false
 
         const mode = config.dock
@@ -402,10 +404,31 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             && win.x < geo.x + geo.width
             && win.x + win.w > geo.x))
     }
+    // Asked without waiting, one look at a time, the last asked for
+    // answered: a desktop switch asks several times, and each waited on the
+    // compositor mid-slide (up to a frame) with the shell standing still.
+    let looking = false
+    let lookAgain = false
     const measureCover = () => {
         if (conf().dock !== "auto-hide") return
-        windows = liveWindows()
-        coverOf()
+        if (looking) {
+            lookAgain = true
+            return
+        }
+        looking = true
+        hyprland.message_async("j/clients", (_h, result) => {
+            looking = false
+            let reply = ""
+            try {
+                reply = hyprland.message_finish(result)
+            } catch { /* IPC down: as an unreadable reply */ }
+            windows = windowsOf(reply)
+            if (lookAgain) {
+                lookAgain = false
+                return measureCover()
+            }
+            coverOf()
+        })
     }
     // windowgeometry: ADDRESS,X,Y,WIDTH,HEIGHT
     const windowMoved = (args: string) => {
@@ -601,6 +624,10 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 unsubscribe.push(showDock.subscribe(syncOverlap), conf.subscribe(syncOverlap))
                 whenMapped(syncOverlap)
                 onCleanup(() => setDockOverlap(connector, 0))
+                const syncBand = () => setDockBand(connector, conf().dock === "disabled" ? 0 : bandHeight())
+                unsubscribe.push(conf.subscribe(syncBand))
+                whenMapped(syncBand)
+                onCleanup(() => setDockBand(connector, 0))
 
                 // "default" keeps windows off the band the dock sits in; the
                 // headroom above it is only there for a hopping icon, so the

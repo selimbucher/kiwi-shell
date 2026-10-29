@@ -141,6 +141,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     const side = (edge: "leading" | "trailing") => {
         const fader = new Fader({ cssClasses: ["island-side", edge], valign: Gtk.Align.CENTER })
+        holders.push(fader)
         fader.edge = edge === "leading" ? "start" : "end"
         follow(sideKey, () => {
             const key = sideKey()
@@ -162,7 +163,10 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         return fader
     }
 
+    // what holds the island's contents, each let go of with the window
+    const holders: { release(): void }[] = []
     const middle = new Fader({ cssClasses: ["island-center"], valign: Gtk.Align.CENTER })
+    holders.push(middle)
     follow(center, () => {
         middle.show(scoped(() => centerView(center(), monitor)))
     })
@@ -215,6 +219,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     const bubble = (i: number, edge: "start" | "end") => {
         // the side's whole width, so that it sits against the island
         const b = new Bubble({ hexpand: true, valign: Gtk.Align.CENTER, halign: edge === "start" ? Gtk.Align.END : Gtk.Align.START })
+        holders.push(b)
         b.side = edge
         const id = bubbleId(i)
         follow(id, () => {
@@ -287,6 +292,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 win = self
                 onCleanup(() => {
                     subscriptions.forEach(unsubscribe => unsubscribe())
+                    holders.forEach(holder => holder.release())
                     destroyWindow(self)
                 })
                 remeasureOn(self, () => `${conf().bar_margin}`, () => gdkmonitor.get_geometry().width)

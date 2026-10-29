@@ -490,11 +490,19 @@ isOpen.subscribe(() => {
 // desktop meanwhile): not in the picture until they are there, or it shows
 // each twice on the way.
 const arrivingWindows = new Set<string>()
+// the pictures made while their window was on its way (a page slid in, a
+// zoom began), hidden too: shown again with the one in the bar
+const hiddenArriving = new Map<string, Set<Gtk.Widget>>()
 function showArriving(address: string, arriving: boolean) {
     if (arriving === arrivingWindows.has(address)) return
     if (arriving) arrivingWindows.add(address)
     else arrivingWindows.delete(address)
     desktopTiles.tiles.get(address)?.set_opacity(arriving ? 0 : 1)
+    if (!arriving) {
+        for (const picture of hiddenArriving.get(address) ?? []) picture.set_opacity(1)
+        hiddenArriving.delete(address)
+        windowTiles.measure()
+    }
     desktopTiles.measure()
 }
 
@@ -511,7 +519,12 @@ function WindowPicture({ window, width, height, tiles }: {
                 widthRequest={width}
                 heightRequest={height}
                 $={(self: Gtk.Widget) => {
-                    if (arrivingWindows.has(address)) self.set_opacity(0)
+                    if (arrivingWindows.has(address)) {
+                        self.set_opacity(0)
+                        const hidden = hiddenArriving.get(address) ?? new Set<Gtk.Widget>()
+                        hiddenArriving.set(address, hidden.add(self))
+                        onCleanup(() => hidden.delete(self))
+                    }
                     // drawn in the order registered: re-registered at the end
                     tiles.tiles.delete(address)
                     tiles.tiles.set(address, self)
@@ -653,12 +666,17 @@ function carriedBox(frame: Frame, at: Box): Box {
     return { x: Math.round(at.x + dx), y: Math.round(at.y + dy), width: Math.max(1, Math.round(at.width)), height: Math.max(1, Math.round(at.height)) }
 }
 
+// counts pick-ups and put-downs: a pick-up's hand-over that comes after
+// the put-down (a release within a frame or two) takes nothing out
+let carries = 0
+
 function pickUp(frame: Frame) {
     const address = addressOf(frame)
+    const carry = ++carries
     setCarried({ address, box: carriedBox(frame, frame.at) })
     // drawn on its own layer: out of the others
     carriedTiles.whenDrawn(() => {
-        if (carried.get()?.address !== address || windowTiles.tiles.get(address) !== frame.picture) return
+        if (carry !== carries || carried.get()?.address !== address || windowTiles.tiles.get(address) !== frame.picture) return
         windowTiles.tiles.delete(address)
         windowTiles.measure()
     })
@@ -678,6 +696,7 @@ function carriedTo(frame: Frame, at: Box) {
 function putDown(frame: Frame) {
     const address = addressOf(frame)
     if (carried.get()?.address !== address) return
+    carries++
     if (windowTiles.tiles.get(address) !== frame.picture) {
         windowTiles.tiles.delete(address)
         windowTiles.tiles.set(address, frame.picture)
@@ -1028,7 +1047,11 @@ class Scene {
         if (this.namesAnyway) GLib.source_remove(this.namesAnyway)
         this.namesAnyway = 0
         this.unsubscribe.forEach(u => u())
-        for (const page of this.pages.values()) for (const frame of page.frames.values()) frame.dispose()
+        // (a window on its way into a picture is in it from now on)
+        for (const page of this.pages.values()) for (const frame of page.frames.values()) {
+            this.stopInto(frame)
+            frame.dispose()
+        }
         for (const item of this.items.values()) this.dropItem(item)
         this.pages.clear()
         this.zoom?.dispose()

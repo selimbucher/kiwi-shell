@@ -1,5 +1,6 @@
 import { Accessor, createComputed } from "ags"
 import GLib from "gi://GLib"
+import Gio from "gi://Gio"
 import Hyprland from "gi://AstalHyprland"
 
 import { conf } from "../config"
@@ -168,9 +169,26 @@ async function forceBlur() {
 // flashed the wallpaper: Hyprland's fade-out has no layer to ask, so it falls
 // back to the global setting. Whoever wants the trade can still set it in
 // their own config; the shell doesn't set it for them.
+//
+// Drawn without a GPU (llvmpipe: a virtual machine without one of its own)
+// every pass costs every frame: one short one there, the panes still frosted.
+// Hyprland's log says what it draws with, early on.
+const softwareRendering = (() => {
+    try {
+        const signature = GLib.getenv("HYPRLAND_INSTANCE_SIGNATURE")
+        const stream = Gio.File.new_for_path(`${GLib.get_user_runtime_dir()}/hypr/${signature}/hyprland.log`).read(null)
+        const head = new TextDecoder().decode(stream.read_bytes(64 * 1024, null).toArray())
+        stream.close(null)
+        return /Renderer: .*(llvmpipe|softpipe|swiftshader|software rasterizer)/i.test(head)
+    } catch {
+        return false
+    }
+})()
+if (softwareRendering) log.info("drawn without a GPU: a light blur")
+
 const BLUR = {
-    size: 6,
-    passes: 4,
+    size: softwareRendering ? 3 : 6,
+    passes: softwareRendering ? 1 : 4,
     vibrancy: 0.1696,
     contrast: 1.4,
     noise: 0.01,

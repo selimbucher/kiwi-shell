@@ -24,7 +24,10 @@
     border-radius: 8px;
     padding: 12px;
     button {
-        padding: 12px;
+        padding: 12px 10px 8px;
         background-color: var(--k-fill-subtle);
+    }
+    .power-label {
+        font-size: 0.82em;
     }
 }

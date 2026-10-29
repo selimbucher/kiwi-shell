@@ -263,3 +263,54 @@ window.no-blur {
 window label {
     text-shadow: var(--k-text-shadow);
 }
+
+// a month, as the island's date and the Notification Center show it
+@mixin calendar {
+    .today {
+        font-weight: 700;
+        font-size: 13px;
+        margin: 2px 4px 8px;
+        color: var(--k-fg);
+    }
+
+    calendar {
+        background: none;
+        border: none;
+        color: var(--k-fg-2);
+
+        > header {
+            background: none;
+            border: none;
+            button {
+                background: none;
+                border: none;
+                box-shadow: none;
+                min-width: 0;
+                min-height: 0;
+                padding: 2px 6px;
+                border-radius: 8px;
+                &:hover {
+                    background-color: var(--k-fill);
+                }
+            }
+        }
+
+        > grid {
+            > label.day-name {
+                color: var(--k-fg-4);
+                font-size: 11px;
+            }
+            > label.day-number {
+                padding: 4px 7px;
+                border-radius: 99px;
+                &.other-month {
+                    color: var(--k-fg-4);
+                }
+                &:selected {
+                    background-color: var(--primary);
+                    color: #000000;
+                }
+            }
+        }
+    }
+}

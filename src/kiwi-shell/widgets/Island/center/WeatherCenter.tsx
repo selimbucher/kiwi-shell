@@ -3,6 +3,7 @@ import { With } from "ags"
 import GLib from "gi://GLib"
 
 import { forecast, weatherProblem, condition, type Forecast } from "../../services/weather"
+import { clockHour } from "../../services/minuteClock"
 
 // ─── The weather ──────────────────────────────────────────────────────────────
 // The sky and the temperature now; a click shows what macOS's Weather widget
@@ -13,7 +14,7 @@ const deg = (n: number) => `${Math.round(n)}°`
 function hourLabel(time: string, first: boolean): string {
     if (first) return "Now"
     const t = GLib.DateTime.new_from_iso8601(`${time}:00`, GLib.TimeZone.new_local())
-    return t?.format("%H") ?? time.slice(11, 13)
+    return t ? clockHour(t) : time.slice(11, 13)
 }
 
 function dayLabel(date: string, first: boolean): string {

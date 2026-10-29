@@ -1,0 +1,33 @@
+--- a/src/client.vala
++++ b/src/client.vala
+@@ -28,6 +28,10 @@
+     public string swallowing { get; private set; }
+     public int focus_history_id { get; private set; }
+ 
++    internal void retitle(string title) {
++        if (this.title != title) this.title = title;
++    }
++
+     internal void sync(Json.Object obj) {
+         var hyprland = Hyprland.get_default();
+ 
+--- a/src/hyprland.vala
++++ b/src/hyprland.vala
+@@ -437,7 +437,16 @@
+                 break;
+             }
+             case "windowtitlev2": {
+-                yield sync_clients();
++                // the title is in the event: every client asked for again,
++                // and each of their properties set and notified, at every
++                // title change was a busy terminal's spinner's cost
++                var argv = args[1].split(",", 2);
++                var c = argv.length == 2 ? get_client(argv[0]) : null;
++                if (c != null) {
++                    c.retitle(argv[1]);
++                } else {
++                    yield sync_clients();
++                }
+                 break;
+             }
+             // TODO:

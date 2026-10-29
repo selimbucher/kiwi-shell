@@ -1,9 +1,27 @@
 import { logger } from "../../log"
 const log = logger("dock")
 import { conf } from "../config"
+import { notify } from "../../notify"
 import GLib from "gi://GLib"
+import Gio from "gi://Gio"
+import { execAsync } from "ags/process"
 import { Gtk, Gdk } from "ags/gtk4"
 import Hyprland from "gi://AstalHyprland"
+
+/**
+ * Opens the app (on `files`). One that won't start says why, rather than
+ * nothing happening; false then.
+ */
+export function launchApp(app: Gio.AppInfo, files: Gio.File[] = []): boolean {
+    try {
+        return app.launch(files, null)
+    } catch (e) {
+        log.error(`couldn't open ${app.get_id() ?? app.get_name()}:`, e as Error)
+        notify(`“${app.get_display_name()}” couldn't be opened`, (e as Error).message ?? "",
+            { icon: "dialog-error-symbolic" })
+        return false
+    }
+}
 
 /**
  * Whether the pointer is over `widget`, one of the dock's (a bottom-anchored
@@ -106,10 +124,11 @@ export function openPath(path: string) {
         [bin, flag, GLib.shell_quote(path)].filter(Boolean).join(" "))
 }
 
+// gio empties every trash, a removable drive's too, where gvfs is installed;
+// without it (minimal setups) the home trash is emptied here
 export function emptyTrash() {
-    try {
-        GLib.spawn_command_line_async("gio trash --empty")
-    } catch (error) {
-        log.error("Failed to empty trash:", error)
-    }
+    const trash = `${GLib.get_user_data_dir()}/Trash`
+    execAsync(["gio", "trash", "--empty"])
+        .catch(() => execAsync(["find", `${trash}/files`, `${trash}/info`, "-mindepth", "1", "-delete"]))
+        .catch(error => log.error("Failed to empty trash:", error))
 }

@@ -8,9 +8,10 @@ import GioUnix from "gi://GioUnix"
 import GLib from "gi://GLib"
 import Pango from "gi://Pango"
 import { subprocess } from "ags/process"
-import { conf } from "../config"
+import { conf, CONFIG_FOLDER } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
-import { openPath, openTerminal } from "../Dock/dock-utils"
+import { openPath, openTerminal, launchApp } from "../Dock/dock-utils"
+import { dockBands } from "../Dock/dock-state"
 import { setWallpaper, promptWallpaper } from "../services/wallpaper"
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
 import { logger } from "../../log"
@@ -127,7 +128,7 @@ refresh()
 
 function openItem(item: DesktopItem) {
     if (item.appInfo) {
-        item.appInfo.launch([], null)
+        launchApp(item.appInfo)
         return
     }
     if (item.isDir) {
@@ -356,6 +357,9 @@ function reservedInsets(): { top: number; bottom: number } {
         if (atTop && !atBottom) top = Math.max(top, h)
         else if (atBottom && !atTop) bottom = Math.max(bottom, h)
     }
+    // the dock reserves its band by hand, or not at all while it hides
+    const connector = monitorRef?.get_connector()
+    if (connector) bottom = Math.max(bottom, dockBands.peek()[connector] ?? 0)
     return { top, bottom }
 }
 
@@ -396,7 +400,7 @@ function firstFreeSlot(occupied: Set<string>): Slot {
 }
 
 // persisted free-placement slots, path → [col, row]
-const LAYOUT_FILE = `${GLib.get_user_config_dir()}/kiwi-shell/desktop-layout.json`
+const LAYOUT_FILE = `${CONFIG_FOLDER}/desktop-layout.json`
 const layout = new Map<string, Slot>()
 try {
     const parsed = JSON.parse(readFile(LAYOUT_FILE))
@@ -493,7 +497,7 @@ function relayout() {
         if (!byPath.has(path)) occupied.add(slotKey(s))
     for (const item of list) {
         let slot = layout.get(item.path)
-        if (slot && (slot.col >= gridCols() || occupied.has(slotKey(slot))))
+        if (slot && (slot.col >= gridCols() || slot.row >= gridRows() || occupied.has(slotKey(slot))))
             slot = undefined
         if (!slot) {
             slot = firstFreeSlot(occupied)
@@ -520,6 +524,7 @@ function cleanUp() {
 items.subscribe(relayout)
 // placement mode, dock mode (exclusive zone!) etc. all live in the config
 conf.subscribe(relayout)
+dockBands.subscribe(relayout)
 
 // reservedInsets() depends on the other shell windows' sizes, which are 0
 // until the compositor allocates them — re-layout exactly when they change
@@ -612,7 +617,7 @@ function repositionDragged(uris: string[], x: number, y: number): boolean {
         const s = layout.get(p)!
         let dest = {
             col: Math.min(gridCols() - 1, Math.max(0, s.col + dc)),
-            row: Math.max(0, s.row + dr),
+            row: Math.min(gridRows() - 1, Math.max(0, s.row + dr)),
         }
         while (occupied.has(slotKey(dest))) {
             dest = dest.col + 1 < gridCols()
@@ -642,11 +647,7 @@ function openWithDialog(item: DesktopItem) {
     dialog.connect("response", (d: Gtk.AppChooserDialog, response: number) => {
         if (response === Gtk.ResponseType.OK) {
             const appInfo = d.get_app_info()
-            try {
-                appInfo?.launch([file], null)
-            } catch (e) {
-                log.error(`Desktop: failed to open ${item.path} with ${appInfo?.get_name()}:`, e)
-            }
+            if (appInfo) launchApp(appInfo, [file])
         }
         d.destroy()
     })
@@ -949,7 +950,8 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             {
                 label: "Desktop Settings…",
                 icon: "preferences-system-symbolic",
-                onClick: () => subprocess(["kiwi-settings"]),
+                // on its Desktop page, not wherever the app opens
+                onClick: () => subprocess(["kiwi-settings", "desktop"]),
             },
             { separator: true },
             {

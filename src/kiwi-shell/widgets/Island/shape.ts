@@ -453,11 +453,20 @@ export const Fader = GObject.registerClass(
             }
         }
 
-        vfunc_dispose(): void {
+        /**
+         * Everything it holds let go of at once, its scopes ended: for a
+         * window that goes (a display unplugged), whose widgets the shell's
+         * own closures keep, so that their dispose never came.
+         */
+        release() {
             this._ticker?.stop()
             for (const widget of this.shown.keys()) done(widget)
             this.shown.clear()
             this.current = null
+        }
+
+        vfunc_dispose(): void {
+            this.release()
             super.vfunc_dispose()
         }
     },
@@ -558,6 +567,11 @@ export const Bubble = GObject.registerClass(
                 .translate(at(-pivotX, -height / 2))
             child.set_opacity(Math.min(1, p * 1.6))
             child.allocate(w, height, baseline, transform)
+        }
+
+        /** What it holds let go of (Fader.release). */
+        release() {
+            this._slot?.release()
         }
 
         vfunc_dispose(): void {

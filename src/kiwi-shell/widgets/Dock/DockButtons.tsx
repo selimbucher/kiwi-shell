@@ -11,15 +11,21 @@ import { openChoicePrompt } from "../prompts"
 
 export function HomeFolderButton({ menuSlot }: { menuSlot: MenuSlot }) {
     const setMenuOpen = menuSlot()
-    const commonDirs = [
-        { name: "Desktop",   path: `${HOME}/Desktop`,   icon: "user-desktop" },
-        { name: "Documents", path: `${HOME}/Documents`, icon: "folder-documents" },
-        { name: "Downloads", path: `${HOME}/Downloads`, icon: "folder-download" },
-        { name: "Music",     path: `${HOME}/Music`,     icon: "folder-music" },
-        { name: "Pictures",  path: `${HOME}/Pictures`,  icon: "folder-pictures" },
-        { name: "Videos",    path: `${HOME}/Videos`,    icon: "folder-videos" },
-        { name: "Public",    path: `${HOME}/Public`,    icon: "folder-publicshare" },
-    ].filter(d => GLib.file_test(d.path, GLib.FileTest.IS_DIR))
+    // the user's folders where they are (~/Schreibtisch, ~/Bilder), by the
+    // names the file manager shows them under
+    const commonDirs = ([
+        [GLib.UserDirectory.DIRECTORY_DESKTOP, "user-desktop"],
+        [GLib.UserDirectory.DIRECTORY_DOCUMENTS, "folder-documents"],
+        [GLib.UserDirectory.DIRECTORY_DOWNLOAD, "folder-download"],
+        [GLib.UserDirectory.DIRECTORY_MUSIC, "folder-music"],
+        [GLib.UserDirectory.DIRECTORY_PICTURES, "folder-pictures"],
+        [GLib.UserDirectory.DIRECTORY_VIDEOS, "folder-videos"],
+        [GLib.UserDirectory.DIRECTORY_PUBLIC_SHARE, "folder-publicshare"],
+    ] as const)
+        .map(([dir, icon]) => ({ path: GLib.get_user_special_dir(dir), icon }))
+        .filter((d): d is { path: string, icon: typeof d.icon } =>
+            !!d.path && d.path !== HOME && GLib.file_test(d.path, GLib.FileTest.IS_DIR))
+        .map(d => ({ ...d, name: GLib.path_get_basename(d.path) }))
 
     const [hop, setHop] = createState<Hop>("")
 

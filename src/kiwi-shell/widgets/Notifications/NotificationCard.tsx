@@ -1,4 +1,4 @@
-import { Gtk } from "ags/gtk4"
+import { Gtk, Gdk } from "ags/gtk4"
 import Notifd from "gi://AstalNotifd"
 import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
@@ -10,6 +10,7 @@ import { Accessor, createComputed, createRoot, createState, onCleanup } from "ag
 
 import { logger } from "../../log"
 import { minuteNow } from "../services/minuteClock"
+import { loadThumbnail } from "../services/wallpaper"
 import { clientSelector, focusWindow } from "../../hypr"
 import { ColumnFactory } from "./AnimatedColumn"
 import { CardRow, GroupRow, Row, appMatchesClient, clearAll, dismissAll, toggleGroup } from "./store"
@@ -46,7 +47,8 @@ export const rowFactory: ColumnFactory<Row> = {
         return createRoot(dispose => {
             const [state, setState] = createState<Row>(row)
             const widget =
-                row.kind === "header" ? Header()
+                row.kind === "calendar" ? CalendarRow()
+                : row.kind === "header" ? Header()
                 : row.kind === "empty" ? Empty()
                 : row.kind === "group" ? GroupHeader({ row: state as Accessor<GroupRow> })
                 : Card({ row: state as Accessor<CardRow> })
@@ -66,6 +68,26 @@ export const rowFactory: ColumnFactory<Row> = {
 }
 
 // ─── Rows ─────────────────────────────────────────────────────────────────────
+
+// today, and the month around it; back on today at each opening
+function CalendarRow() {
+    return (
+        <box class="nc-card nc-calendar" orientation={Gtk.Orientation.VERTICAL}>
+            <label class="today" xalign={0} label={minuteNow(t => t.format("%A, %B %-d") ?? "")} />
+            <Gtk.Calendar showHeading showDayNames showWeekNumbers={false}
+                $={(self: Gtk.Calendar) => {
+                    const today = () => {
+                        const now = GLib.DateTime.new_now_local()
+                        self.set_year(now.get_year())
+                        self.set_month(now.get_month() - 1)
+                        self.set_day(now.get_day_of_month())
+                    }
+                    today()
+                    self.connect("map", today)
+                }} />
+        </box>
+    ) as Gtk.Widget
+}
 
 function Header() {
     return (
@@ -367,6 +389,30 @@ function looksLikeAvatar(path: string): boolean {
     }
 }
 
+// A picture decoded at the size it is shown, a little at a time
+// (wallpaper.ts): a screenshot's is a whole screen, and Gtk.Picture decoded
+// and uploaded all of it at once, the banner's arrival stuck for a moment and
+// again at every opening of the Notification Center. Kept by file, size and
+// change time: one rewritten under the same name is read again.
+const pictures = new Map<string, Promise<Gdk.Texture | null>>()
+const PICTURES_KEPT = 64
+
+function pictureOf(path: string, size: number): Promise<Gdk.Texture | null> {
+    let changed = 0
+    try {
+        changed = Gio.File.new_for_path(path).query_info("time::modified", Gio.FileQueryInfoFlags.NONE, null)
+            .get_attribute_uint64("time::modified")
+    } catch { /* gone: the load says so */ }
+    const key = `${path}|${size}|${changed}`
+    let texture = pictures.get(key)
+    if (!texture) {
+        texture = loadThumbnail(path, size, size, false)
+        pictures.set(key, texture)
+        if (pictures.size > PICTURES_KEPT) pictures.delete(pictures.keys().next().value!)
+    }
+    return texture
+}
+
 // A Gtk.Picture's natural size is the image's full size, which would blow up
 // the card for large images. An overlay only measures its main child, so a
 // fixed-size box dictates the size and the picture just fills it.
@@ -382,7 +428,7 @@ function picture(path: string, size: number, cssClass: string, fit: Gtk.ContentF
             <Gtk.Picture
                 $type="overlay"
                 $={(self: Gtk.Picture) => {
-                    self.set_filename(path)
+                    pictureOf(path, size).then(texture => { if (texture) self.set_paintable(texture) })
                     self.set_content_fit(fit)
                     self.set_can_shrink(true)
                 }}

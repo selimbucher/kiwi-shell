@@ -1,6 +1,7 @@
 import { Gtk } from "ags/gtk4"
 import { type Accessor } from "ags"
 import { Icon } from "./iconNames"
+import { keyboardWhileOpen } from "./monitors"
 
 // Every right-click menu in the shell pops one of these. Hand-rolled, the
 // copies had already drifted apart on padding, and not one of them drew a
@@ -71,6 +72,7 @@ export function ContextMenu({ items, class: className = "context-menu", iconSize
             class={className}
             $={(self) => {
                 popover = self
+                keyboardWhileOpen(self as Gtk.Popover)
                 if (onVisible)
                     self.connect("notify::visible", () => onVisible(self.visible))
             }}

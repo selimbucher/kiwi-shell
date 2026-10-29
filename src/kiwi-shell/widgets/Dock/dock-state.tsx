@@ -5,12 +5,15 @@ export type MenuSlot = () => (open: boolean) => void
 const log = logger("dock")
 import { createState, createComputed, createBinding } from "ags"
 import { readFile, writeFileAsync } from "ags/file"
-import { conf } from "../config"
+import { conf, CONFIG_FOLDER } from "../config"
 import GLib from "gi://GLib"
+import Gio from "gi://Gio"
+import GioUnix from "gi://GioUnix"
 import Hyprland from "gi://AstalHyprland"
+import { resolveFileManager, resolveTerminal } from "./dock-utils"
 import { mapVersion, canonicalEntry } from "../desktopEntries"
 import { entryForClient } from "../appIcon"
-import { clientSelector, focusWindow, genieTo, genieWatch, moveWindowToWorkspace, pluginsReady, raiseWindow, toggleSpecialWorkspace } from "../../hypr"
+import { clientSelector, focusWindow, genieTo, genieWatch, hideSpecialOn, moveWindowToWorkspace, pluginsReady, raiseWindow } from "../../hypr"
 import { LAYER } from "../services/theme"
 import type Gtk from "gi://Gtk?version=4.0"
 
@@ -23,6 +26,15 @@ export const [dockOverlaps, setDockOverlaps] = createState<Record<string, number
 export function setDockOverlap(connector: string, px: number) {
     const now = dockOverlaps.peek()
     if ((now[connector] ?? 0) !== px) setDockOverlaps({ ...now, [connector]: px })
+}
+
+// The band the dock's pill sits in, shown or hidden, by connector: zero only
+// when the dock is off. The desktop's icons keep out of it in every mode, the
+// auto-hide dock being up exactly when the desktop is in view.
+export const [dockBands, setDockBands] = createState<Record<string, number>>({})
+export function setDockBand(connector: string, px: number) {
+    const now = dockBands.peek()
+    if ((now[connector] ?? 0) !== px) setDockBands({ ...now, [connector]: px })
 }
 
 export const DOCK_HIDE_TIMEOUT = 200
@@ -102,15 +114,43 @@ export function launchBounce(setHop: (hop: Hop) => void, ours?: (client: Hyprlan
 }
 
 export const HOME = GLib.getenv("HOME")
-const APPLIST_FILE = `${HOME}/.config/kiwi-shell/dock-apps.json`
+const APPLIST_FILE = `${CONFIG_FOLDER}/dock-apps.json`
 
 export const isNixManaged = !!conf().dock_apps
+
+// A first start (no list saved, none from Home Manager): the dock comes with
+// what anyone opens first, as a new Mac's does: the browser, files, a
+// terminal, the settings. Saved at once, so what's taken off stays off.
+function firstDock(): string[] {
+    const all = Gio.AppInfo.get_all().filter(a => a.should_show())
+    // by category: what opens folders is often an editor (VS Code takes them)
+    const the = (category: string, bin: string) => {
+        const apps = all.filter(a => ((a as GioUnix.DesktopAppInfo).get_categories?.() ?? "").split(";").includes(category))
+        return apps.find(a => GLib.path_get_basename(a.get_executable() ?? "") === bin) ?? apps[0]
+    }
+    const apps = [
+        Gio.AppInfo.get_default_for_uri_scheme("https"),
+        the("FileManager", resolveFileManager().bin),
+        the("TerminalEmulator", resolveTerminal().bin),
+        GioUnix.DesktopAppInfo.new("com.github.selimbucher.kiwi_settings.desktop"),
+    ]
+    return [...new Set(apps.map(a => a?.get_id()).filter((id): id is string => !!id))]
+}
 
 const initialAppList: string[] = conf().dock_apps ?? (() => {
     try {
         return JSON.parse(readFile(APPLIST_FILE))
     } catch {
-        return []
+        // (one that's there and doesn't read is left as it is)
+        if (GLib.file_test(APPLIST_FILE, GLib.FileTest.EXISTS)) return []
+        const apps = firstDock()
+        try {
+            GLib.file_set_contents(APPLIST_FILE, JSON.stringify(apps, null, 2))
+        } catch (e) {
+            log.error("Failed to save the first dock:", e as Error)
+        }
+        log.info(`a first dock: ${apps.join(", ")}`)
+        return apps
     }
 })()
 
@@ -299,7 +339,7 @@ hyprland.connect("notify::focused-client", () => {
     setTimeout(() => {
         for (const m of hyprland.get_monitors()) {
             if (m.specialWorkspace?.name === MINIMIZED_WS)
-                toggleSpecialWorkspace("minimized")
+                void hideSpecialOn(m.get_name(), "minimized", addr(client))
         }
     }, 150)
 })

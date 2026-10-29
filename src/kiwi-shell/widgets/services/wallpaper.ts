@@ -47,14 +47,38 @@ export function refreshWallpaper() {
 // without awww installed nothing keeps trying for the life of the shell.
 const ATTEMPTS = 15
 
+// the wallpaper of a first start, when nothing is on the screen yet
+const FIRST_WALLPAPER = "pawel-czerwinski-ZkzobNDayXo-unsplash.jpg"
+
+// Another wallpaper program (hyprpaper, swaybg, mpvpaper) has the background
+// already: an awww started as well covered it in black.
+async function otherWallpaper(): Promise<boolean> {
+    try {
+        const monitors = JSON.parse(await execAsync(["hyprctl", "-j", "layers"]))
+        return Object.values(monitors).some((m: any) => (m.levels?.["0"] ?? []).some((l: any) =>
+            l.namespace !== "awww-daemon" && !String(l.namespace).startsWith("kiwi")))
+    } catch {
+        return false
+    }
+}
+
 function findWallpaper(attempt = 0) {
     execAsync("awww query")
         .then(output => {
             const path = parseQuery(output)
-            if (path) storeWallpaperPath(path)
+            if (path) return storeWallpaperPath(path)
+            // awww up and showing nothing (it remembers the last image, so
+            // only on a first start): one of the shell's own, not a black screen
+            if (/image:/.test(output) || !output.trim()) return
+            const first = listWallpapers().find(p => p.endsWith(`/${FIRST_WALLPAPER}`)) ?? listWallpapers()[0]
+            if (first) {
+                log.info(`nothing on the screen yet, showing ${GLib.path_get_basename(first)}`)
+                setWallpaper(first)
+            }
         })
-        .catch(() => {
+        .catch(async () => {
             if (attempt === 0) {
+                if (await otherWallpaper()) return log.info("another program draws the wallpaper; not starting awww")
                 log.debug("awww daemon not running, starting it")
                 execAsync("awww-daemon").catch(() => log.debug("awww-daemon could not be started"))
             }

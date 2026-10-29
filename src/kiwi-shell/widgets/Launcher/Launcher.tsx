@@ -1,3 +1,5 @@
+import KiwiSurface from "gi://KiwiSurface"
+import Cairo from "gi://cairo"
 import { logger } from "../../log"
 const log = logger("launcher")
 import app from "ags/gtk4/app"
@@ -9,7 +11,7 @@ import { conf } from "../config"
 import { themeClasses, LAYER } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { applyBinds, currentBinds, registerBindSetup, dialect, type BindOp } from "../../hypr"
-import { shortcuts, combo, type Shortcut } from "../../shortcuts"
+import { shortcuts, combo, bindCombos, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { search, GROUP_LABEL, type Result } from "./providers"
 import { evaluate, formatNumber } from "./calc"
@@ -59,6 +61,8 @@ const results: Accessor<Result[]> = createComputed(get => {
 let registered: Shortcut[] = []
 
 const toggle = () => isVisible() ? hideLauncher() : showLauncher()
+/** Spotlight opened, or closed, as its key does. */
+export const toggleLauncher = toggle
 const PRESS = globalShortcut("launcher", "Spotlight: open or close", "press", toggle)
 const TAP = globalShortcut("launcher-tap", "Spotlight: open or close on a tap", "release", toggle)
 
@@ -75,13 +79,13 @@ async function registerLauncherBind() {
         return
     }
     const ops: BindOp[] = []
-    for (const s of wanted) {
-        if (binds.some((b: any) => b.description === "kiwi: launcher" && b.key === s.key && b.modmask === s.modmask))
+    for (const s of wanted) for (const c of bindCombos(s)) {
+        if (binds.some((b: any) => b.description === "kiwi: launcher" && b.key === c.split(" + ").pop() && b.modmask === s.modmask))
             continue
         const action = !s.tap ? PRESS
             : await dialect() === "lua" ? TAP
             : { exec: "hyprctl dispatch global kiwi-shell:launcher" }
-        ops.push({ bind: combo(s), action, description: "kiwi: launcher", flags: { release: s.tap } })
+        ops.push({ bind: c, action, description: "kiwi: launcher", flags: { release: s.tap } })
     }
     if (!ops.length) {
         registered = wanted
@@ -94,7 +98,7 @@ async function registerLauncherBind() {
     }
 }
 
-const launcherUnbinds = (): BindOp[] => registered.map(s => ({ unbind: combo(s) }))
+const launcherUnbinds = (): BindOp[] => registered.flatMap(s => bindCombos(s).map(c => ({ unbind: c })))
 
 registerBindSetup("launcher", registerLauncherBind, launcherUnbinds)
 
@@ -248,6 +252,36 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             keymode={Astal.Keymode.EXCLUSIVE}
             $={(self) => {
                 onCleanup(() => destroyWindow(self))
+
+                // Only the panel draws, and only it is to be blurred: the
+                // window covers the screen for a click outside, and Hyprland
+                // blurred all of it for every frame of the fade in and out.
+                const win = self as Gtk.Window
+                const watched = new WeakSet<Gdk.Surface>()
+                const showOnlyPanel = () => {
+                    const surface = win.get_surface()
+                    const [ok, bounds] = panelRef?.compute_bounds(win) ?? [false, null]
+                    if (!surface || !ok || !bounds) return
+                    const [dx, dy] = win.get_surface_transform()
+                    const rect = new Cairo.RectangleInt()
+                    rect.x = Math.floor(bounds.get_x() + dx)
+                    rect.y = Math.floor(bounds.get_y() + dy)
+                    rect.width = Math.ceil(bounds.get_width())
+                    rect.height = Math.ceil(bounds.get_height())
+                    const region = new Cairo.Region()
+                    region.unionRectangle(rect)
+                    KiwiSurface.set_visible_region(surface, region)
+                }
+                win.connect("map", () => {
+                    const surface = win.get_surface()
+                    // (it grows with the results: laid out again, looked at again)
+                    if (surface && !watched.has(surface)) {
+                        watched.add(surface)
+                        surface.connect("layout", showOnlyPanel)
+                    }
+                    showOnlyPanel()
+                })
+
                 const keys = new Gtk.EventControllerKey()
                 keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 keys.connect("key-pressed", (_controller, keyval) => {
@@ -343,7 +377,11 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                         orientation={Gtk.Orientation.VERTICAL}
                         visible={rows.as(r => r.length > 0)}
                     >
-                        <For each={rows}>
+                        {/* a row still there after a keystroke stays as it was built,
+                            the key covering all it shows: every row was built
+                            again at every key */}
+                        <For each={rows} id={(r: Row) =>
+                            `${r.result.key}|${r.result.name}|${r.result.detail ?? ""}|${r.result.verb ?? ""}|${r.header ?? ""}`}>
                             {(row: Row, index: Accessor<number>) => (
                                 <ResultRow row={row} index={index} />
                             )}

@@ -59,15 +59,23 @@ export type Dialect = "lua" | "hyprlang"
 
 let dialectProbe: Promise<Dialect> | null = null
 
-// probed once: the config manager is fixed for the compositor's lifetime
+// probed once: the config manager is fixed for the compositor's lifetime.
+// A request that didn't get through says nothing about it, and is asked
+// again next time: kept, it had a Lua config spoken to in hyprlang until the
+// shell restarted.
 export function dialect(): Promise<Dialect> {
     dialectProbe ??= request("eval return 1").then(
-        reply => reply.trim() === "ok" ? "lua" : "hyprlang",
-        () => "hyprlang" as Dialect,
-    ).then(d => {
-        log.info(`compositor config dialect: ${d}`)
-        return d
-    })
+        reply => {
+            const d: Dialect = reply.trim() === "ok" ? "lua" : "hyprlang"
+            log.info(`compositor config dialect: ${d}`)
+            return d
+        },
+        e => {
+            log.warn("couldn't ask the compositor for its config dialect:", e as Error)
+            dialectProbe = null
+            return "hyprlang" as Dialect
+        },
+    )
     return dialectProbe
 }
 
@@ -97,19 +105,33 @@ async function dispatch(lua: string, hyprlang: string, quiet = false): Promise<b
 export const focusWindow = (selector: string) =>
     dispatch(`hl.dsp.focus({ window = ${luaStr(selector)} })`, `focuswindow ${selector}`)
 
-export const focusWorkspace = (ws: string | number) =>
-    dispatch(`hl.dsp.focus({ workspace = ${luaStr(String(ws))} })`, `workspace ${ws}`)
+// A workspace as the compositor is told it: a negative number is a named
+// (or special) workspace's id, and said as a number it meant "that many to
+// the left": a window put on "name:code" landed on another desktop.
+function workspaceWord(ws: string | number): string {
+    if (typeof ws === "string" || ws > 0) return String(ws)
+    const name = hyprland.get_workspace(ws)?.get_name()
+    if (!name) return String(ws)
+    return name.startsWith("special:") ? name : `name:${name}`
+}
+
+export const focusWorkspace = (ws: string | number) => {
+    const word = workspaceWord(ws)
+    return dispatch(`hl.dsp.focus({ workspace = ${luaStr(word)} })`, `workspace ${word}`)
+}
 
 export const moveWindowToWorkspace = (
     ws: string | number,
     selector: string,
     opts: { follow?: boolean } = {},
-) =>
-    dispatch(
-        `hl.dsp.window.move({ workspace = ${luaStr(String(ws))}, window = ${luaStr(selector)}` +
+) => {
+    const word = workspaceWord(ws)
+    return dispatch(
+        `hl.dsp.window.move({ workspace = ${luaStr(word)}, window = ${luaStr(selector)}` +
         (opts.follow === false ? `, follow = false` : ``) + ` })`,
-        `${opts.follow === false ? "movetoworkspacesilent" : "movetoworkspace"} ${ws},${selector}`,
+        `${opts.follow === false ? "movetoworkspacesilent" : "movetoworkspace"} ${word},${selector}`,
     )
+}
 
 // Client.kill() in AstalHyprland still speaks the pre-0.56 dialect
 // ("dispatch killwindow address:..."), which the lua IPC rejects — every
@@ -123,6 +145,21 @@ export const raiseWindow = (selector: string) =>
 
 export const toggleSpecialWorkspace = (name: string) =>
     dispatch(`hl.dsp.workspace.toggle_special(${luaStr(name)})`, `togglespecialworkspace ${name}`)
+
+/**
+ * The special workspace `name` put away where `monitor` shows it, which may
+ * not be the focused display (a toggle acts on that one, and opened it there
+ * instead), and the focus given back to `window` after, in one go.
+ */
+export async function hideSpecialOn(monitor: string, name: string, window: string): Promise<boolean> {
+    if (await dialect() === "lua")
+        return evalLua([
+            `hl.dispatch(hl.dsp.focus({ monitor = ${luaStr(monitor)} }))`,
+            `hl.dispatch(hl.dsp.workspace.toggle_special(${luaStr(name)}))`,
+            `hl.dispatch(hl.dsp.focus({ window = ${luaStr(window)} }))`,
+        ].join("\n"), `hide ${name}`)
+    return send(`[[BATCH]]dispatch focusmonitor ${monitor};dispatch togglespecialworkspace ${name};dispatch focuswindow ${window}`, `hide ${name}`)
+}
 
 export const exitSession = () => dispatch(`hl.dsp.exit()`, `exit`)
 
@@ -310,6 +347,9 @@ const WITHOUT = {
 }
 
 const loadedPlugins = new Set<string>()
+// the parts of kiwi's plugin that started (`hyprctl kiwi-parts`): one whose
+// hook a Hyprland update moved is done without, as with no plugin at all
+let kiwiParts: Set<string> | null = null
 
 let pluginsLoaded = () => {}
 /** Settles once loadPlugins() knows what the compositor can do. */
@@ -362,7 +402,7 @@ export function snapWindow(address: string, zone: string,
 
 /** Whether the compositor can do this for the shell. Answers after loadPlugins(). */
 export const hasFeature = (feature: keyof typeof FEATURES) =>
-    FEATURES[feature].some(name => loadedPlugins.has(name))
+    FEATURES[feature].some(name => loadedPlugins.has(name) && (name !== "kiwi" || !kiwiParts || kiwiParts.has(feature)))
 
 export async function loadPlugins() {
     const path = typeof PLUGIN === "string" ? PLUGIN : ""
@@ -416,7 +456,15 @@ export async function loadPlugins() {
 async function checkPluginProtocol(shipsPlugin: boolean) {
     const reply = await request("kiwi-version").catch(() => "")
     const version = /^\d+$/.test(reply.trim()) ? Number(reply.trim()) : null
-    if (version === PLUGIN_PROTOCOL) return
+    if (version === PLUGIN_PROTOCOL) {
+        // (no answer that reads as one: all of them, as before there was a question)
+        const parts = (await request("kiwi-parts").catch(() => "")).trim()
+        if (!/^[a-z]+( [a-z]+)*$/.test(parts)) return
+        kiwiParts = new Set(parts.split(" "))
+        const missing = (Object.keys(FEATURES) as (keyof typeof FEATURES)[]).filter(f => !kiwiParts!.has(f))
+        if (missing.length) log.warn(`kiwi's plugin started without: ${missing.join(", ")}`)
+        return
+    }
 
     loadedPlugins.delete("kiwi")
     log.warn(`kiwi's plugin speaks protocol ${version ?? "(none, too old to say)"}, this shell ${PLUGIN_PROTOCOL}: not using it`)

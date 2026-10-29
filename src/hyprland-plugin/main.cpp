@@ -7,6 +7,9 @@
 #include <string>
 
 static SP<SHyprCtlCommand> g_versionCommand;
+static SP<SHyprCtlCommand> g_partsCommand;
+// the parts that started, for `hyprctl kiwi-parts`
+static std::string g_parts;
 
 APICALL EXPORT std::string pluginAPIVersion() {
     return HYPRLAND_API_VERSION;
@@ -34,6 +37,20 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
     const bool MINIMIZE = Kiwi::Minimize::init(handle);
     if (!GEOMETRY && !PREVIEWS && !GENIE && !DESKTOPS && !STACKING)
         throw std::runtime_error("[kiwi] none of its parts could start");
+
+    // A Hyprland update can move what a part hooks: the shell asks which
+    // started, and does without the others (empty switcher tiles otherwise)
+    g_parts.clear();
+    for (const auto& [NAME, STARTED] : {std::pair{"geometry", GEOMETRY}, {"previews", PREVIEWS}, {"genie", GENIE}, {"desktops", DESKTOPS}, {"stacking", STACKING},
+                                        {"snap", SNAP}, {"screen", SCREEN}, {"memory", MEMORY}, {"minimize", MINIMIZE}})
+        if (STARTED)
+            g_parts += std::string{g_parts.empty() ? "" : " "} + NAME;
+    g_partsCommand = HyprlandAPI::registerHyprCtlCommand(handle,
+                                                         SHyprCtlCommand{
+                                                             .name  = "kiwi-parts",
+                                                             .exact = true,
+                                                             .fn    = [](eHyprCtlOutputFormat, std::string) { return g_parts; },
+                                                         });
 
     g_versionCommand = HyprlandAPI::registerHyprCtlCommand(handle,
                                                            SHyprCtlCommand{
@@ -67,4 +84,5 @@ APICALL EXPORT void pluginExit() {
     Kiwi::Geometry::exit();
     Kiwi::Layers::exit();
     g_versionCommand.reset();
+    g_partsCommand.reset();
 }

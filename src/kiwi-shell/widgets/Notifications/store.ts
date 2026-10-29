@@ -1,11 +1,33 @@
 import GLib from "gi://GLib"
+import Gio from "gi://Gio"
 import Notifd from "gi://AstalNotifd"
 import Hyprland from "gi://AstalHyprland"
 import { createBinding, createComputed, createState } from "ags"
 import { logger } from "../../log"
+import { notify } from "../../notify"
 
 const log = logger("notifications")
 const notifd = Notifd.get_default()
+
+// Another notification daemon (mako, dunst, swaync, from an earlier setup)
+// that has the name first gets every notification, and the Notification
+// Center stays empty with nothing to say why. The shell waits in line for
+// the name and takes over once that one quits; meanwhile it says so, through
+// that daemon, the one showing notifications.
+Gio.DBus.session.call("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+    "org.freedesktop.Notifications", "GetServerInformation", null, null, Gio.DBusCallFlags.NONE, -1, null,
+    (bus, result) => {
+        try {
+            const [name] = bus!.call_finish(result).deepUnpack() as [string]
+            if (name === "notifd") return
+            log.warn(`${name} shows the notifications, not the shell`)
+            notify(`${name} is showing notifications`,
+                `Kiwi Shell's Notification Center stays empty while ${name} runs. Stop it (and take it out of your autostart), and Kiwi Shell takes over.`,
+                { icon: "dialog-warning-symbolic" })
+        } catch (e) {
+            log.warn("couldn't ask who shows notifications:", e as Error)
+        }
+    })
 const hyprland = Hyprland.get_default()
 
 const DEFAULT_TIMEOUT = 5000
@@ -395,6 +417,7 @@ export interface GroupRow {
 export type Row =
     | CardRow
     | GroupRow
+    | { kind: "calendar"; key: "calendar"; foldInto?: undefined }
     | { kind: "header"; key: "header"; foldInto?: undefined }
     | { kind: "empty"; key: "empty"; foldInto?: undefined }
 
@@ -452,7 +475,9 @@ export const layout = createComputed<Layout>(get => {
         return { rows, foldsInto }
     }
 
-    const rows: Row[] = [{ kind: "header", key: "header" }]
+    // the month above the notifications, as a click on the clock shows it
+    // on Windows and macOS's Notification Center has it
+    const rows: Row[] = [{ kind: "calendar", key: "calendar" }, { kind: "header", key: "header" }]
     if (notifs.length === 0) {
         rows.push({ kind: "empty", key: "empty" })
         return { rows, foldsInto }

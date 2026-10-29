@@ -7,7 +7,7 @@ import { openWifiPrompt } from "../../../prompts"
 import { ContextMenu } from "../../../ContextMenu"
 import { wifiIcon } from "../../../iconNames"
 import { logger } from "../../../../log"
-import { network, wifiProperty, currentWifi } from "../../../services/network"
+import { network, wifiProperty, currentWifi, savedWifiProfile } from "../../../services/network"
 import { openChoicePrompt } from "../../../prompts"
 const log = logger("network")
 
@@ -19,6 +19,7 @@ const scanningBinding = wifiProperty("scanning", false)
 const stateBinding = wifiProperty("state", Network.DeviceState.UNKNOWN)
 
 const [frozen, setFrozen] = createState(false)
+let unfreeze: ReturnType<typeof setTimeout> | null = null
 const [frozenValue, setFrozenValue] = createState(currentWifi()?.enabled ?? false)
 
 const wifiEnabledBinding = createComputed((get) =>
@@ -114,7 +115,9 @@ export default function NetworkTab({ visible }) {
             if (wifi) wifi.enabled = state
             setFrozenValue(state)
             setFrozen(true)
-            setTimeout(() => setFrozen(false), 2000)
+            // the last flip's: an earlier one's let go mid-change
+            if (unfreeze) clearTimeout(unfreeze)
+            unfreeze = setTimeout(() => { unfreeze = null; setFrozen(false) }, 2000)
             return false
           }}
         />
@@ -249,36 +252,56 @@ function networkIcon(wiredState, strength) {
 function join(ssid: string, secured: boolean) {
   setConnectingSsid(ssid)
   onNetworkClick(ssid, secured)
-    .catch((e) => {
-      const error = String(e)
-      if (error.includes("Secrets were required, but not provided") || error.includes("property is invalid")) {
-        openWifiPrompt(ssid, true)
-        return
-      }
-      log.error(`joining ${ssid}:`, e)
-      const reason = error.split("\n").map(l => l.replace(/^.*?Error:\s*/, "").trim()).filter(Boolean).pop()
-      openChoicePrompt(`Couldn't join “${ssid}”`, reason ?? "The network couldn't be joined.",
-        [{ label: "Try Again", primary: true, run: () => join(ssid, secured) }])
-    })
+    .catch((e) => failed(ssid, e, () => join(ssid, secured)))
     .finally(() => setConnectingSsid(""))
+}
+
+// with the password typed in: "Connecting…" from Join until it's done
+function joinWith(ssid: string, password: string) {
+  setConnectingSsid(ssid)
+  nmcli("device", "wifi", "connect", ssid, "password", password)
+    .catch((e) => failed(ssid, e, () => askPassword(ssid, false)))
+    .finally(() => setConnectingSsid(""))
+}
+
+const askPassword = (ssid: string, wrong: boolean) =>
+  openWifiPrompt(ssid, wrong, (password) => joinWith(ssid, password))
+
+function failed(ssid: string, e: unknown, retry: () => void) {
+  const error = String(e)
+  if (error.includes("Secrets were required, but not provided") || error.includes("property is invalid")) {
+    askPassword(ssid, true)
+    return
+  }
+  log.error(`joining ${ssid}:`, e)
+  const reason = error.includes("Insufficient privileges")
+    ? "You aren't allowed to change the network settings."
+    : error.split("\n").map(l => l.replace(/^.*?Error:\s*/, "").trim()).filter(Boolean).pop()
+  openChoicePrompt(`Couldn't join “${ssid}”`, reason ?? "The network couldn't be joined.",
+    [{ label: "Try Again", primary: true, run: retry }])
 }
 
 // The network's name goes to nmcli as one argument of its own, never inside
 // a command line: a name is anything a nearby access point cares to send,
 // quotes included, and quoted into a line one could add arguments of its own.
+// nmcli in English whatever the language: what went wrong is read off it.
+export const nmcli = (...args: string[]) => execAsync(["env", "LC_ALL=C", "nmcli", ...args])
+
 async function onNetworkClick(ssid: string, secured: boolean) {
-  const saved = await hasSavedPassword(ssid)
+  const saved = savedWifiProfile(ssid)
   if (saved) {
-    await execAsync(["nmcli", "connection", "up", "id", ssid])
+    await nmcli("connection", "up", "uuid", saved.get_uuid())
   } else {
-    if (secured) openWifiPrompt(ssid)
-    else await execAsync(["nmcli", "device", "wifi", "connect", ssid])
+    if (secured) askPassword(ssid, false)
+    else await nmcli("device", "wifi", "connect", ssid)
   }
 }
 
 async function disconnectNetwork(ssid: string) {
+  const saved = savedWifiProfile(ssid)
   try {
-    await execAsync(["nmcli", "connection", "down", "id", ssid])
+    if (saved) await nmcli("connection", "down", "uuid", saved.get_uuid())
+    else await nmcli("connection", "down", "id", ssid)
   } catch (e) {
     log.error("Disconnect failed:", e)
   }
@@ -287,18 +310,15 @@ async function disconnectNetwork(ssid: string) {
 // Deleting the profile is what "forget" means to NetworkManager: it drops the
 // saved secret too, so the next click prompts for the password again.
 async function forgetNetwork(ssid: string) {
+  const saved = savedWifiProfile(ssid)
+  if (!saved) return
   try {
-    await execAsync(["nmcli", "connection", "delete", "id", ssid])
+    await nmcli("connection", "delete", "uuid", saved.get_uuid())
   } catch (e) {
     log.error("Forget failed:", e)
   }
 }
 
 async function hasSavedPassword(ssid: string): Promise<boolean> {
-  try {
-    await execAsync(["nmcli", "-s", "connection", "show", "id", ssid])
-    return true
-  } catch (e) {
-    return false
-  }
+  return savedWifiProfile(ssid) !== null
 }

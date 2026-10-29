@@ -27,7 +27,11 @@ const SAFETY_TIMEOUT_MS = 5_000
 // they only move to a special workspace and capture fine.
 const STARTUP_CAPTURE_DELAY_MS = 1_500
 
-const capturer = new AppCapture.Capture()
+// Made at the first capture: with kiwi-previews in the compositor there is
+// none, and setting it up (a Wayland connection's worth of globals, the GPU,
+// a renderer of its own) cost every start a tenth of a second and some MB.
+let capturer: AppCapture.Capture | null = null
+const getCapturer = () => capturer ??= new AppCapture.Capture()
 const hyprland = Hyprland.get_default()
 
 // ─── Texture cache ─────────────────────────────────────────────────────────────
@@ -56,7 +60,7 @@ export function reservePreviewSize(width: number, height: number) {
 
 function applyMinSize() {
     const scale = Math.max(1, ...hyprland.get_monitors().map(m => m.get_scale()))
-    capturer.set_min_size(Math.ceil(minWidth * scale), Math.ceil(minHeight * scale))
+    getCapturer().set_min_size(Math.ceil(minWidth * scale), Math.ceil(minHeight * scale))
 }
 
 // ─── Concurrency queue ─────────────────────────────────────────────────────────
@@ -106,6 +110,7 @@ function captureNow(address: string): Promise<Gdk.Texture | null> {
                 return
             }
             activeCapture = true
+            const capturer = getCapturer()
             let readyId = 0
             let failedId = 0
             let safetyId: ReturnType<typeof setTimeout> | null = null

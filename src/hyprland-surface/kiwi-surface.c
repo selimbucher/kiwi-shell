@@ -52,28 +52,34 @@ static struct hyprland_surface_manager_v1 *get_manager(GdkDisplay *display)
 typedef struct {
     struct hyprland_surface_v1 *object;
     struct wl_surface          *wl_surface; /* the one it was made for */
+    /* the region last sent, and at what scale */
+    gboolean                    sent;
+    cairo_region_t             *last;
+    double                      scale;
 } HyprlandSurface;
 
 static void hyprland_surface_free(gpointer data)
 {
     HyprlandSurface *hs = data;
     hyprland_surface_v1_destroy(hs->object);
+    if (hs->last)
+        cairo_region_destroy(hs->last);
     g_free(hs);
 }
 
-static struct hyprland_surface_v1 *hyprland_surface_for(GdkSurface *surface,
-                                                        struct wl_surface *wl_surface)
+static HyprlandSurface *hyprland_surface_for(GdkSurface *surface,
+                                             struct wl_surface *wl_surface)
 {
     HyprlandSurface *hs = g_object_get_data(G_OBJECT(surface), HYPRLAND_SURFACE_KEY);
     if (hs && hs->wl_surface == wl_surface)
-        return hs->object;
+        return hs;
 
     hs             = g_new0(HyprlandSurface, 1);
     hs->wl_surface = wl_surface;
     hs->object     = hyprland_surface_manager_v1_get_hyprland_surface(manager, wl_surface);
     /* replaces (and destroys) one made for an earlier wl_surface */
     g_object_set_data_full(G_OBJECT(surface), HYPRLAND_SURFACE_KEY, hs, hyprland_surface_free);
-    return hs->object;
+    return hs;
 }
 
 /* =========================================================================
@@ -95,7 +101,13 @@ gboolean kiwi_surface_set_visible_region(GdkSurface *surface, const cairo_region
     if (!wl_surface)
         return FALSE;
 
-    struct hyprland_surface_v1 *hs = hyprland_surface_for(surface, wl_surface);
+    HyprlandSurface *hs    = hyprland_surface_for(surface, wl_surface);
+    double           scale = gdk_surface_get_scale(surface);
+
+    /* the same as last time (asked again at every relayout): nothing to say,
+     * and no frame to draw for it */
+    if (hs->sent && hs->scale == scale && (region ? hs->last && cairo_region_equal(region, hs->last) : !hs->last))
+        return TRUE;
 
     struct wl_region *wl_region = NULL;
     if (region) {
@@ -108,7 +120,6 @@ gboolean kiwi_surface_set_visible_region(GdkSurface *surface, const cairo_region
         } else {
             /* the protocol counts in buffer pixels; round outwards, so a
              * fractional scale can't shave a pixel off the content */
-            double scale = gdk_surface_get_scale(surface);
             for (int i = 0; i < n; i++) {
                 cairo_rectangle_int_t r;
                 cairo_region_get_rectangle(region, i, &r);
@@ -119,9 +130,14 @@ gboolean kiwi_surface_set_visible_region(GdkSurface *surface, const cairo_region
         }
     }
 
-    hyprland_surface_v1_set_visible_region(hs, wl_region);
+    hyprland_surface_v1_set_visible_region(hs->object, wl_region);
     if (wl_region)
         wl_region_destroy(wl_region);
+    if (hs->last)
+        cairo_region_destroy(hs->last);
+    hs->last  = region ? cairo_region_copy(region) : NULL;
+    hs->scale = scale;
+    hs->sent  = TRUE;
 
     /* the region is double-buffered: it applies with the next commit */
     gdk_surface_queue_render(surface);

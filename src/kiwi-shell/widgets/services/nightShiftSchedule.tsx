@@ -2,10 +2,12 @@ import { logger } from "../../log"
 const log = logger("nightshift")
 import { conf } from "../config";
 import GLib from "gi://GLib";
+import Gio from "gi://Gio";
 import { execAsync } from "ags/process";
-import { nightShift, setNightShift } from "../Bar/SystemMenu/tabs/SystemTab";
-import type { Accessor } from "ags";
+import { createState, type Accessor } from "ags";
 import { minuteNow } from "./minuteClock";
+
+export const [nightShift, setNightShift] = createState(false);
 
 function timeToMinutes(hhmm: string): number {
     const [h, m] = hhmm.split(":").map(Number);
@@ -33,26 +35,84 @@ function subscribeChanged<T>(accessor: Accessor<T>, callback: () => void) {
     });
 }
 
-function enableNightShift() {
-    if (nightShift()) return;
+// Night Shift is hyprsunset, this compositor's: on is one running, its
+// temperature set through its socket (one per compositor), off is it
+// stopped. Another session's (a second login, a nested Hyprland) is left
+// alone; stopped by name, turning it off here turned that one off too.
+const SIGNATURE = GLib.getenv("HYPRLAND_INSTANCE_SIGNATURE") ?? ""
+const DISPLAY = GLib.getenv("WAYLAND_DISPLAY") ?? ""
+const decoder = new TextDecoder()
+
+function ourHyprsunsets(): string[] {
+    const pids: string[] = []
+    let dir: GLib.Dir
     try {
-        GLib.spawn_command_line_async(`hyprsunset -t ${conf().nightshift_intensity}`);
-    } catch (e) {
-        log.error("nightshift: failed to spawn hyprsunset:", e);
-        return;
+        dir = GLib.Dir.open("/proc", 0)
+    } catch {
+        return pids
     }
-    setNightShift(true);
+    for (let name = dir.read_name(); name !== null; name = dir.read_name()) {
+        if (!/^\d+$/.test(name)) continue
+        try {
+            if (decoder.decode(GLib.file_get_contents(`/proc/${name}/comm`)[1]).trim() !== "hyprsunset") continue
+            const env = decoder.decode(GLib.file_get_contents(`/proc/${name}/environ`)[1]).split("\0")
+            const signature = env.find(v => v.startsWith("HYPRLAND_INSTANCE_SIGNATURE="))
+            if (signature ? signature === `HYPRLAND_INSTANCE_SIGNATURE=${SIGNATURE}` : env.includes(`WAYLAND_DISPLAY=${DISPLAY}`))
+                pids.push(name)
+        } catch { /* gone meanwhile, or not ours to read */ }
+    }
+    dir.close()
+    return pids
+}
+
+// gone, or after a second: one stopped holds the screen's colours until it
+// has quit, and the next couldn't start meanwhile
+async function stopHyprsunset() {
+    const pids = ourHyprsunsets()
+    if (!pids.length) return
+    await execAsync(["kill", ...pids]).catch(e => log.error("couldn't stop hyprsunset:", e as Error))
+    for (let waited = 0; waited < 1000 && pids.some(pid => GLib.file_test(`/proc/${pid}`, GLib.FileTest.EXISTS)); waited += 50)
+        await new Promise(resolve => setTimeout(resolve, 50))
+}
+
+// What the state asks for, one step at a time: a schedule change and a
+// temperature change in one settings write each turned it on, and the second
+// start stopped the first and then failed.
+let applying: Promise<void> = Promise.resolve()
+
+async function apply() {
+    if (!nightShift()) return stopHyprsunset()
+    const temperature = String(Math.round(Number(conf().nightshift_intensity)) || 4000)
+    // the one running takes the new temperature; none (or one gone quiet) and one starts
+    try {
+        await execAsync(["hyprctl", "hyprsunset", "temperature", temperature])
+        return
+    } catch { /* none answering */ }
+    await stopHyprsunset()
+    try {
+        Gio.Subprocess.new(["hyprsunset", "-t", temperature], Gio.SubprocessFlags.NONE)
+        // (up once its socket answers: the next step waits for that)
+        for (let waited = 0; waited < 1000; waited += 50) {
+            await new Promise(resolve => setTimeout(resolve, 50))
+            if (await execAsync(["hyprctl", "hyprsunset", "temperature"]).then(() => true, () => false)) break
+        }
+    } catch (e) {
+        log.error("couldn't run hyprsunset:", e as Error);
+        setNightShift(false);
+    }
+}
+
+export function turnNightShift(on: boolean) {
+    setNightShift(on);
+    applying = applying.then(apply, apply);
+}
+
+function enableNightShift() {
+    if (!nightShift()) turnNightShift(true);
 }
 
 function disableNightShift() {
-    if (!nightShift()) return;
-    try {
-        GLib.spawn_command_line_async("killall hyprsunset");
-    } catch (e) {
-        log.error("nightshift: failed to spawn killall:", e);
-        return;
-    }
-    setNightShift(false);
+    turnNightShift(false);
 }
 
 export default function nightShiftService() {
@@ -84,10 +144,14 @@ export default function nightShiftService() {
     }
 
     tick();
+    // without the schedule, this compositor's left running is on
+    if (!conf().auto_nightshift && ourHyprsunsets().length) setNightShift(true);
 
     subscribeChanged(conf.as(c => c.auto_nightshift), tick);
     subscribeChanged(conf.as(c => c.nightshift_start), tick);
     subscribeChanged(conf.as(c => c.nightshift_end), tick);
+    // a new temperature, on now: the running hyprsunset takes it
+    subscribeChanged(conf.as(c => c.nightshift_intensity), () => { if (nightShift()) turnNightShift(true) });
 
     // schedule boundaries are minute-granular, like the shell's clock
     minuteNow.subscribe(tick);

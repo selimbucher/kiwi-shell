@@ -128,14 +128,17 @@ namespace {
                 fadeouts.emplace_back(fadeout);
         }
         std::ranges::stable_sort(fadeouts, {}, [](const auto& fadeout) { return fadeout->zIndex(); });
+        // (each window's place in the list, only while one is fading out)
         std::unordered_map<const void*, int> place;
-        for (const auto& w : Desktop::windowState()->windows())
-            place.emplace(w.get(), place.size());
+        if (!fadeouts.empty())
+            for (const auto& w : Desktop::windowState()->windows())
+                place.emplace(w.get(), place.size());
 
         size_t faded = 0;
         for (const auto& w : windows) {
-            for (const int AT = place[w.get()]; faded < fadeouts.size() && fadeouts[faded]->zIndex() <= AT; ++faded)
-                drawFadeout(self, monitor, fadeouts[faded]);
+            if (faded < fadeouts.size())
+                for (const int AT = place[w.get()]; faded < fadeouts.size() && fadeouts[faded]->zIndex() <= AT; ++faded)
+                    drawFadeout(self, monitor, fadeouts[faded]);
             // where a window dragged against an edge will go, under it (snap.cpp)
             Kiwi::Snap::underWindow(w, monitor);
             (self->*RENDER_WINDOW)(w, monitor, time, true, Render::RENDER_PASS_MAIN, false, false);

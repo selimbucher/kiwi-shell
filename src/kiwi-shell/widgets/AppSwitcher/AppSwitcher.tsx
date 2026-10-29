@@ -13,14 +13,16 @@ import { playSound } from "../sound"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
 import { entryForClient, AppIconImage, iconFileForEntry } from "../appIcon"
-import { popupGdkMonitor, destroyWindow } from "../monitors"
+import { heldPopupMonitor, destroyWindow } from "../monitors"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { applyBinds, currentBinds, registerBindSetup, closeWindow, clientSelector, type BindOp } from "../../hypr"
-import { shortcuts, combo, heldModifierKey, heldModifiers, type Shortcut } from "../../shortcuts"
+import { shortcuts, combo, releaseCombos, heldModifiers, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { isOpen as missionControlOpen } from "../MissionControl/MissionControl"
 
 export const [isVisible, setVisibility] = createState(false)
+// (on the display it opened on, until closed)
+const shownOn = heldPopupMonitor(isVisible)
 export const [selectedAddress, setSelectedAddress] = createState<string | null>(null)
 export const [displayedClients, setDisplayedClients] = createState<any[]>([])
 
@@ -67,9 +69,10 @@ const CONFIRM = globalShortcut("apps-confirm", "App switcher: switch to the sele
     "release", executeSelectedAndClose)
 const CLOSE = globalShortcut("apps-close", "App switcher: close", "release", hideAppSwitcher)
 
-const release = (s: Shortcut) => `${s.mods[0]} + ${heldModifierKey(s)}`
-
-// the root's entries, and everything in the submap
+// the root's entries, and everything in the submap. Not the modifier's
+// release: an unbind takes a combo in every submap, the root's confirm too,
+// which a setup run again after a reload then saw as there and didn't put
+// back (Alt+Tab never confirmed, after a fresh login).
 function keyUnbinds(list: Shortcut[]): BindOp[] {
     const keys = list.flatMap(s => [{ unbind: combo(s) }, { unbind: combo(s, "SHIFT") }])
     return [
@@ -77,7 +80,6 @@ function keyUnbinds(list: Shortcut[]): BindOp[] {
         { submap: "app_switcher", ops: [
             ...keys,
             ...heldModifiers(list).flatMap(s => [
-                { unbind: release(s) },
                 { unbind: `${s.mods[0]} + left` },
                 { unbind: `${s.mods[0]} + right` },
                 { unbind: `${s.mods[0]} + escape` },
@@ -90,7 +92,7 @@ function keyUnbinds(list: Shortcut[]): BindOp[] {
 // what a registration on `list` binds, root and submap, for unbinding
 function appSwitcherUnbinds(list: Shortcut[]): BindOp[] {
     if (!list.length) return []
-    return [...keyUnbinds(list), ...heldModifiers(list).map(s => ({ unbind: release(s) }))]
+    return [...keyUnbinds(list), ...heldModifiers(list).flatMap(s => releaseCombos(s).map(c => ({ unbind: c })))]
 }
 
 async function registerAltTabBinds() {
@@ -110,8 +112,8 @@ async function registerAltTabBinds() {
         log.error("failed to query binds, skipping setup:", e)
         return
     }
-    const missing = (s: Shortcut, description: string) => !binds.some((b: any) =>
-        b.submap === "" && b.description === description && b.modmask === s.modmask && b.key === heldModifierKey(s))
+    const missing = (s: Shortcut, c: string, description: string) => !binds.some((b: any) =>
+        b.submap === "" && b.description === description && b.modmask === s.modmask && b.key === c.split(" + ").pop())
 
     // applied atomically and in order. Submap definitions append on
     // redefinition, hence the unbinds inside it first.
@@ -125,12 +127,12 @@ async function registerAltTabBinds() {
             { bind: combo(s, "SHIFT"), action: PREVIOUS, description: "kiwi: apps open backwards" },
             { bind: combo(s, "SHIFT"), action: { submap: "app_switcher" }, description: "kiwi: apps submap enter" },
         ]),
-        ...held.flatMap((s): BindOp[] => [
-            ...(missing(s, "kiwi: apps confirm") ? [{ bind: release(s), action: CONFIRM, description: "kiwi: apps confirm",
+        ...held.flatMap(s => releaseCombos(s).flatMap((c): BindOp[] => [
+            ...(missing(s, c, "kiwi: apps confirm") ? [{ bind: c, action: CONFIRM, description: "kiwi: apps confirm",
                 flags: { release: true, transparent: true } }] : []),
-            ...(missing(s, "kiwi: apps submap reset") ? [{ bind: release(s), action: { submap: "reset" }, description: "kiwi: apps submap reset",
+            ...(missing(s, c, "kiwi: apps submap reset") ? [{ bind: c, action: { submap: "reset" }, description: "kiwi: apps submap reset",
                 flags: { release: true, transparent: true } }] : []),
-        ]),
+        ])),
         // submap: cycling while held, escape failsafes
         { submap: "app_switcher", ops: [
             ...list.flatMap((s): BindOp[] => [
@@ -219,20 +221,30 @@ function executeSelectedAndClose() {
 // compositor's client-removed event lands too late for the UI, so the list
 // updates eagerly here
 function closeClientFromSwitcher(client: any) {
-    const address = client.get_address()
     closeWindow(clientSelector(client))
-    const remaining = displayedClients().filter(c => c.get_address() !== address)
+    leaveOut(client.get_address())
+}
+
+// a window gone from the list, the selection on the next where it was it
+function leaveOut(address: string) {
+    const clients = displayedClients()
+    const idx = clients.findIndex(c => c.get_address() === address)
+    if (idx < 0) return
+    const remaining = clients.filter(c => c.get_address() !== address)
     if (remaining.length === 0) {
         hideAppSwitcher()
         return
     }
-    if (selectedAddress() === address) {
-        const clients = displayedClients()
-        const idx = clients.findIndex(c => c.get_address() === address)
+    if (selectedAddress() === address)
         setSelectedAddress(remaining[Math.min(idx, remaining.length - 1)].get_address())
-    }
     setDisplayedClients(remaining)
 }
+
+// one closed by anything else while the switcher is held: the release would
+// have gone to a window that's no longer there
+hyprland.connect("client-removed", (_h: unknown, address: string) => {
+    if (isVisible()) leaveOut(address)
+})
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
 export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
@@ -243,7 +255,7 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
             visible={isVisible}
             name="ags-app-switcher"
             class={themeClasses(t => `AppSwitcher ${t}`)}
-            gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
+            gdkmonitor={createComputed(get => get(shownOn) ?? gdkmonitor)}
             exclusivity={Astal.Exclusivity.NORMAL}
             anchor={Astal.WindowAnchor.CENTER | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}
             application={app}
@@ -406,7 +418,7 @@ function SwitcherClose({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             name="ags-app-switcher-close"
             class={themeClasses(t => `AppSwitcherClose ${t}`)}
             visible={isVisible}
-            gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
+            gdkmonitor={createComputed(get => get(shownOn) ?? gdkmonitor)}
             exclusivity={Astal.Exclusivity.NORMAL}
             anchor={Astal.WindowAnchor.TOP | Astal.WindowAnchor.BOTTOM | Astal.WindowAnchor.LEFT | Astal.WindowAnchor.RIGHT}
             application={app}
@@ -551,7 +563,7 @@ function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // is set then): the display focused or a setting changed while it was
     // hidden rebuilt every picture for nothing.
     const layout = createComputed(get => {
-        const monitor = popupGdkMonitor.peek() ?? gdkmonitor
+        const monitor = shownOn.peek() ?? gdkmonitor
         const { width, height } = monitor.get_geometry()
         // rows wrap well before the screen edge so the panel never reads
         // as a full-width band
