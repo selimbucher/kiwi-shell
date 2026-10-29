@@ -299,7 +299,7 @@ const FEATURES = {
 // says its own with `hyprctl kiwi-version` (src/hyprland-plugin/kiwi.hpp).
 // One that says another number, or nothing, isn't used: its requests or
 // events differ, and what it would do is guesswork.
-const PLUGIN_PROTOCOL = 12
+const PLUGIN_PROTOCOL = 13
 
 const WITHOUT = {
     geometry: "the dock won't see windows moved by hand",

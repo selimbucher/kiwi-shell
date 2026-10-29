@@ -440,6 +440,12 @@ const windowTiles = new LiveTiles({
         const zoom = zoomOver(tile)
         return zoom ? uncovered(clip, onSurface(zoom)) : clip
     },
+    // a window going into a desktop's picture leaves its bar on the way: the
+    // picture shows windows without one, and it went the moment it landed
+    barAlphaOf: tile => {
+        const frame = frameOf.get(tile.get_parent() as Gtk.Widget)
+        return frame?.into ? 1 - frame.move.value : 1
+    },
 })
 
 // the windows in the desktops' pictures, cut off at the picture's edge
@@ -623,7 +629,7 @@ let drag: Drag | null = null
 // in the same frame, not a new set of tiles told over IPC at every step —
 // that round trip had the window trail behind the pointer. Carried, the
 // window is its last frame, not live. It takes over from its place among the
-// others once the compositor has it, and hands back the same way.
+// others once the compositor draws it there, and hands back the same way.
 const CARRIED_SET = "mission-control-carried"
 // room round the picture on the layer for its shadow: moving a layer redraws
 // what the layer covers
@@ -651,7 +657,7 @@ function pickUp(frame: Frame) {
     const address = addressOf(frame)
     setCarried({ address, box: carriedBox(frame, frame.at) })
     // drawn on its own layer: out of the others
-    carriedTiles.whenTaken(() => {
+    carriedTiles.whenDrawn(() => {
         if (carried.get()?.address !== address || windowTiles.tiles.get(address) !== frame.picture) return
         windowTiles.tiles.delete(address)
         windowTiles.measure()
@@ -668,7 +674,7 @@ function carriedTo(frame: Frame, at: Box) {
 }
 
 // back among the others (on top: re-registered last), and its own layer
-// gone once the compositor has it there
+// gone once the compositor draws it there
 function putDown(frame: Frame) {
     const address = addressOf(frame)
     if (carried.get()?.address !== address) return
@@ -676,7 +682,7 @@ function putDown(frame: Frame) {
         windowTiles.tiles.delete(address)
         windowTiles.tiles.set(address, frame.picture)
     }
-    windowTiles.whenTaken(() => {
+    windowTiles.whenDrawn(() => {
         if (carried.get()?.address === address) setCarried(null)
     })
 }
@@ -784,6 +790,7 @@ async function dropWindow(scene: Scene) {
         scene.sendHome(frame)
         return
     }
+    if (target !== "add") scene.sendInto(frame, target)
     const address = `address:0x${frame.slot.item.client.get_address()}`
     const desktop = target === "add" ? (arriving = addDesktop(v.monitor.name)) : target
     await moveWindowToWorkspace(desktop, address, { follow: false })
@@ -855,6 +862,9 @@ type Frame = {
     leaving: Box | null
     // the desktop whose picture it is leaving for, followed as it moves
     into: Into | null
+    // let go on another desktop's picture and flying into it before the
+    // shell's next view has it there (Scene.sendInto)
+    awaiting: boolean
     held: boolean
     dispose: () => void
 }
@@ -1148,12 +1158,23 @@ class Scene {
             }
             frame.slot = slot
             frame.leaving = null
+            frame.awaiting = false
             this.stopInto(frame)
             if (!frame.held) this.glide(frame, FLIGHT)
         }
         for (const [address, frame] of page.frames) {
-            if (kept.has(address) || frame.leaving) continue
+            if (kept.has(address)) continue
             const into = destinations.get(address)
+            if (frame.leaving) {
+                // let go there and flying since: on to where that desktop
+                // has it, or gone with the window
+                if (frame.awaiting) {
+                    frame.awaiting = false
+                    if (into) frame.into = into
+                    else this.dropFrame(page, frame)
+                }
+                continue
+            }
             if (!into) {
                 this.dropFrame(page, frame)
                 continue
@@ -1213,7 +1234,7 @@ class Scene {
                 slot, widget, picture, title,
                 at: { ...start }, from: { ...start },
                 move: new Tween(from ? 0 : 1),
-                leaving: null, into: null, held: false,
+                leaving: null, into: null, awaiting: false, held: false,
                 dispose: () => {
                     this.stage.remove(widget)
                     this.stage.remove(title)
@@ -1226,6 +1247,21 @@ class Scene {
             this.stage.put(title, 0, 0)
             return frame
         })
+    }
+
+    /**
+     * A window let go on another desktop's picture flies into it at once, to
+     * where it is on its own desktop: waiting for the move and the shell's
+     * next view, it stood still under the pointer for a moment first. The
+     * view to come has its place there (fill).
+     */
+    sendInto(frame: Frame, id: number) {
+        if (!this.items.has(id)) return
+        frame.into = { id, window: frame.slot.item }
+        frame.awaiting = true
+        frame.leaving = this.intoBox(frame.into) ?? frame.at
+        showArriving(addressOf(frame), true)
+        this.glide(frame, FLIGHT)
     }
 
     private dropFrame(page: Page, frame: Frame) {
@@ -1711,7 +1747,7 @@ class Scene {
             // windows that have flown into a desktop's picture are there now
             for (const page of this.pages.values())
                 for (const frame of [...page.frames.values()])
-                    if (frame.leaving && !frame.move.running) this.dropFrame(page, frame)
+                    if (frame.leaving && !frame.move.running && !frame.awaiting) this.dropFrame(page, frame)
             // grown to fill the display: that desktop is there
             if (this.zoom && !this.zoom.growing.running && this.zoom.growing.value === 1) void this.zoomed(this.zoom)
             // a desktop slid out of view is gone: neither the one in view

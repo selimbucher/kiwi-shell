@@ -47,6 +47,8 @@ export type PreviewTile = Rect & {
     badge?: string
     // how far it is shown: its widget's opacity, and its parents'
     alpha?: number
+    // how far its title bar is shown, with bars
+    barAlpha?: number
 }
 
 // resolves whether the compositor took it: it answers errors as text too
@@ -69,6 +71,19 @@ function send(request: string, set?: string, taken?: (ok: boolean) => void) {
 
 // what each set was last sent as
 const showing = new Map<string, string>()
+
+// called once a set's tiles sent with ack are the ones drawn
+// (kiwipreviews>>drawn,<set>)
+const drawnWaiters = new Map<string, (() => void)[]>()
+hyprland.connect("event", (_h: unknown, event: string, args: string) => {
+    if (event !== "kiwipreviews" || !args.startsWith("drawn,")) return
+    const set = args.slice("drawn,".length)
+    const waiters = drawnWaiters.get(set)
+    drawnWaiters.delete(set)
+    waiters?.forEach(then => then())
+})
+// a set whose surface doesn't draw again (nothing on it changed) never says
+const DRAWN_ANYWAY_MS = 120
 
 const numbers = (r: Rect) => [r.x, r.y, r.width, r.height].map(Math.round).join(",")
 
@@ -95,18 +110,19 @@ export function showPreviews(
     namespace: string,
     rounding: number,
     tiles: PreviewTile[],
-    options: { motion?: "live" | "still", popup?: boolean, squareTop?: boolean, fly?: boolean, shadow?: boolean, bars?: boolean } = {},
+    options: { motion?: "live" | "still", popup?: boolean, squareTop?: boolean, fly?: boolean, shadow?: boolean, bars?: boolean, ack?: boolean } = {},
     taken?: (ok: boolean) => void,
 ) {
     if (!livePreviews()) return
     const request = tiles.length === 0 && !options.fly
         ? `kiwi-previews clear ${set}`
-        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""}${options.squareTop ? " square-top" : ""}${options.fly ? " fly" : ""}${options.shadow ? " shadow" : ""}${options.bars ? " bars" : ""} `
+        : `kiwi-previews ${set} ${namespace} ${Math.round(rounding)} ${options.motion ?? "live"}${options.popup ? " popup" : ""}${options.squareTop ? " square-top" : ""}${options.fly ? " fly" : ""}${options.shadow ? " shadow" : ""}${options.bars ? " bars" : ""}${options.ack ? " ack" : ""} `
             + tiles.map(t => {
                 // a badge needs the clip in front of it; the tile's own rectangle will do
                 const clip = t.clip ?? (t.badge ? t : undefined)
                 const alpha = t.alpha !== undefined && t.alpha < 0.999 ? `@${Math.max(0, t.alpha).toFixed(3)}` : ""
-                return `${t.address}${alpha},${numbers(t)}${clip ? `,${numbers(clip)}` : ""}${t.badge ? `,${encodeURIComponent(t.badge)}` : ""}`
+                const barAlpha = t.barAlpha !== undefined && t.barAlpha < 0.999 ? `^${Math.max(0, t.barAlpha).toFixed(3)}` : ""
+                return `${t.address}${alpha}${barAlpha},${numbers(t)}${clip ? `,${numbers(clip)}` : ""}${t.badge ? `,${encodeURIComponent(t.badge)}` : ""}`
             }).join(" ")
     // the tiles only move when their surface is laid out again
     if (request === showing.get(set)) {
@@ -286,6 +302,9 @@ type Options = {
     shadow?: boolean
     // each window's title bar (a decoration plugin's: hyprbars) over its picture
     bars?: boolean
+    // how far a tile's bar is shown (Mission Control: a window going into a
+    // desktop's picture, where windows have none)
+    barAlphaOf?: (tile: Gtk.Widget) => number
 }
 
 /**
@@ -397,7 +416,8 @@ export class LiveTiles {
             // a widget the shell fades fades its picture too
             let alpha = 1
             for (let w: Gtk.Widget | null = widget; w && w !== window; w = w.get_parent()) alpha *= w.get_opacity()
-            tiles.push({ address, ...rect, clip, badge, alpha })
+            const barAlpha = this.options.barAlphaOf?.(widget)
+            tiles.push({ address, ...rect, clip, badge, alpha, barAlpha })
         }
         // a first layout can come before the tiles are on screen; showing the
         // pane on it would show them empty until the next
@@ -406,13 +426,16 @@ export class LiveTiles {
         const measured = ++this.generation
         const waiters = this.takenWaiters.splice(0)
         const { set, namespace, motion, popup, squareTop, fly, shadow, bars } = this.options
-        showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly, shadow, bars }, () => {
+        const ack = this.ackNext
+        this.ackNext = false
+        showPreviews(set, namespace, radius, tiles, { motion, popup, squareTop, fly, shadow, bars, ack }, () => {
             if (measured === this.generation) this.pane?.show()
             for (const then of waiters) then()
         })
     }
 
     private takenWaiters: (() => void)[] = []
+    private ackNext = false
 
     /**
      * `then` once the compositor has the tiles as they are now: a tile taken
@@ -421,5 +444,30 @@ export class LiveTiles {
     whenTaken(then: () => void) {
         this.takenWaiters.push(then)
         this.measure()
+    }
+
+    /**
+     * `then` once the compositor draws the tiles as they are now: from the
+     * surface's next frame, which is later than it has them. A window handed
+     * over from a surface of its own, taken off that one any sooner, was
+     * nowhere for a frame or two.
+     */
+    whenDrawn(then: () => void) {
+        const { set } = this.options
+        let done = false
+        const once = () => {
+            if (done) return
+            done = true
+            then()
+        }
+        drawnWaiters.set(set, [...drawnWaiters.get(set) ?? [], once])
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, DRAWN_ANYWAY_MS, () => {
+            once()
+            return GLib.SOURCE_REMOVE
+        })
+        this.ackNext = true
+        this.measure()
+        // (and that frame asked for)
+        this.window?.queue_draw()
     }
 }

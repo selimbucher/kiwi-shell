@@ -15,7 +15,7 @@
 // appear on the screen, which it can already see.
 //
 //     hyprctl kiwi-previews bars
-//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] [bars] <address>[@<alpha>],<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
+//     hyprctl kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] [bars] [ack] <address>[@<alpha>][^<bar alpha>],<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...
 //     hyprctl kiwi-previews clear [<set>]
 //     hyprctl kiwi-previews raise <set> <address>
 //     hyprctl kiwi-previews select <set> <address>|- [<rrggbb>]
@@ -25,6 +25,10 @@
 // Each part of the shell that shows previews names its own set, and sets
 // come and go independently: the dock's flyout closing does not clear a
 // switcher's tiles.
+//
+// ack has the plugin say `kiwipreviews>>drawn,<set>` once these tiles are
+// the ones drawn: from the shell's next frame, so the shell knows when a
+// window it hands over (from a surface of its own to the set) is there.
 //
 // live wakes a window nobody can see so its tile keeps up; still leaves it
 // asleep, showing the last frame it drew, which is all a tile the size of a
@@ -158,6 +162,7 @@ namespace {
         CBox                clip; // where the picture is cut off; the rect if the shell named none
         std::string         badge; // the app icon's file, or empty
         float               alpha = 1.F; // how far it is shown, as the shell has it fading
+        float               barAlpha = 1.F; // how far its bar is, as the shell fades it (a window going into a desktop's picture)
         CHyprSignalListener commit;
     };
 
@@ -784,6 +789,8 @@ namespace {
         bool        fly       = false;
         bool        shadow    = false;
         bool        bars      = false;
+        // the shell asked to hear when the tiles it sent are drawn (ack)
+        bool        acked     = false;
 
         // the tile outlined as chosen, if any, and in what
         // The outline comes and goes over OUTLINE_FADE: on the window pointed
@@ -829,7 +836,9 @@ namespace {
             if (m_armed) {
                 m_pending = std::move(tiles);
                 listenForCommit();
-            } else if (!m_tiles.empty()) {
+                return;
+            }
+            if (!m_tiles.empty()) {
                 damageAll();
                 m_tiles.clear();
                 // A flying set left with no tiles (its last window gone to
@@ -838,6 +847,7 @@ namespace {
                 if (fly)
                     hideWindows();
             }
+            drawn();
         }
 
         void clear() {
@@ -1042,6 +1052,14 @@ namespace {
             return m_closing ? -SPEED : SPEED;
         }
 
+        // the tiles sent are the ones drawn, if the shell asked to hear it
+        void drawn() {
+            if (!acked)
+                return;
+            acked = false;
+            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwipreviews", .data = std::format("drawn,{}", name)});
+        }
+
         // The shell's next frame is the one it shows its pane in. A surface
         // that maps after the request is picked up as it maps: a layer from
         // inside the commit it maps with (a listener added during a signal
@@ -1066,6 +1084,7 @@ namespace {
                     if (fly)
                         flyOut();
                     damageAll();
+                    drawn();
                 }));
             }
         }
@@ -1149,6 +1168,7 @@ namespace {
                         if (barAlpha >= 1.F)
                             m_barFrom.erase(IT);
                     }
+                    barAlpha *= tile.barAlpha;
                 }
                 tiles.emplace_back(SDrawTile{.window   = tile.window,
                                              .box      = box,
@@ -1796,14 +1816,14 @@ namespace {
                 return "ok";
             }
             if (WORDS.size() < 3)
-                return "usage: kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...";
+                return "usage: kiwi-previews <set> <namespace> <rounding> [live|still] [popup] [square-top] [fly] [shadow] [bars] [ack] <address>,<x>,<y>,<w>,<h>[,<cx>,<cy>,<cw>,<ch>[,<badge>]] ...";
 
             int rounding = 0;
             if (!parse(WORDS[2], rounding))
                 return "rounding must be a number";
 
             size_t first = 3;
-            bool   live = false, popup = false, squareTop = false, fly = false, shadow = false, bars = false;
+            bool   live = false, popup = false, squareTop = false, fly = false, shadow = false, bars = false, ack = false;
             for (; first < WORDS.size(); ++first) {
                 if (WORDS[first] == "live")
                     live = true;
@@ -1817,6 +1837,8 @@ namespace {
                     shadow = true;
                 else if (WORDS[first] == "bars")
                     bars = true;
+                else if (WORDS[first] == "ack")
+                    ack = true;
                 else if (WORDS[first] != "still")
                     break;
             }
@@ -1835,9 +1857,16 @@ namespace {
                 }
                 const std::string BADGE = FIELDS.size() == 10 ? unescape(FIELDS[9]) : "";
 
-                // <address>[@<alpha>]: a tile fading as the shell has it
-                std::string_view ADDRESS = FIELDS[0];
-                double           alpha   = 1.0;
+                // <address>[@<alpha>][^<bar alpha>]: a tile fading as the
+                // shell has it, and its bar
+                std::string_view ADDRESS  = FIELDS[0];
+                double           alpha    = 1.0;
+                double           barAlpha = 1.0;
+                if (const auto CARET = ADDRESS.find('^'); CARET != std::string_view::npos) {
+                    if (!parse(ADDRESS.substr(CARET + 1), barAlpha))
+                        return "a tile's bar alpha must be a number";
+                    ADDRESS = ADDRESS.substr(0, CARET);
+                }
                 if (const auto AT = ADDRESS.find('@'); AT != std::string_view::npos) {
                     if (!parse(ADDRESS.substr(AT + 1), alpha))
                         return "a tile's alpha must be a number";
@@ -1854,7 +1883,12 @@ namespace {
                 if (RECT.w < 1 || RECT.h < 1 || CLIP.w < 1 || CLIP.h < 1)
                     continue;
 
-                tiles.emplace_back(STile{.window = WINDOW, .rect = RECT, .clip = CLIP, .badge = BADGE, .alpha = static_cast<float>(std::clamp(alpha, 0.0, 1.0))});
+                tiles.emplace_back(STile{.window   = WINDOW,
+                                         .rect     = RECT,
+                                         .clip     = CLIP,
+                                         .badge    = BADGE,
+                                         .alpha    = static_cast<float>(std::clamp(alpha, 0.0, 1.0)),
+                                         .barAlpha = static_cast<float>(std::clamp(barAlpha, 0.0, 1.0))});
                 // the window's own frames are what its tile follows
                 tiles.back().commit = WINDOW->wlSurface()->resource()->m_events.commit.listen([this, NAME, ref = PHLWINDOWREF{WINDOW}] {
                     ++m_counters.commits;
@@ -1875,6 +1909,8 @@ namespace {
             set->shadow     = shadow;
             set->bars       = bars;
             set->name       = NAME;
+            // (an ack still owed is said with these)
+            set->acked = set->acked || ack;
 
             const auto COUNT = tiles.size();
             set->apply(std::move(tiles));
