@@ -9,6 +9,7 @@
 import Gio from "gi://Gio"
 import GLib from "gi://GLib"
 import AstalBluetooth from "gi://AstalBluetooth"
+import { call, devicePath } from "./widgets/services/bluez"
 
 import { logger } from "./log"
 import { openChoicePrompt } from "./widgets/prompts"
@@ -73,7 +74,7 @@ export function pairingOver(path: string) {
 }
 
 const deviceAt = (path: string): AstalBluetooth.Device | undefined =>
-  AstalBluetooth.get_default().devices.find(d => d.get_object_path?.() === path)
+  AstalBluetooth.get_default().devices.find(d => devicePath(d) === path)
 
 function nameOf(path: string): string {
   const device = deviceAt(path)
@@ -125,11 +126,8 @@ function showCode(device: string, code: string) {
       if (withdraw !== done) return
       withdraw = null
       showing = null
-      try {
-        known?.cancel_pairing()
-      } catch (e) {
-        log.warn("couldn't stop the pairing:", e as Error)
-      }
+      call(device, "org.bluez.Device1", "CancelPairing")
+        .catch(e => log.warn("couldn't stop the pairing:", e as Error))
     })
   const pairedId = known?.connect("notify::paired", () => { if (known.paired) done() })
   const done = () => {

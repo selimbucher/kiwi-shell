@@ -1,15 +1,14 @@
 import { Gtk } from "ags/gtk4"
 import AstalBluetooth from "gi://AstalBluetooth"
 import GLib from "gi://GLib"
-import Gio from "gi://Gio"
 import { createBinding, createComputed, createState, onCleanup } from "ags"
-import { exec } from "ags/process"
 
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
 import { KeyedList } from "../../../KeyedList"
 import { ContextMenu } from "../../../ContextMenu"
 import { logger } from "../../../../log"
 import { registerBluetoothAgent, expectPairing, pairingOver } from "../../../../bluetoothAgent"
+import { call as bluez, devicePath, onAdapter, setAdapter, setProperty } from "../../../services/bluez"
 const log = logger("bluetooth")
 import { bluetoothTabOpen } from "../SystemMenu"
 import { openChoicePrompt } from "../../../prompts"
@@ -40,12 +39,12 @@ function advertise() {
   const adapter = liveAdapter()
   if (!adapter?.powered) return
   const open = bluetoothTabOpen()
-  try {
-    if (adapter.discoverable !== open) adapter.set_discoverable(open)
-    if (adapter.pairable !== open) adapter.set_pairable(open)
-  } catch (e) {
-    log.warn("could not set the adapter's visibility:", e as Error)
+  const set = (name: string, now: boolean) => {
+    if (now !== open)
+      setAdapter(adapter, name, open).catch(e => log.warn("could not set the adapter's visibility:", e as Error))
   }
+  set("Discoverable", adapter.discoverable)
+  set("Pairable", adapter.pairable)
 }
 // (SystemMenu and this file import each other: its state is there once both are)
 if (bluetooth) GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
@@ -172,24 +171,18 @@ const otherEmptyLabel = createComputed((get) => {
   return "No devices found"
 })
 
+// (refused when already discovering: nothing to do)
 export function startBluetoothDiscovery() {
-  try {
-    liveAdapter()?.start_discovery()
-  } catch (e) {
-    // Already discovering, ignore
-  }
+  return onAdapter(liveAdapter(), "StartDiscovery")
 }
 
+// bluez refuses with "No discovery started" when nothing is scanning. This is
+// routine, not an error: pairDevice() stops discovery and then calls
+// connectDevice(), which stops it again. Letting that throw used to abort
+// connectDevice() *before* connect_device() ran, so a successful pair never
+// connected and discovery was left stopped (the finally never ran either).
 export function stopBluetoothDiscovery() {
-  try {
-    liveAdapter()?.stop_discovery()
-  } catch (e) {
-    // bluez throws "No discovery started" when nothing is scanning. This is
-    // routine, not an error: pairDevice() stops discovery and then calls
-    // connectDevice(), which stops it again. Letting that throw used to abort
-    // connectDevice() *before* connect_device() ran, so a successful pair never
-    // connected and discovery was left stopped (the finally never ran either).
-  }
+  return onAdapter(liveAdapter(), "StopDiscovery")
 }
 
 export default function BluetoothTab({ visible }) {
@@ -219,15 +212,16 @@ export default function BluetoothTab({ visible }) {
               if (syncingSwitch) return false
               const adapter = liveAdapter()
               if (adapter && state !== adapter.powered) {
-                // a synchronous bluez call: it returns once the controller has
-                // actually changed state, and the is-powered update that follows
-                // finds the switch already there. One refused (rfkill, airplane
-                // mode) changes nothing, and the switch goes back to say so.
-                adapter.set_powered(state)
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, POWER_SETTLE_MS, () => {
-                  follow()
-                  return GLib.SOURCE_REMOVE
-                })
+                // bluez answers once the controller has actually changed
+                // state, and the is-powered update that follows finds the
+                // switch already there. One refused (rfkill, airplane mode)
+                // changes nothing, and the switch goes back to say so.
+                setAdapter(adapter, "Powered", state)
+                  .catch(e => log.warn("couldn't switch Bluetooth:", e as Error))
+                  .finally(() => GLib.timeout_add(GLib.PRIORITY_DEFAULT, POWER_SETTLE_MS, () => {
+                    follow()
+                    return GLib.SOURCE_REMOVE
+                  }))
               }
               return false
             })
@@ -429,8 +423,7 @@ function connectDevice(device) {
   // controller time-slice between scan and connect, which causes Page Timeout /
   // AuthenticationTimeout. Pause discovery for the operation and resume it
   // afterwards if the tab is still open (bluetoothctl does the same implicitly).
-  stopBluetoothDiscovery()
-  device.connect_device((source, result) => {
+  void stopBluetoothDiscovery().then(() => device.connect_device((source, result) => {
     try {
       device.connect_device_finish(result)
       log.debug("Connected successfully!")
@@ -438,9 +431,9 @@ function connectDevice(device) {
       log.error("Connect failed:", err)
       failed(device.address ?? "", "Couldn't connect")
     } finally {
-      if (bluetoothTabOpen()) startBluetoothDiscovery()
+      if (bluetoothTabOpen()) void startBluetoothDiscovery()
     }
-  })
+  }))
 }
 
 function disconnectDevice(device) {
@@ -457,12 +450,9 @@ function disconnectDevice(device) {
 
 function pairDevice(device) {
   log.debug("Pairing with", device.name)
-  // Pause scanning first: pairing while discovery runs is a common cause of the
-  // AuthenticationTimeout / Page Timeout failures seen with these mice.
-  stopBluetoothDiscovery()
   const address = device.address ?? ""
   setPairingAddress(address)
-  const path = device.get_object_path?.() ?? ""
+  const path = address ? devicePath(device) : ""
   const over = (error: unknown | null) => {
     pairingOver(path)
     if (pairingAddress.get() === address) setPairingAddress("")
@@ -474,38 +464,33 @@ function pairDevice(device) {
     if (error && !String(error).includes("AlreadyExists")) {
       log.error("Pair failed:", error)
       failed(address, "Couldn't pair")
-      if (bluetoothTabOpen()) startBluetoothDiscovery()
+      if (bluetoothTabOpen()) void startBluetoothDiscovery()
       return
     }
-    device.trusted = true
-    connectDevice(device)
+    setProperty(path, "org.bluez.Device1", "Trusted", GLib.Variant.new_boolean(true))
+      .catch(e => log.warn("couldn't trust", device.name, e as Error))
+      .finally(() => connectDevice(device))
   }
-  if (!path) return over(new Error("the device has no bluez object"))
+  if (!path) return over(new Error("the device has no address"))
   // asked for here: the agent confirms it without asking again
   expectPairing(path)
+  // Pause scanning first: pairing while discovery runs is a common cause of the
+  // AuthenticationTimeout / Page Timeout failures seen with these mice.
   // Astal's pair() is a synchronous call: the shell stood still until bluez
   // answered (10 s for a mouse gone back to sleep), and the agent, answering
   // from the same main loop, couldn't be asked anything meanwhile. Called
   // here without waiting, as bluetoothctl does; a minute leaves time to type
   // a code shown on the other device.
-  Gio.DBus.system.call("org.bluez", path, "org.bluez.Device1", "Pair", null, null,
-    Gio.DBusCallFlags.NONE, 60_000, null, (bus, result) => {
-      try {
-        bus!.call_finish(result)
-        over(null)
-      } catch (e) {
-        over(e)
-      }
-    })
+  void stopBluetoothDiscovery()
+    .then(() => bluez(path, "org.bluez.Device1", "Pair", null, 60_000))
+    .then(() => over(null), over)
 }
 
+// (bluez disconnects it first: seconds for one connected)
 function forgetDevice(device) {
-  try {
-    log.debug("Removing device", device.name)
-    liveAdapter()?.remove_device(device)
-  } catch (error) {
-    log.error("Failed to remove device:", error)
-  }
+  log.debug("Removing device", device.name)
+  bluez(device.adapter, "org.bluez.Adapter1", "RemoveDevice", new GLib.Variant("(o)", [devicePath(device)]))
+    .catch(error => log.error("Failed to remove device:", error))
 }
 
 async function handleDeviceClick(device) {
