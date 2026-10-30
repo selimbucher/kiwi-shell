@@ -16,7 +16,7 @@ import { brightness, setBrightnessLevel, brightnessAvailable, brightnessWritable
 import { closeSystemMenu } from "../SystemMenu";
 import { conf } from "../../../config";
 import { notify } from "../../../../notify";
-import { nightShift, turnNightShift } from "../../../services/nightShiftSchedule";
+import { nightShift, nightShiftUntil, turnNightShift } from "../../../services/nightShiftSchedule";
 
 
 const nightShiftTemp = 4000;
@@ -163,7 +163,12 @@ function OptionButtons(){
           >
           <box>
             <Icon iconName="night-light-symbolic" pixelSize={17}/>
-            <label label="Night Shift" />
+            {/* and how long it stays so, as a Mac's Control Center says */}
+            <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER}>
+              <label label="Night Shift" xalign={0} />
+              <label class="option-detail" xalign={0} label={nightShiftUntil}
+                visible={nightShiftUntil.as(u => u !== "")} />
+            </box>
             <box hexpand={true} />
           </box>
         </button>

@@ -1,6 +1,7 @@
 import Quarrel from "gi://Quarrel"
 import app from "ags/gtk4/app"
 import { setLogLevel } from "./log"
+import { previewNightShift } from "./widgets/services/nightShiftSchedule"
 
 // kiwictl command dispatch, parsed with Quarrel. Option/flag objects keep
 // their parsed state, so the command tree is rebuilt for every request —
@@ -33,6 +34,14 @@ function buildCli() {
 }
 
 export function handleCliRequest(argv: string[], respond: (response: string) => void) {
+    // Kiwi Settings' warmth slider, while it is dragged: not a command of
+    // kiwictl's, the settings app's own word to the shell (over D-Bus)
+    if (argv[0] === "night-shift-preview") {
+        previewNightShift(argv[1] === "end" ? null : Number(argv[1]))
+        respond("")
+        return
+    }
+
     const c = buildCli()
 
     let matched: Quarrel.Command

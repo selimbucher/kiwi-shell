@@ -104,12 +104,12 @@ function getJson(url: string): Promise<any> {
     })
 }
 
-type Place = { name: string; latitude: number; longitude: number }
+export type Place = { name: string; latitude: number; longitude: number }
 const places = new Map<string, Place>()
 
 // "Zurich" or "Zurich, Switzerland" (or "Zurich, CH"): the first place of
 // that name, in that country when one is named
-async function placeOf(city: string): Promise<Place | null> {
+export async function placeOf(city: string): Promise<Place | null> {
     const known = places.get(city)
     if (known) return known
     const [name, country] = city.split(",").map(s => s.trim())
