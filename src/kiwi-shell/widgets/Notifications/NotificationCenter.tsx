@@ -4,9 +4,8 @@ import GLib from "gi://GLib"
 import Cairo from "gi://cairo"
 import { createComputed, createState, onCleanup } from "ags"
 
-import { conf } from "../config"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
-import { themeClasses, LAYER } from "../services/theme"
+import { themeClasses, LAYER, primaryCss } from "../services/theme"
 import { AnimatedColumn } from "./AnimatedColumn"
 import { CARD_WIDTH, rowFactory } from "./NotificationCard"
 import { centerOpen, closeCenter, layout, openCenter, setBannerHover } from "./store"
@@ -14,11 +13,16 @@ import { applyBinds, currentBinds, registerBindSetup, type BindOp } from "../../
 import { optionalShortcuts, combo, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { logger } from "../../log"
+import { Zoomed } from "../zoom"
+import { Gallery } from "../Widgets/Gallery"
+import { editingWidgets, setEditingWidgets } from "../Widgets/model"
 
 const log = logger("notifications")
 
 // room around the cards for the close button on their corner and their shadow
-const COLUMN_WIDTH = CARD_WIDTH + 24
+// (Granite's reaches 26px out; the scroller clips at its edge)
+const SHADOW_ROOM = 16
+const COLUMN_WIDTH = CARD_WIDTH + 24 + SHADOW_ROOM
 const ROW_SPACING = 2
 // stagger between cards sliding in when the center opens
 const OPEN_STAGGER_MS = 22
@@ -116,7 +120,8 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
         const opening = centerOpen() && !wasOpen
         wasOpen = centerOpen()
         if (!rows.some(r => r.kind === "card" && r.banner)) setBannerHover(false)
-        column.sync(rows, { staggerMs: opening ? OPEN_STAGGER_MS : 0, foldsInto })
+        // (widgets added, resized or removed while it's up: in place)
+        column.sync(rows, { staggerMs: opening ? OPEN_STAGGER_MS : 0, foldsInto, inPlace: centerOpen() && !opening })
     }
 
     let win: Gtk.Window | null = null
@@ -160,7 +165,7 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
     return [(
         <window
             namespace={LAYER.cards}
-            css={conf.as(conf => `--primary: ${conf.primary_color};`)}
+            css={primaryCss}
             visible={shown}
             name="ags-notification-center"
             class={themeClasses(t => `Notifications ${t}`)}
@@ -182,6 +187,8 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
                         if (centerOpen()) {
                             followPopupMonitor(true)
                             setBannerHover(false)
+                        } else {
+                            setEditingWidgets(false)
                         }
                         syncInputRegion()
                     }),
@@ -236,6 +243,7 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
                 })
             }}
         >
+            <Zoomed>
             <overlay>
                 <scrolledwindow
                     class="nc-scroll"
@@ -245,11 +253,17 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
                     vexpand
                     $={(self) => {
                         const viewport = new Gtk.Viewport({ scrollToFocus: false })
+                        column.set_margin_start(SHADOW_ROOM)
+                        column.set_margin_top(6)
                         viewport.set_child(column)
                         self.set_child(viewport)
-                        // every opening starts at the newest entries
+                        // every opening starts at the newest entries, and the
+                        // widgets' editing at the top, where one added goes
                         onCleanup(centerOpen.subscribe(() => {
                             if (centerOpen()) self.get_vadjustment().set_value(0)
+                        }))
+                        onCleanup(editingWidgets.subscribe(() => {
+                            if (editingWidgets.peek()) (self as Gtk.ScrolledWindow).get_vadjustment().set_value(0)
                         }))
                     }}
                 />
@@ -267,6 +281,7 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
                     heightRequest={1}
                 />
             </overlay>
+            </Zoomed>
         </window>
     ), (
         // Transparent fullscreen window below the column that maps only while
@@ -313,5 +328,7 @@ export default function NotificationCenter({ gdkmonitor }: { gdkmonitor: Gdk.Mon
         >
             <box />
         </window>
+    ), (
+        <Gallery monitor={monitor} columnWidth={COLUMN_WIDTH} />
     )]
 }

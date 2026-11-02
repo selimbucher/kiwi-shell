@@ -1,58 +1,134 @@
-import { createMemo, createState } from "ags"
+import { createComputed, createMemo, createState, type Accessor } from "ags"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
-import Soup from "gi://Soup?version=3.0"
 import AstalNetwork from "gi://AstalNetwork"
 
 import { logger } from "../../log"
 import { conf } from "../config"
+import { getJson, placeOf, timeZonePlace } from "./places"
 
 const log = logger("weather")
 
 // ─── Weather ──────────────────────────────────────────────────────────────────
-// For the island's centre, from Open-Meteo (free, no account), for the city
-// set in the settings: only its coordinates are ever sent. It's fetched only
-// while the weather is the centre: then, every 30 minutes, after the
-// machine wakes and when the network comes back, when the last is older than
-// that. The last forecast is kept on disk, so a login starts with it.
+// For the island's centre and the weather widgets, from Open-Meteo (free, no
+// account): only a place's coordinates are ever sent. A place is a city
+// typed (the widget's own, else the one in Kiwi Settings) or, with none, the
+// city the time zone is named for. The island's place is fetched while the
+// weather is its centre: every 30 minutes, after the machine wakes and when
+// the network comes back, when the last is older than that. A widget's is
+// fetched when Notification Center opens on it and it's older than 15
+// minutes, never in between. The last forecasts are kept on disk, so a login
+// starts with them.
 
 const EVERY_SECONDS = 30 * 60
 const STALE_US = 15 * 60 * 1e6
 const STATE_FILE = `${GLib.get_user_state_dir()}/kiwi-shell/weather.json`
 
-export type Hour = { time: string; degrees: number; code: number; day: boolean }
-export type Day = { date: string; code: number; high: number; low: number }
+export type Hour = { time: string; degrees: number; code: number; day: boolean; rain?: number }
+export type Day = { date: string; code: number; high: number; low: number; rain?: number }
 export type Forecast = {
-    city: string // as the settings have it
+    city: string // as asked: typed, or "" for the time zone's city
     place: string // as Open-Meteo names it
     units: "celsius" | "fahrenheit"
     fetched: number // unix seconds
-    now: { degrees: number; code: number; day: boolean }
+    now: { degrees: number; code: number; day: boolean; feels?: number }
     hours: Hour[]
     days: Day[]
 }
 
-const [forecast, setForecast] = createState<Forecast | null>(load())
-const [problem, setProblem] = createState<string | null>(null)
-export { forecast, problem as weatherProblem }
+// ─── Places' forecasts ────────────────────────────────────────────────────────
 
-function load(): Forecast | null {
+type Slot = {
+    forecast: Accessor<Forecast | null>
+    setForecast: (f: Forecast | null) => void
+    problem: Accessor<string | null>
+    setProblem: (p: string | null) => void
+    fetching: boolean
+    // asked for again while fetching (the units changed meanwhile)
+    again: boolean
+}
+
+const kept: Record<string, Forecast> = load()
+const slots = new Map<string, Slot>()
+
+function load(): Record<string, Forecast> {
     try {
         const [, bytes] = GLib.file_get_contents(STATE_FILE)
-        return JSON.parse(new TextDecoder().decode(bytes))
+        const saved = JSON.parse(new TextDecoder().decode(bytes))
+        // (one forecast, the island's, before there were widgets)
+        if (saved?.now) return { [saved.city ?? ""]: saved }
+        return saved?.forecasts ?? {}
     } catch {
-        return null
+        return {}
     }
 }
 
-function save(f: Forecast) {
+function save() {
+    const forecasts: Record<string, Forecast> = {}
+    for (const [asked, slot] of slots) {
+        const f = slot.forecast.peek()
+        if (f) forecasts[asked] = f
+    }
     try {
         GLib.mkdir_with_parents(GLib.path_get_dirname(STATE_FILE), 0o755)
-        GLib.file_set_contents(STATE_FILE, JSON.stringify(f))
+        GLib.file_set_contents(STATE_FILE, JSON.stringify({ forecasts }))
     } catch (e) {
         log.warn("saving the forecast:", e as Error)
     }
 }
+
+function slot(asked: string): Slot {
+    let found = slots.get(asked)
+    if (!found) {
+        const [forecast, setForecast] = createState<Forecast | null>(kept[asked] ?? null)
+        const [problem, setProblem] = createState<string | null>(null)
+        found = { forecast, setForecast, problem, setProblem, fetching: false, again: false }
+        slots.set(asked, found)
+    }
+    return found
+}
+
+// a widget's own city, else the one in the settings, else "" (the time zone's)
+const askedFor = (city: string, c = conf()) => city.trim() || (c.island?.weather_city ?? "").trim()
+
+/** The forecast for a widget's city ("" for the settings' place). */
+export function weatherFor(city: string): { forecast: Accessor<Forecast | null>, problem: Accessor<string | null> } {
+    const asked = createMemo(() => askedFor(city, conf()))
+    return {
+        forecast: createComputed(get => get(slot(get(asked)).forecast)),
+        problem: createComputed(get => get(slot(get(asked)).problem)),
+    }
+}
+
+/** Notification Center opening on a widget: its forecast, if it's old (and not on its way). */
+export function freshen(city: string) {
+    const asked = askedFor(city)
+    if (!slot(asked).fetching && stale(asked)) void refresh(asked)
+}
+
+// A forecast kept from earlier (a login, a while offline) starts at the hour
+// and the day it was fetched: what has gone by since is left out.
+
+/** The forecast's hours from the current one on. */
+export function hoursFrom(f: Forecast, count: number): Hour[] {
+    const gone = Math.max(0, Math.floor(Date.now() / 3.6e6) - Math.floor(f.fetched / 3600))
+    return f.hours.slice(gone, gone + count)
+}
+
+/** The forecast's days from today on. */
+export function daysFrom(f: Forecast, count: number): Day[] {
+    const then = GLib.DateTime.new_from_unix_local(f.fetched)
+    const today = GLib.DateTime.new_now_local()
+    const gone = Math.max(0, Math.round((
+        GLib.DateTime.new_local(today.get_year(), today.get_month(), today.get_day_of_month(), 12, 0, 0).to_unix() -
+        GLib.DateTime.new_local(then.get_year(), then.get_month(), then.get_day_of_month(), 12, 0, 0).to_unix()) / 86400))
+    return f.days.slice(gone, gone + count)
+}
+
+// the island's
+const island = weatherFor("")
+export const forecast = island.forecast
+export const weatherProblem = island.problem
 
 // ─── What the codes mean ──────────────────────────────────────────────────────
 // WMO weather codes, as Open-Meteo gives them, in Apple Weather's words
@@ -86,118 +162,76 @@ export function condition(code: number, day = true): { text: string; icon: strin
 
 // ─── Fetching ─────────────────────────────────────────────────────────────────
 
-const session = new Soup.Session({ user_agent: "kiwi-shell", timeout: 20 })
-
-function getJson(url: string): Promise<any> {
-    const message = Soup.Message.new("GET", url)
-    return new Promise((resolve, reject) => {
-        session.send_and_read_async(message, GLib.PRIORITY_DEFAULT, null, (_s, result) => {
-            try {
-                const bytes = session.send_and_read_finish(result)
-                const status = message.get_status()
-                if (status !== Soup.Status.OK) throw new Error(`HTTP ${status}`)
-                resolve(JSON.parse(new TextDecoder().decode(bytes.get_data() ?? new Uint8Array())))
-            } catch (e) {
-                reject(e)
-            }
-        })
-    })
-}
-
-export type Place = { name: string; latitude: number; longitude: number }
-const places = new Map<string, Place>()
-
-// "Zurich" or "Zurich, Switzerland" (or "Zurich, CH"): the first place of
-// that name, in that country when one is named
-export async function placeOf(city: string): Promise<Place | null> {
-    const known = places.get(city)
-    if (known) return known
-    const [name, country] = city.split(",").map(s => s.trim())
-    const url = `https://geocoding-api.open-meteo.com/v1/search?count=10&format=json&language=en&name=${encodeURIComponent(name)}`
-    const results: any[] = (await getJson(url)).results ?? []
-    const wanted = country?.toLowerCase()
-    const found = results.find(r => !wanted
-        || r.country?.toLowerCase() === wanted || r.country_code?.toLowerCase() === wanted
-        || r.admin1?.toLowerCase() === wanted) ?? null
-    if (!found) return null
-    const place = { name: found.name, latitude: found.latitude, longitude: found.longitude }
-    places.set(city, place)
-    return place
-}
-
-let fetching = false
-// asked for again while fetching (the city or units changed meanwhile)
-let again = false
-
-async function refresh() {
-    const { weather_city: city, weather_units: units } = conf().island
-    if (!city?.trim()) {
-        setProblem("No city set")
+async function refresh(asked: string) {
+    const units = conf().island.weather_units === "fahrenheit" ? "fahrenheit" : "celsius"
+    const s = slot(asked)
+    if (s.fetching) {
+        s.again = true
         return
     }
-    if (fetching) {
-        again = true
-        return
-    }
-    fetching = true
+    s.fetching = true
     try {
-        const place = await placeOf(city.trim())
+        const place = asked ? await placeOf(asked) : timeZonePlace()
         if (!place) {
-            setProblem(`No place called ${city}`)
+            s.setProblem(asked ? `No place called ${asked}` : "No city set")
             return
         }
-        const unit = units === "fahrenheit" ? "fahrenheit" : "celsius"
         const url = "https://api.open-meteo.com/v1/forecast" +
             `?latitude=${place.latitude}&longitude=${place.longitude}` +
-            "&current=temperature_2m,weather_code,is_day" +
-            "&hourly=temperature_2m,weather_code,is_day" +
-            "&daily=weather_code,temperature_2m_max,temperature_2m_min" +
-            `&timezone=auto&forecast_days=6&temperature_unit=${unit}`
+            "&current=temperature_2m,apparent_temperature,weather_code,is_day" +
+            "&hourly=temperature_2m,weather_code,is_day,precipitation_probability" +
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max" +
+            `&timezone=auto&forecast_days=6&temperature_unit=${units}`
         const data = await getJson(url)
         // the hours from the current one on, in the place's own time
         const nowHour = String(data.current.time).slice(0, 13)
         const first = Math.max(0, (data.hourly.time as string[]).findIndex(t => t.slice(0, 13) === nowHour))
         const next: Forecast = {
-            city, place: place.name, units: unit, fetched: Math.floor(Date.now() / 1000),
-            now: { degrees: data.current.temperature_2m, code: data.current.weather_code, day: !!data.current.is_day },
-            hours: (data.hourly.time as string[]).slice(first, first + 6).map((time, i) => ({
+            city: asked, place: place.name, units, fetched: Math.floor(Date.now() / 1000),
+            now: {
+                degrees: data.current.temperature_2m, code: data.current.weather_code,
+                day: !!data.current.is_day, feels: data.current.apparent_temperature,
+            },
+            hours: (data.hourly.time as string[]).slice(first, first + 24).map((time, i) => ({
                 time,
                 degrees: data.hourly.temperature_2m[first + i],
                 code: data.hourly.weather_code[first + i],
                 day: !!data.hourly.is_day[first + i],
+                rain: data.hourly.precipitation_probability?.[first + i] ?? undefined,
             })),
             days: (data.daily.time as string[]).map((date, i) => ({
                 date,
                 code: data.daily.weather_code[i],
                 high: data.daily.temperature_2m_max[i],
                 low: data.daily.temperature_2m_min[i],
+                rain: data.daily.precipitation_probability_max?.[i] ?? undefined,
             })),
         }
-        setForecast(next)
-        setProblem(null)
-        save(next)
+        s.setForecast(next)
+        s.setProblem(null)
+        save()
         log.info(`forecast for ${place.name}: ${next.now.degrees}°, code ${next.now.code}`)
     } catch (e) {
-        // the last forecast stays up; the next try is the next timer, wake-up
-        // or network change
-        log.warn(`fetching the forecast for ${city}:`, e as Error)
-        setProblem(forecast() ? null : "Weather unavailable")
+        // the last forecast stays up; the next try is the next timer, wake-up,
+        // network change or opening
+        log.warn(`fetching the forecast for ${asked || "the time zone's city"}:`, e as Error)
+        s.setProblem(s.forecast.peek() ? null : "Weather unavailable")
     } finally {
-        fetching = false
-        // the one asked for meanwhile, for what is set now
-        if (again) {
-            again = false
-            void refresh()
+        s.fetching = false
+        if (s.again) {
+            s.again = false
+            void refresh(asked)
         }
     }
 }
 
-const stale = () => {
-    const f = forecast()
-    const { weather_city, weather_units } = conf().island
-    return !f || f.city !== weather_city || f.units !== weather_units
+const stale = (asked: string) => {
+    const f = slot(asked).forecast.peek()
+    return !f || f.units !== (conf().island.weather_units === "fahrenheit" ? "fahrenheit" : "celsius")
         || Date.now() * 1000 - f.fetched * 1e6 > STALE_US
 }
+
+const islandAsked = () => askedFor("")
 
 // ─── When ─────────────────────────────────────────────────────────────────────
 
@@ -206,9 +240,9 @@ let subscriptions: (() => void)[] = []
 
 function start() {
     if (timer) return
-    if (stale()) void refresh()
+    if (stale(islandAsked())) void refresh(islandAsked())
     timer = GLib.timeout_add_seconds(GLib.PRIORITY_LOW, EVERY_SECONDS, () => {
-        void refresh()
+        void refresh(islandAsked())
         return GLib.SOURCE_CONTINUE
     })
     let sleep = 0
@@ -218,12 +252,12 @@ function start() {
             "/org/freedesktop/login1", null, Gio.DBusSignalFlags.NONE,
             (_c, _s, _p, _i, _n, params) => {
                 const [goingToSleep] = params.deepUnpack() as [boolean]
-                if (!goingToSleep && stale()) void refresh()
+                if (!goingToSleep && stale(islandAsked())) void refresh(islandAsked())
             })
     } catch { /* no system bus: the timer and the network are enough */ }
     const network = AstalNetwork.get_default()
     const online = network.connect("notify::connectivity", () => {
-        if (network.connectivity === AstalNetwork.Connectivity.FULL && stale()) void refresh()
+        if (network.connectivity === AstalNetwork.Connectivity.FULL && stale(islandAsked())) void refresh(islandAsked())
     })
     subscriptions = [
         () => { if (sleep) Gio.DBus.system.signal_unsubscribe(sleep) },
@@ -243,7 +277,7 @@ const settings = createMemo(() => `${conf().island.weather_city}|${conf().island
 wanted.subscribe(() => wanted() ? start() : stop())
 settings.subscribe(() => {
     if (!wanted()) return
-    setProblem(null)
-    void refresh()
+    slot(islandAsked()).setProblem(null)
+    void refresh(islandAsked())
 })
 if (wanted()) start()

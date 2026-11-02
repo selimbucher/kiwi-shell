@@ -221,6 +221,14 @@ function NetworkContextMenu(ap, isActiveBinding, savedBinding) {
     class: "app-context-menu network-context-menu",
     items: [
       {
+        // what a click on the row does, there for the hand that reaches for
+        // the menu first
+        label: "Join",
+        icon: "network-wireless-symbolic",
+        visible: isActiveBinding.as((active: boolean) => !active),
+        onClick: () => join(ap.ssid, ap.flags !== 0),
+      },
+      {
         label: "Disconnect",
         icon: "network-offline-symbolic",
         visible: isActiveBinding,

@@ -138,7 +138,7 @@ export function expand(id: string, monitor: string, bubble?: { rect?: Rect; widg
     log.debug(`open ${id} on ${monitor}${bubble ? " from its bubble" : ""}`)
     setOpened({
         id, monitor, origin: bubble ? "bubble" : "island",
-        from: bubble?.rect ?? islandRects.get(monitor) ?? { x: 0, y: 4, width: 0, height: 34 },
+        from: bubble?.rect ?? islandRects.get(monitor) ?? { x: 0, y: 4, width: 0, height: 30 },
         what: bubble?.widget ?? islandBodies.get(monitor) ?? null,
     })
 }

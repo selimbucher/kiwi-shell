@@ -11,16 +11,29 @@ import Graphene from "gi://Graphene"
 // start, replay on a remap or leave a widget stuck halfway.
 //
 // Entries slide in from the right edge and out to it; the gap an entry
-// leaves closes while it flies out. Entries marked foldInto unfold from
-// behind (and fold back under) the entry with that key, like a group
-// expanding from its head card.
+// leaves closes while it flies out, under it. Entries marked foldInto unfold
+// from behind (and fold back under) the entry with that key, like a group
+// expanding from its head card. Entries marked inPlace (widgets) come and go
+// where they stand while the column stays up: they grow in as the others
+// make room and shrink away under the ones closing the gap.
 
 const ENTER_MS = 420
 const EXIT_MS = 240
 const MOVE_MS = 340
 const FOLD_MS = 300
-// the gap starts closing this long after an entry starts flying out
+const IN_PLACE_MS = 320
+const IN_PLACE_EXIT_MS = 200
+// an entry coming in place waits for the room to start opening
+const IN_PLACE_DELAY_MS = 90
+const IN_PLACE_SCALE = 0.92
+// one taking the place of another (a widget resized, a line of two made
+// anew): it fades in over the old, which stays until it's covered
+const REPLACE_MS = 220
+// the gap starts closing this long after an entry starts flying out; after
+// several at once (Clear All), once they're mostly gone, or what's under
+// them rose behind cards still all but opaque
 const EXIT_RELEASE_MS = 90
+const BULK_RELEASE_MS = 180
 
 type Ease = (t: number) => number
 const easeOutQuint: Ease = t => 1 - Math.pow(1 - t, 5)
@@ -76,6 +89,8 @@ export interface ColumnEntry {
     key: string
     // unfolds from behind / folds back under the entry with this key
     foldInto?: string
+    // comes and goes in place (SyncOptions.inPlace)
+    inPlace?: boolean
 }
 
 export interface ColumnFactory<E extends ColumnEntry> {
@@ -92,12 +107,17 @@ interface Item<E extends ColumnEntry> {
     x: Tween
     y: Tween
     opacity: Tween
+    scale: Tween
+    // coming or going in place: drawn under the others (one coming over one
+    // going)
+    inPlace: boolean
     height: number
     placed: boolean
     exiting: boolean
     // still occupies its slot (the gap hasn't started closing yet)
     holdsSlot: boolean
     releaseAt: number
+    releaseMs: number
     // folds behind another entry: drawn below the others while moving
     foldKey: string | null
 }
@@ -109,6 +129,9 @@ export interface SyncOptions {
     foldsInto?: ReadonlyMap<string, string>
     // jump straight to the final layout
     instant?: boolean
+    // entries marked inPlace come and go in place (the column stays up;
+    // as it appears or goes, they slide with the rest)
+    inPlace?: boolean
 }
 
 export const AnimatedColumn = GObject.registerClass(
@@ -151,14 +174,19 @@ export const AnimatedColumn = GObject.registerClass(
                     widget.set_parent(this)
                     item = {
                         key: entry.key, entry, widget,
-                        x: new Tween(), y: new Tween(), opacity: new Tween(),
+                        x: new Tween(), y: new Tween(), opacity: new Tween(), scale: new Tween(), inPlace: false,
                         height: 0, placed: false, exiting: false,
-                        holdsSlot: false, releaseAt: -1, foldKey: null,
+                        holdsSlot: false, releaseAt: -1, releaseMs: EXIT_RELEASE_MS, foldKey: null,
                     }
                     isNew.add(item)
                 }
                 next.push(item)
             }
+
+            // in place, both coming and going: a replacement
+            const placing = (item: Item<any>) => !options.instant && !!options.inPlace && !!item.entry.inPlace
+            const replacing = next.some(i => isNew.has(i) && placing(i))
+                && previous.some(i => byKey.has(i.key) && !i.exiting && placing(i))
 
             // entering entries: unfold under an entry that was already there,
             // otherwise slide in from the right
@@ -166,9 +194,22 @@ export const AnimatedColumn = GObject.registerClass(
             for (const item of next) {
                 if (!isNew.has(item)) continue
                 const anchor = item.entry.foldInto
+                item.scale.jump(1)
                 if (options.instant) {
                     item.x.jump(0)
                     item.opacity.jump(1)
+                } else if (placing(item) && replacing) {
+                    item.inPlace = true
+                    item.x.jump(0)
+                    item.opacity.jump(0)
+                    item.opacity.to(1, REPLACE_MS, easeOutCubic)
+                } else if (placing(item)) {
+                    item.inPlace = true
+                    item.x.jump(0)
+                    item.opacity.jump(0)
+                    item.scale.jump(IN_PLACE_SCALE)
+                    item.opacity.to(1, IN_PLACE_MS * 0.8, easeOutCubic, IN_PLACE_DELAY_MS)
+                    item.scale.to(1, IN_PLACE_MS, easeOutQuint, IN_PLACE_DELAY_MS)
                 } else if (anchor && previous.some(p => p.key === anchor && !p.exiting)) {
                     item.foldKey = anchor
                     item.x.jump(0)
@@ -188,13 +229,15 @@ export const AnimatedColumn = GObject.registerClass(
             // leftovers exit, keeping their place after their old predecessor
             const lookup = (key: string) =>
                 next.find(i => i.key === key) ?? previous.find(i => i.key === key)
+            const leaving = previous.filter(i => byKey.has(i.key) && !i.exiting).length
             for (let i = 0; i < previous.length; i++) {
                 const item = previous[i]
                 if (!byKey.has(item.key)) continue
                 if (!item.exiting) {
                     const foldKey = options.foldsInto?.get(item.key)
                     const anchor = foldKey ? lookup(foldKey) : undefined
-                    this.beginExit(item, anchor?.placed ? anchor : undefined, !!options.instant)
+                    item.releaseMs = leaving > 1 ? BULK_RELEASE_MS : EXIT_RELEASE_MS
+                    this.beginExit(item, anchor?.placed ? anchor : undefined, !!options.instant, !!options.inPlace, replacing)
                 }
                 let at = 0
                 for (let j = i - 1; j >= 0; j--) {
@@ -226,14 +269,27 @@ export const AnimatedColumn = GObject.registerClass(
             item.exiting = false
             item.holdsSlot = false
             item.foldKey = null
+            item.inPlace = false
             item.x.to(0, ENTER_MS, easeOutQuint)
             item.opacity.to(1, ENTER_MS * 0.6, easeOutCubic)
+            item.scale.to(1, IN_PLACE_MS, easeOutQuint)
         }
 
-        private beginExit(item: Item<any>, anchor: Item<any> | undefined, instant: boolean) {
+        private beginExit(item: Item<any>, anchor: Item<any> | undefined, instant: boolean, inPlace: boolean,
+            replaced: boolean) {
             item.exiting = true
             if (instant) return
-            if (anchor) {
+            if (inPlace && item.entry.inPlace) {
+                // (its room given up at once: the others close over it; replaced,
+                // it stays as it is under the new one, and goes once it's covered)
+                item.inPlace = true
+                item.holdsSlot = false
+                if (replaced) item.opacity.to(0, REPLACE_MS * 0.5, easeOutCubic, REPLACE_MS * 0.7)
+                else {
+                    item.opacity.to(0, IN_PLACE_EXIT_MS, easeOutCubic)
+                    item.scale.to(IN_PLACE_SCALE, IN_PLACE_EXIT_MS, easeOutCubic)
+                }
+            } else if (anchor) {
                 item.foldKey = anchor.key
                 item.holdsSlot = false
                 item.y.to(anchor.y.target, FOLD_MS, easeOutCubic)
@@ -274,19 +330,21 @@ export const AnimatedColumn = GObject.registerClass(
                     if (item.x.step(now)) relayout = true
                     if (item.y.step(now)) relayout = true
                     if (item.opacity.step(now)) item.widget.set_opacity(item.opacity.value)
+                    if (item.scale.step(now)) relayout = true
                     if (item.exiting && item.holdsSlot) {
-                        if (item.releaseAt < 0) item.releaseAt = now + EXIT_RELEASE_MS * 1000
+                        if (item.releaseAt < 0) item.releaseAt = now + item.releaseMs * 1000
                         if (now >= item.releaseAt) {
                             item.holdsSlot = false
                             resize = true
                         }
                     }
-                    if (item.exiting && !item.x.running && !item.y.running && !item.opacity.running) {
+                    if (item.exiting && !item.x.running && !item.y.running && !item.opacity.running && !item.scale.running) {
                         this.removeItem(item)
                         resize = true
                         continue
                     }
-                    if (item.x.running || item.y.running || item.opacity.running || item.holdsSlot) moving = true
+                    if (item.x.running || item.y.running || item.opacity.running || item.scale.running || item.holdsSlot) moving = true
+                    if (item.inPlace && !item.exiting && !item.opacity.running && !item.scale.running) item.inPlace = false
                     if (item.foldKey && !item.exiting && !item.opacity.running && !item.y.running) {
                         item.foldKey = null
                         this.queue_draw()
@@ -349,21 +407,29 @@ export const AnimatedColumn = GObject.registerClass(
                 y += h + this.spacing
             }
             for (const item of this.items) {
-                const point = new Graphene.Point({ x: item.x.value, y: item.y.value })
-                item.widget.allocate(width, item.height, -1, Gsk.Transform.new().translate(point))
+                // (scaled about its middle)
+                const s = item.scale.value
+                const point = new Graphene.Point({
+                    x: item.x.value + width * (1 - s) / 2, y: item.y.value + item.height * (1 - s) / 2,
+                })
+                const moved = Gsk.Transform.new().translate(point)
+                const transform = s !== 1 ? moved?.scale(s, s) ?? moved : moved
+                item.widget.allocate(width, item.height, -1, transform)
             }
             if (animating) this.ensureTicking()
             this.onLayout?.()
         }
 
         vfunc_snapshot(snapshot: Gtk.Snapshot) {
-            // entries folding behind their head go underneath; entries sliding
-            // in go on top of the ones moving aside to make room for them, the
-            // newest (the list's first) over one still coming in before it
+            // entries folding behind their head and ones going in place go
+            // underneath (ones coming in place with the rest); ones flying out
+            // over the ones closing the gap they leave; entries sliding in on
+            // top of the ones moving aside to make room for them, the newest
+            // (the list's first) over one still coming in before it
             const layer = (item: Item<any>) =>
-                item.foldKey ? 0 : !item.exiting && item.x.running ? 2 : 1
-            for (const z of [0, 1, 2]) {
-                const items = z === 2 ? [...this.items].reverse() : this.items
+                item.foldKey || (item.inPlace && item.exiting) ? 0 : item.exiting ? 2 : item.x.running ? 3 : 1
+            for (const z of [0, 1, 2, 3]) {
+                const items = z === 3 ? [...this.items].reverse() : this.items
                 for (const item of items) {
                     if (layer(item) === z) this.snapshot_child(item.widget, snapshot)
                 }

@@ -208,3 +208,36 @@ export async function writeConf() {
 
     await writeHypr(currentConf.primary_color)
 }
+
+/**
+ * One setting the shell changes itself (its widgets, edited in place): the
+ * user's file read again first, so what Kiwi Settings or a hand wrote
+ * meanwhile stays, and only that key written. A file that doesn't read is
+ * left as it is. True once it's written.
+ */
+export async function saveSetting(key: string, value: unknown): Promise<boolean> {
+    // (Home Manager's would be laid over it again)
+    if (key in nixConfig()) {
+        notify("Set in Home Manager", `${key} comes from services.kiwi-shell.settings; change it there.`, { urgency: 1 })
+        return false
+    }
+    let user: Record<string, any> = {}
+    if (GLib.file_test(CONFIG_FILE, GLib.FileTest.EXISTS)) {
+        try {
+            user = JSON.parse(readFile(CONFIG_FILE))
+        } catch (e) {
+            log.error(`not saving ${key}: ${CONFIG_FILE} doesn't read:`, e as Error)
+            notify("Widgets not saved", `config.json doesn't read: ${(e as Error).message}`, { urgency: 2 })
+            return false
+        }
+    }
+    user[key] = value
+    try {
+        setConf(effective(JSON.parse(readFile(DEFAULT_CONFIG_FILE)), user))
+        await writeFileAsync(CONFIG_FILE, JSON.stringify(user, null, 2))
+        return true
+    } catch (e) {
+        log.error(`couldn't save ${key}:`, e as Error)
+        return false
+    }
+}

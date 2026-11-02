@@ -1,3 +1,5 @@
+@use 'theme' as *;
+
 // ─── Mission Control ─────────────────────────────────────────────────────────
 // Over the wallpaper rather than on a pane, so it is white on dark the way
 // macOS draws it, whatever the panel style.
@@ -29,7 +31,7 @@ window.MissionControl {
 // in the open one (NAME_PAD in the widget)
 .mc-name {
     color: rgba(255, 255, 255, 0.86);
-    font-size: 13px;
+    font-size: $body;
     font-weight: 500;
     padding: 4px 14px;
     border-radius: 9999px;
@@ -120,16 +122,23 @@ button.mc-close {
     color: rgb(96, 96, 98);
     background-color: rgb(225, 225, 227);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-    transition: background-color 90ms ease-out;
+    transition: background-color 90ms ease-out, color 90ms ease-out, transform 120ms ease-out, box-shadow 120ms ease-out;
 
 
     &:hover {
-        background-color: rgb(238, 238, 240);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        // pointed at, it answers plainly: white, the × dark, a size up
+        background-image: none;
+        background-color: #ffffff;
+        color: rgb(28, 28, 30);
+        transform: scale(1.15);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
     }
 
     &:active {
+        background-image: none;
         background-color: rgb(205, 205, 207);
+        color: rgb(28, 28, 30);
+        transform: scale(1.0);
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     }
 }
@@ -215,7 +224,7 @@ button.mc-add {
 
 .mc-title {
     color: #ffffff;
-    font-size: 12px;
+    font-size: $callout;
     padding: 3px 10px;
     border-radius: 9999px;
     background-color: rgba(28, 28, 30, 0.86);

@@ -1,8 +1,9 @@
 import { Gtk } from "ags/gtk4"
+import { Zoomed } from "../../zoom"
 import { With } from "ags"
 import GLib from "gi://GLib"
 
-import { forecast, weatherProblem, condition, type Forecast } from "../../services/weather"
+import { forecast, weatherProblem, condition, daysFrom, hoursFrom, type Forecast } from "../../services/weather"
 import { clockHour } from "../../services/minuteClock"
 
 // ─── The weather ──────────────────────────────────────────────────────────────
@@ -24,9 +25,10 @@ function dayLabel(date: string, first: boolean): string {
 }
 
 function Details({ f }: { f: Forecast }) {
-    const today = f.days[0]
-    const lowest = Math.min(...f.days.map(d => d.low))
-    const highest = Math.max(...f.days.map(d => d.high))
+    const days = daysFrom(f, 6)
+    const today = days[0]
+    const lowest = Math.min(...days.map(d => d.low))
+    const highest = Math.max(...days.map(d => d.high))
     const span = Math.max(1, highest - lowest)
     return (
         <box class="island-weather-card" orientation={Gtk.Orientation.VERTICAL}>
@@ -35,7 +37,7 @@ function Details({ f }: { f: Forecast }) {
             <label class="sky" label={condition(f.now.code, f.now.day).text} xalign={0} />
             {today ? <label class="range" label={`H:${deg(today.high)} L:${deg(today.low)}`} xalign={0} /> : <box />}
             <box class="hours" homogeneous>
-                {f.hours.map((h, i) => (
+                {hoursFrom(f, 6).map((h, i) => (
                     <box orientation={Gtk.Orientation.VERTICAL} class="hour">
                         <label class="when" label={hourLabel(h.time, i === 0)} />
                         <Gtk.Image iconName={condition(h.code, h.day).icon} pixelSize={18} />
@@ -44,7 +46,7 @@ function Details({ f }: { f: Forecast }) {
                 ))}
             </box>
             <box class="days" orientation={Gtk.Orientation.VERTICAL}>
-                {f.days.map((d, i) => (
+                {days.map((d, i) => (
                     <box class="day">
                         <label class="when" label={dayLabel(d.date, i === 0)} xalign={0} widthChars={6} />
                         <Gtk.Image iconName={condition(d.code).icon} pixelSize={16} />
@@ -77,14 +79,16 @@ export default function WeatherCenter() {
                 </With>
             </box>
             <popover class="island-weather-popover" hasArrow={false} autohide>
-                <box>
-                    <With value={forecast}>
-                        {(f: Forecast | null) => f
-                            ? <Details f={f} />
-                            : <label class="island-weather-empty" label={weatherProblem(p => p === "No city set"
-                                ? "Set your city in Kiwi Settings, under Status Bar." : p ?? "Getting the weather…")} />}
-                    </With>
-                </box>
+                <Zoomed>
+                    <box>
+                        <With value={forecast}>
+                            {(f: Forecast | null) => f
+                                ? <Details f={f} />
+                                : <label class="island-weather-empty" label={weatherProblem(p => p === "No city set"
+                                    ? "Set your city in Kiwi Settings, under Status Bar." : p ?? "Getting the weather…")} />}
+                        </With>
+                    </box>
+                </Zoomed>
             </popover>
         </menubutton>
     )

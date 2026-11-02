@@ -1,4 +1,4 @@
-import { Accessor, createComputed } from "ags"
+import { Accessor, createMemo } from "ags"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import Hyprland from "gi://AstalHyprland"
@@ -54,12 +54,19 @@ export const LAYER = {
     plain: "kiwi-plain",
 } as const
 
-export const themeStyle: Accessor<ThemeStyle> = conf(c =>
-    THEME_STYLES.includes(c.theme) ? c.theme : "acrylic")
+// (a memo: conf(…) and computeds tell their subscribers of every change to
+// any setting, and the layer rules were sent to the compositor again for each)
+export const themeStyle: Accessor<ThemeStyle> = createMemo(() =>
+    THEME_STYLES.includes(conf().theme) ? conf().theme : "acrylic")
+
+/** A window's accent colour, as its `css`: set again only when it changes. */
+export const primaryCss: Accessor<string> = createMemo(() => `--primary: ${conf().primary_color};`)
 
 // no-blur: kiwi_blur is off, and the panes stand on their own (style/_theme.scss)
-export const themeClasses: Accessor<string> = createComputed(get =>
-    `theme-${get(themeStyle)}${get(conf).kiwi_blur === false ? " no-blur" : ""}`)
+// (a memo too: every window's classes were set again, and the window styled
+// anew, with each change to any setting)
+export const themeClasses: Accessor<string> = createMemo(() =>
+    `theme-${themeStyle()}${conf().kiwi_blur === false ? " no-blur" : ""}`)
 
 // ─── Compositor layer rules ───────────────────────────────────────────────────
 // Glass needs the compositor to blur behind the shell's panels. The shell adds

@@ -1,7 +1,8 @@
 # Where kiwi-shell differs from macOS
 
-Desktops, Mission Control, their gestures and the island, as of October
-2026. Remove a line once kiwi matches macOS there.
+Desktops, Mission Control, their gestures, the island and Notification
+Center's widgets, as of November 2026. Remove a line once kiwi matches macOS
+there.
 
 ## Gestures
 
@@ -114,6 +115,35 @@ Activities as menu bar items.
   the chosen picture outlined in the accent colour. macOS's Command+Tab shows
   one icon per app, the chosen one on a lighter rounded square, its name
   under the row.
+
+## Notification Center widgets
+
+- Widgets live only in Notification Center. macOS can also put them on the
+  desktop.
+- Calendar events come from Evolution Data Server (what GNOME Calendar,
+  Evolution and Online Accounts sync into), not from one app's calendars.
+- The Month widget at the medium and large size shows the events of a day
+  clicked; on macOS a click opens Calendar.
+- Weather without a city set uses the time zone's city, not the computer's
+  location; there is no location service to ask.
+- The world clock's hands move with the minute; macOS draws a second hand.
+- The Note widget is written in where it is; macOS shows a note from Notes
+  and opens it there.
+- The Batteries widget at the large size shows the computer's battery
+  health, cycles, power draw and its last 24 hours, which macOS keeps in
+  System Settings.
+- Clicking + in the gallery puts a widget at the top; macOS also drops one
+  where it is dragged to.
+- A Batteries widget with nothing to show (a desktop with nothing
+  connected) is left out until the widgets are edited; macOS shows it empty.
+
+## AirPods
+
+- Taking a bud out pauses every app that's playing, not only the one
+  playing to the AirPods, and can't be turned off; macOS has a switch for
+  it per AirPods.
+- Noise control, Conversation Awareness and the AirPods' other settings
+  aren't offered; macOS has them in Control Center and System Settings.
 
 ## Measured against macOS
 

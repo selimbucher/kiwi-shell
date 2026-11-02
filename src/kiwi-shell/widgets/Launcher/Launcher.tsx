@@ -1,6 +1,7 @@
 import KiwiSurface from "gi://KiwiSurface"
 import Cairo from "gi://cairo"
 import { logger } from "../../log"
+import { Zoomed, zoomOf } from "../zoom"
 const log = logger("launcher")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
@@ -8,17 +9,20 @@ import { createState, createComputed, For, Accessor, onCleanup } from "ags"
 import GLib from "gi://GLib"
 import Pango from "gi://Pango"
 import { conf } from "../config"
-import { themeClasses, LAYER } from "../services/theme"
+import { themeClasses, LAYER, primaryCss } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { applyBinds, currentBinds, registerBindSetup, dialect, type BindOp } from "../../hypr"
 import { shortcuts, combo, bindCombos, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
 import { search, GROUP_LABEL, type Result } from "./providers"
-import { evaluate, formatNumber } from "./calc"
+import { remember } from "./learn"
+import { filesVersion, prepareFiles } from "./files"
 
 // Spotlight: a floating search panel on a tap of Super. Type to find an app, a
-// window you already have open, a setting, or the answer to a sum; arrows or
-// Tab to move; Enter to do the thing the row says it will do.
+// window you already have open, a file or folder, a setting, the answer to a
+// sum or a conversion, or a command to run; arrows or Tab to move; Enter to do
+// the thing the row says it will do, Shift+Enter the other one it shows. Tab
+// on a folder of a path being typed goes into it.
 //
 // The desktop behind it is left alone. macOS doesn't blur it either, and the
 // blur that used to be here was a compositor-wide setting the shell moved on
@@ -26,7 +30,7 @@ import { evaluate, formatNumber } from "./calc"
 // The panel's own glass comes from its layer rule, which only touches pixels
 // the panel actually paints.
 
-const MAX_RESULTS = 8
+const MAX_RESULTS = 12
 
 export const [isVisible, setVisibility] = createState(false)
 const [query, setQuery] = createState("")
@@ -34,12 +38,12 @@ const [selectedIdx, setSelectedIdx] = createState(0)
 
 const results: Accessor<Result[]> = createComputed(get => {
     const text = get(query).trim()
+    // the files' names coming in look again
+    get(filesVersion)
     // nothing typed is nothing to show: the panel is a bar until it has an
     // answer, and a list of guesses is in the way of the one you came to type
     if (!text) return []
-    const value = evaluate(text)
-    const answer = value === null ? null : { name: formatNumber(value), detail: text }
-    return search(text, answer, MAX_RESULTS)
+    return search(text, MAX_RESULTS)
 })
 
 // ─── Launcher keybind (shortcuts.launcher, default: tap Super) ─────────────────
@@ -61,8 +65,6 @@ const results: Accessor<Result[]> = createComputed(get => {
 let registered: Shortcut[] = []
 
 const toggle = () => isVisible() ? hideLauncher() : showLauncher()
-/** Spotlight opened, or closed, as its key does. */
-export const toggleLauncher = toggle
 const PRESS = globalShortcut("launcher", "Spotlight: open or close", "press", toggle)
 const TAP = globalShortcut("launcher-tap", "Spotlight: open or close on a tap", "release", toggle)
 
@@ -117,6 +119,7 @@ function showLauncher() {
     setQuery("")
     entryRef?.set_text("")
     setVisibility(true)
+    prepareFiles()
     // the entry can only take focus once the surface is mapped
     GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
         entryRef?.grab_focus()
@@ -143,19 +146,34 @@ function moveSelection(step: number) {
     setSelectedIdx(((selectedIdx() + step) % count + count) % count)
 }
 
-function activate(result: Result) {
+function activate(result: Result, alt = false) {
+    const action = alt && result.alt ? result.alt.activate : result.activate
+    if (result.learn) remember(query(), result.key)
     hideLauncher()
     try {
-        result.activate()
+        action()
     } catch (e) {
         log.error(`activating "${result.name}" failed:`, e)
     }
 }
 
-function activateSelected() {
+const selectedResult = (): Result | undefined => {
     const list = results()
-    const target = list[Math.min(selectedIdx(), list.length - 1)]
-    if (target) activate(target)
+    return list[Math.min(selectedIdx(), list.length - 1)]
+}
+
+function activateSelected(alt = false) {
+    const target = selectedResult()
+    if (target) activate(target, alt)
+}
+
+// a folder of a path being typed: its path in the box, to go on in it
+function completeSelected(): boolean {
+    const path = selectedResult()?.complete
+    if (!path || !entryRef) return false
+    entryRef.set_text(path)
+    entryRef.set_position(-1)
+    return true
 }
 
 // ─── UI ───────────────────────────────────────────────────────────────────────
@@ -166,10 +184,14 @@ type Row = { result: Result, header: string | null }
 const rows: Accessor<Row[]> = createComputed(get =>
     get(results).map((result, index, all) => ({
         result,
-        header: index === 0 || all[index - 1].group !== result.group
-            ? GROUP_LABEL[result.group]
-            : null,
+        header: result.top ? GROUP_LABEL.top
+            : index === 0 || all[index - 1].top || all[index - 1].group !== result.group
+                ? GROUP_LABEL[result.group]
+                : null,
     })))
+
+// a picture of its own (an app, a window, a file) or a symbol
+const pictured = (result: Result) => ["apps", "windows", "files", "folders"].includes(result.group)
 
 // Each row's position in the list, for the pointer to find the row it is over.
 const rowIndex = new WeakMap<Gtk.Widget, Accessor<number>>()
@@ -196,9 +218,9 @@ function ResultRow({ row, index }: { row: Row, index: Accessor<number> }) {
                 <Gtk.Image
                     iconName={result.iconName}
                     gicon={result.gicon}
-                    pixelSize={result.group === "apps" || result.group === "windows" ? 30 : 22}
-                    class={result.group === "apps" || result.group === "windows"
-                        ? "launcher-row-icon" : "launcher-row-icon symbolic"}
+                    // the Top Hit a size up, as a Mac's
+                    pixelSize={pictured(result) ? (result.top ? 32 : 24) : (result.top ? 22 : 18)}
+                    class={pictured(result) ? "launcher-row-icon" : "launcher-row-icon symbolic"}
                 />
                 <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.CENTER} hexpand>
                     <label
@@ -220,8 +242,10 @@ function ResultRow({ row, index }: { row: Row, index: Accessor<number> }) {
                         />
                     )}
                 </box>
-                {/* what Enter does, on the row it would do it to */}
+                {/* what Enter does, and Shift+Enter, on the row they'd do it to */}
                 <box class="launcher-verb" valign={Gtk.Align.CENTER} spacing={5} visible={selected}>
+                    {result.alt && <label class="launcher-verb-label" label={result.alt.verb} />}
+                    {result.alt && <label class="launcher-verb-key" label="⇧↵" />}
                     <label class="launcher-verb-label" label={result.verb} />
                     <label class="launcher-verb-key" label="↵" />
                 </box>
@@ -233,14 +257,19 @@ function ResultRow({ row, index }: { row: Row, index: Accessor<number> }) {
 export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // spotlight sits in the upper part of the screen, top edge fixed so the
     // panel only ever grows downwards while results appear
-    const marginTop = createComputed(get =>
-        Math.round((get(popupGdkMonitor) ?? gdkmonitor).get_geometry().height * 0.2))
+    // (a fifth of the display down; the panel is drawn at kiwi's size there,
+    // its margin with it)
+    const marginTop = createComputed(get => {
+        const monitor = get(popupGdkMonitor) ?? gdkmonitor
+        get(conf)
+        return Math.round(monitor.get_geometry().height * 0.2 / zoomOf(monitor))
+    })
     let panelRef: Gtk.Box
 
     return (
         <window
             namespace={LAYER.scrim}
-            css={conf.as((conf: any) => `--primary: ${conf.primary_color};`)}
+            css={primaryCss}
             visible={isVisible}
             name="ags-launcher"
             class={themeClasses(t => `Launcher ${t}`)}
@@ -284,11 +313,17 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
                 const keys = new Gtk.EventControllerKey()
                 keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-                keys.connect("key-pressed", (_controller, keyval) => {
+                keys.connect("key-pressed", (_controller, keyval, _code, state) => {
                     if (keyval === Gdk.KEY_Escape) {
                         hideLauncher()
                         return Gdk.EVENT_STOP
                     }
+                    if (keyval === Gdk.KEY_Return || keyval === Gdk.KEY_KP_Enter) {
+                        activateSelected(!!(state & Gdk.ModifierType.SHIFT_MASK))
+                        return Gdk.EVENT_STOP
+                    }
+                    if (keyval === Gdk.KEY_Tab && completeSelected())
+                        return Gdk.EVENT_STOP
                     if (keyval === Gdk.KEY_Down || keyval === Gdk.KEY_Tab) {
                         moveSelection(1)
                         return Gdk.EVENT_STOP
@@ -329,6 +364,7 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 self.add_controller(motion)
             }}
         >
+            <Zoomed>
             <box
                 class="launcher-backdrop"
                 orientation={Gtk.Orientation.VERTICAL}
@@ -354,10 +390,10 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     widthRequest={660}
                     $={(self) => { panelRef = self }}
                 >
-                    <box class="launcher-search-row" spacing={12}>
+                    <box class="launcher-search-row" spacing={10}>
                         <Gtk.Image
                             iconName="system-search-symbolic"
-                            pixelSize={22}
+                            pixelSize={18}
                             class="launcher-search-icon"
                         />
                         <entry
@@ -381,7 +417,7 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                             the key covering all it shows: every row was built
                             again at every key */}
                         <For each={rows} id={(r: Row) =>
-                            `${r.result.key}|${r.result.name}|${r.result.detail ?? ""}|${r.result.verb ?? ""}|${r.header ?? ""}`}>
+                            `${r.result.key}|${r.result.name}|${r.result.detail ?? ""}|${r.result.verb}|${r.result.alt?.verb ?? ""}|${r.header ?? ""}`}>
                             {(row: Row, index: Accessor<number>) => (
                                 <ResultRow row={row} index={index} />
                             )}
@@ -389,6 +425,7 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     </box>
                 </box>
             </box>
+            </Zoomed>
         </window>
     )
 }

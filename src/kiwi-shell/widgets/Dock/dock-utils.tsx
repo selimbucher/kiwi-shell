@@ -124,6 +124,23 @@ export function openPath(path: string) {
         [bin, flag, GLib.shell_quote(path)].filter(Boolean).join(" "))
 }
 
+/**
+ * The file in the file manager, selected, where it speaks FileManager1
+ * (Nautilus, Dolphin, Nemo, Thunar); its folder otherwise.
+ */
+export function revealPath(path: string) {
+    Gio.DBus.session.call("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+        "org.freedesktop.FileManager1", "ShowItems",
+        new GLib.Variant("(ass)", [[Gio.File.new_for_path(path).get_uri()], ""]),
+        null, Gio.DBusCallFlags.NONE, 5000, null, (bus, result) => {
+            try {
+                bus!.call_finish(result)
+            } catch {
+                openPath(GLib.path_get_dirname(path))
+            }
+        })
+}
+
 // gio empties every trash, a removable drive's too, where gvfs is installed;
 // without it (minimal setups) the home trash is emptied here
 export function emptyTrash() {

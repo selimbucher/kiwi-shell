@@ -58,7 +58,7 @@
 }
 
 .desktop-item-label {
-    font-size: 12px;
+    font-size: $callout;
     color: #fff;
     // readable on light wallpapers: GTK4 has no text-shadow, but filter works
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
@@ -67,7 +67,7 @@
 // inline rename, in the label's place — sized to the icon cell so a long
 // name scrolls inside the entry instead of widening the grid slot
 .desktop-item-rename {
-    font-size: 12px;
+    font-size: $callout;
     min-height: 0;
     padding: 1px 4px;
     border-radius: 4px;

@@ -1,5 +1,7 @@
 import { Gtk } from "ags/gtk4"
-import { type Accessor } from "ags"
+import Pango from "gi://Pango"
+import { Zoomed } from "./zoom"
+import { For, type Accessor } from "ags"
 import { Icon } from "./iconNames"
 import { keyboardWhileOpen } from "./monitors"
 
@@ -13,14 +15,17 @@ export type ContextMenuItem = {
     // but `visible` is ignored
     separator?: boolean
     label?: string | Accessor<string>
-    // an icon name, or a ready-made widget for the app icons the dock puts
-    // in its menus
-    icon?: string | Gtk.Widget
+    // an icon name (one that changes: a window's mark), or a ready-made
+    // widget for the app icons the dock puts in its menus
+    icon?: string | Accessor<string> | Gtk.Widget
     // why an item is insensitive: dimming alone says "not now" but never why
     tooltip?: string
     onClick?: () => void
     visible?: boolean | Accessor<boolean>
     sensitive?: boolean | Accessor<boolean>
+    // rows that come and go, in place of this one (a dock icon's windows),
+    // each kept by its key while it stays
+    rows?: Accessor<(ContextMenuItem & { key: string })[]>
 }
 
 function MenuRow({ item, iconSize, popdown }: {
@@ -43,10 +48,14 @@ function MenuRow({ item, iconSize, popdown }: {
                     // an iconless row still leaves the gap, so one missing
                     // icon can't shunt its label out of the column
                     ? <box widthRequest={iconSize} />
-                    : typeof item.icon === "string"
-                        ? <Icon class="context-menu-icon" iconName={item.icon} pixelSize={iconSize} />
+                    : typeof item.icon === "string" || typeof item.icon === "function"
+                        ? <box widthRequest={iconSize}>
+                            <Icon class="context-menu-icon" iconName={item.icon as string} pixelSize={iconSize} />
+                          </box>
                         : item.icon}
-                <label halign={Gtk.Align.START} label={item.label ?? ""} />
+                {/* a window's title can be a sentence: cut, not a menu as wide as it */}
+                <label halign={Gtk.Align.START} label={item.label ?? ""}
+                    maxWidthChars={42} ellipsize={Pango.EllipsizeMode.END} />
             </box>
         </button>
     )
@@ -77,15 +86,24 @@ export function ContextMenu({ items, class: className = "context-menu", iconSize
                     self.connect("notify::visible", () => onVisible(self.visible))
             }}
         >
-            <box orientation={Gtk.Orientation.VERTICAL} spacing={3}>
-                {items.map((item) => item.separator
-                    ? <Gtk.Separator visible={item.visible ?? true} />
-                    : <MenuRow
-                        item={item}
-                        iconSize={iconSize}
-                        popdown={() => popover.popdown()}
-                    />)}
-            </box>
+            <Zoomed>
+                <box orientation={Gtk.Orientation.VERTICAL}>
+                    {items.map((item) => item.rows
+                        ? <box orientation={Gtk.Orientation.VERTICAL} visible={item.visible ?? true}>
+                            <For each={item.rows} id={(row) => row.key}>
+                                {(row) => <MenuRow item={row} iconSize={iconSize}
+                                    popdown={() => popover.popdown()} />}
+                            </For>
+                          </box>
+                        : item.separator
+                        ? <Gtk.Separator visible={item.visible ?? true} />
+                        : <MenuRow
+                            item={item}
+                            iconSize={iconSize}
+                            popdown={() => popover.popdown()}
+                        />)}
+                </box>
+            </Zoomed>
         </popover>
     ) as Gtk.Popover
 }

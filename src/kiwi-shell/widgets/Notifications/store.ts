@@ -5,6 +5,7 @@ import Hyprland from "gi://AstalHyprland"
 import { createBinding, createComputed, createState } from "ags"
 import { logger } from "../../log"
 import { notify } from "../../notify"
+import { editingWidgets, linesOf, shownWidgets, type WidgetSpec } from "../Widgets/model"
 
 const log = logger("notifications")
 const notifd = Notifd.get_default()
@@ -417,9 +418,11 @@ export interface GroupRow {
 export type Row =
     | CardRow
     | GroupRow
-    | { kind: "calendar"; key: "calendar"; foldInto?: undefined }
     | { kind: "header"; key: "header"; foldInto?: undefined }
     | { kind: "empty"; key: "empty"; foldInto?: undefined }
+    // a line of widgets: one, or two small ones
+    | { kind: "widgets"; key: string; specs: WidgetSpec[]; foldInto?: undefined; inPlace: true }
+    | { kind: "widget-edit"; key: "widget-edit"; foldInto?: undefined }
 
 export interface Layout {
     rows: Row[]
@@ -475,13 +478,21 @@ export const layout = createComputed<Layout>(get => {
         return { rows, foldsInto }
     }
 
-    // the month above the notifications, as a click on the clock shows it
-    // on Windows and macOS's Notification Center has it
-    const rows: Row[] = [{ kind: "calendar", key: "calendar" }, { kind: "header", key: "header" }]
-    if (notifs.length === 0) {
-        rows.push({ kind: "empty", key: "empty" })
+    // the widgets under the notifications, as on a Mac; with no
+    // notifications, or while they're edited (one added goes to the top, in
+    // view), the widgets alone
+    const editing = get(editingWidgets)
+    const widgets: Row[] = linesOf(get(shownWidgets))
+        .map(line => ({ kind: "widgets", key: line.key, specs: line.specs, inPlace: true }))
+    widgets.push({ kind: "widget-edit", key: "widget-edit" })
+
+    const rows: Row[] = []
+    if (notifs.length === 0 || editing) {
+        if (widgets.length === 1 && !editing) rows.push({ kind: "header", key: "header" }, { kind: "empty", key: "empty" })
+        rows.push(...widgets)
         return { rows, foldsInto }
     }
+    rows.push({ kind: "header", key: "header" })
 
     const groups = new Map<string, Notifd.Notification[]>()
     for (const n of notifs) {
@@ -517,5 +528,6 @@ export const layout = createComputed<Layout>(get => {
             })
         })
     }
+    rows.push(...widgets)
     return { rows, foldsInto }
 })

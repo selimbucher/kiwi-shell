@@ -29,6 +29,7 @@ import {
 } from "./tabs/BluetoothTab"
 import { notify, closeNotification } from "../../../notify"
 import { network } from "../../services/network"
+import { Zoomed } from "../../zoom"
 
 // whether the machine has Wi-Fi, and Bluetooth, now: a USB adapter plugged
 // in, or NetworkManager and bluez starting after the shell, bring them later
@@ -164,7 +165,7 @@ export default function SystemMenu() {
           if (dispose) return
           createRoot((done) => {
             dispose = done
-            self.set_child(<SystemMenuContent /> as Gtk.Widget)
+            self.set_child(<Zoomed><SystemMenuContent /></Zoomed> as Gtk.Widget)
           })
         }
         let soon = GLib.timeout_add(GLib.PRIORITY_LOW, BUILD_AFTER_MS, () => {

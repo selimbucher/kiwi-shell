@@ -8,7 +8,8 @@ import Gtk4LayerShell from "gi://Gtk4LayerShell"
 
 import { volumeIcon, brightnessIcon, keyboardBrightnessIcon, Icon } from "../iconNames"
 import { conf } from "../config"
-import { themeClasses, LAYER } from "../services/theme"
+import { Zoomed, zoomOf } from "../zoom"
+import { themeClasses, LAYER, primaryCss } from "../services/theme"
 import { dockOverlaps, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance } from "../Dock/dock-state"
 import { brightness, setBrightnessLevel, kbdBrightness, kbdAvailable, brightnessWritable, refreshKbdBrightness } from "../brightness"
 import { systemTabOpen } from "../Bar/SystemMenu/SystemMenu"
@@ -102,10 +103,11 @@ function resetIndicatorTimeout() {
 const EDGE_GAP = 20
 const DOCK_GAP = 8
 
-// the margin while the dock is out, and the one while it is away
-function margins(overlap: number): { withDock: number, alone: number } {
+// the margin while the dock is out, and the one while it is away (the
+// overlap is the screen's, the gaps kiwi's, grown by its size there)
+function margins(overlap: number, zoom: number): { withDock: number, alone: number } {
   if (conf().indicator_bar_position === "left") return { withDock: 0, alone: 0 }
-  return { withDock: (overlap > 0 ? overlap : bandGuess()) + DOCK_GAP, alone: EDGE_GAP }
+  return { withDock: (overlap > 0 ? overlap : bandGuess()) + DOCK_GAP * zoom, alone: EDGE_GAP * zoom }
 }
 
 // dockOverlap is 0 while the dock is away, so the height it had is kept to
@@ -145,7 +147,8 @@ function followDock(self: Astal.Window, display: () => Gdk.Monitor) {
   const glide = () => {
     const overlap = dockOverlap()
     if (overlap > 0) lastBand = overlap
-    const { withDock, alone } = margins(overlap)
+    const zoom = zoomOf(display())
+    const { withDock, alone } = margins(overlap, zoom)
     const shown = overlap > 0
     const to = shown ? withDock : alone
     stop()
@@ -157,7 +160,7 @@ function followDock(self: Astal.Window, display: () => Gdk.Monitor) {
     // same length at a different speed, and the two would read as two
     // animations; waiting for the pill to reach it would read as a delay.
     // From where it is: turned round halfway, it goes back from there.
-    const distance = dockSlideDistance(conf().dock_icon_size)
+    const distance = dockSlideDistance(conf().dock_icon_size) * zoom
     const duration = (shown ? DOCK_SLIDE_DURATION : DOCK_SLIDE_OUT_DURATION) * 1000
     const from = Math.max(alone, Math.min(withDock, margin))
     let start = -1
@@ -175,7 +178,7 @@ function followDock(self: Astal.Window, display: () => Gdk.Monitor) {
     })
   }
 
-  place(margins(dockOverlap()).alone)
+  place(margins(dockOverlap(), zoomOf(display())).alone)
   const unsubscribe = [dockOverlaps.subscribe(glide), conf.subscribe(glide), popupGdkMonitor.subscribe(glide)]
   onCleanup(() => {
     stop()
@@ -188,7 +191,7 @@ export default function IndicatorBar({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }
   return (
     <window
       namespace={LAYER.panel}
-      css={conf(c => `--primary: ${c.primary_color};`)}
+      css={primaryCss}
       $={ self => {
         onCleanup(() => destroyWindow(self))
         followDock(self, () => popupGdkMonitor.peek() ?? gdkmonitor)
@@ -212,7 +215,7 @@ export default function IndicatorBar({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }
       // the volume keys during a fullscreen video show what they did
       layer={Astal.Layer.OVERLAY}
     >
-      <Indicator />
+      <Zoomed><Indicator /></Zoomed>
     </window>
   )
 }

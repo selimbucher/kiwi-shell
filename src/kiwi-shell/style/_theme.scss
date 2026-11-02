@@ -39,6 +39,24 @@
 // No drop shadows: most panels sit in windows sized to the panel, which cut a
 // shadow off in a hard line.
 
+// ─── Sizes ────────────────────────────────────────────────────────────────────
+// macOS's text styles, a point to a pixel: kiwi's own size is a Mac's at its
+// default resolution (widgets/zoom.tsx), so they read alike. Text that sets
+// none is $body (global.scss), whatever the desktop's font size.
+
+$large-title: 26px;
+$title-1: 22px;
+$title-2: 17px;
+$title-3: 15px;
+$body: 13px;
+$callout: 12px;
+$subheadline: 11px;
+$footnote: 10px;
+
+// a bar pill, border included: with the margins round it, the 37pt menu bar
+// of a MacBook with a notch
+$bar-height: 30px;
+
 @mixin text {
     --k-fg: #ffffff;
     --k-fg-2: rgba(255, 255, 255, 0.87);
@@ -196,6 +214,13 @@ window.no-blur {
     color: var(--k-fg);
 }
 
+// A popover's frame (its padding, corners, gap to what it opens from) is
+// outside its content, which is drawn at kiwi's size on the display
+// (widgets/zoom.tsx): the frame's sizes grow by the --zoom its class sets.
+@function z($size) {
+    @return calc(#{$size} * var(--zoom, 1));
+}
+
 @mixin menu {
     background-color: var(--k-menu);
     background-image: var(--k-sheen);
@@ -218,21 +243,24 @@ window.no-blur {
 .context-menu {
     contents {
         @include menu;
-        padding: 6px 4px;
-        border-radius: 10px;
+        padding: z(6px) z(4px);
+        border-radius: z(10px);
 
         image {
             color: var(--k-fg);
         }
     }
 
+    // a row as high as its text and a little: 25px, between a Mac's 22 and
+    // Windows' 28
     button {
         font-weight: normal;
         background: none;
         border: none;
         box-shadow: none;
-        border-radius: 4px;
-        padding: 2px 8px;
+        border-radius: 5px;
+        min-height: 0;
+        padding: 4px 8px;
         color: var(--k-fg-2);
 
         &:hover {
@@ -255,7 +283,7 @@ window.no-blur {
     // inset past the menu's own padding — a full-bleed rule reads as a crack
     // across the panel rather than as a gap between two groups
     separator {
-        margin: 2px 6px;
+        margin: 4px 6px;
     }
 }
 
@@ -268,7 +296,7 @@ window label {
 @mixin calendar {
     .today {
         font-weight: 700;
-        font-size: 13px;
+        font-size: $body;
         margin: 2px 4px 8px;
         color: var(--k-fg);
     }
@@ -298,7 +326,7 @@ window label {
         > grid {
             > label.day-name {
                 color: var(--k-fg-4);
-                font-size: 11px;
+                font-size: $subheadline;
             }
             > label.day-number {
                 padding: 4px 7px;

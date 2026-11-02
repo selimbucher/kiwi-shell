@@ -32,17 +32,22 @@ button.switcher-close {
     color: rgb(96, 96, 98);
     background-color: rgb(225, 225, 227);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-    transition: background-color 90ms ease-out;
+    transition: background-color 90ms ease-out, color 90ms ease-out, transform 120ms ease-out, box-shadow 120ms ease-out;
 
     &:hover {
+        // pointed at, it answers plainly: white, the × dark, a size up
         background-image: none;
-        background-color: rgb(238, 238, 240);
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        background-color: #ffffff;
+        color: rgb(28, 28, 30);
+        transform: scale(1.15);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
     }
 
     &:active {
         background-image: none;
         background-color: rgb(205, 205, 207);
+        color: rgb(28, 28, 30);
+        transform: scale(1.0);
         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
     }
 }
@@ -122,7 +127,7 @@ button.app-preview {
 
 .app-switcher {
     .preview-title {
-        font-size: 12px;
+        font-size: $callout;
         color: var(--k-fg-3);
     }
 
@@ -139,7 +144,7 @@ button.app-preview {
 
 .preview-title {
     color: var(--k-fg-2);
-    font-size: 11px;
+    font-size: $subheadline;
     padding: 2px 3px;
 }
 
@@ -148,7 +153,7 @@ button.app-preview {
 
 .ws-number {
     font-weight: bold;
-    font-size: 12px;
+    font-size: $callout;
     color: var(--k-fg);
     margin-right: 6px;
 }

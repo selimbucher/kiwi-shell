@@ -2,6 +2,7 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createRoot, onCleanup } from "ags"
 import { destroyWindow } from "../monitors"
+import { Zoomed, zoomOf } from "../zoom"
 import { readFile, writeFileAsync } from "ags/file"
 import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
@@ -9,8 +10,9 @@ import GLib from "gi://GLib"
 import Pango from "gi://Pango"
 import { subprocess } from "ags/process"
 import { conf, CONFIG_FOLDER } from "../config"
-import { themeClasses, LAYER } from "../services/theme"
-import { openPath, openTerminal, launchApp } from "../Dock/dock-utils"
+import { themeClasses, LAYER, primaryCss } from "../services/theme"
+import { openPath, openTerminal, launchApp, revealPath } from "../Dock/dock-utils"
+import { copyToClipboard } from "../Launcher/providers"
 import { dockBands } from "../Dock/dock-state"
 import { setWallpaper, promptWallpaper } from "../services/wallpaper"
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
@@ -331,8 +333,11 @@ function dropIcon(path: string) {
     iconWidgets.delete(path)
     iconVersion.delete(path)
 }
+// the display's size, and below the room the bar and the dock take, in the
+// desktop's own units: it's drawn at kiwi's size there (widgets/zoom.tsx)
 let monW = 1920
 let monH = 1080
+let zoom = 1
 
 const freePlacement = () => !!conf.get().desktop_free_placement
 
@@ -360,7 +365,7 @@ function reservedInsets(): { top: number; bottom: number } {
     // the dock reserves its band by hand, or not at all while it hides
     const connector = monitorRef?.get_connector()
     if (connector) bottom = Math.max(bottom, dockBands.peek()[connector] ?? 0)
-    return { top, bottom }
+    return { top: top / zoom, bottom: bottom / zoom }
 }
 
 const gridCols = () => Math.max(1, Math.floor((monW - GRID_MARGIN * 2) / CELL_W))
@@ -704,15 +709,28 @@ function DesktopIcon({ item }: { item: DesktopItem }) {
             onClick: () => setWallpaper(item.path),
         },
         {
+            // selected there, not just the Desktop folder opened
             label: "Show in Files",
             icon: "folder-symbolic",
-            onClick: () => openPath(DESKTOP_DIR),
+            onClick: () => revealPath(item.path),
+        },
+        {
+            label: "Open in Terminal",
+            icon: "utilities-terminal-symbolic",
+            visible: item.isDir,
+            onClick: () => openTerminal(item.path),
         },
         { separator: true },
         {
             label: "Copy",
             icon: "edit-copy-symbolic",
             onClick: () => copyItems(targets()),
+        },
+        {
+            // for a terminal or a chat, where a file isn't what's pasted
+            label: "Copy Path",
+            icon: "edit-copy-symbolic",
+            onClick: () => copyToClipboard(targets().map(t => t.path).join("\n")),
         },
         {
             label: "Cut",
@@ -902,16 +920,21 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // scale changes
     const measure = () => {
         const geometry = gdkmonitor.get_geometry()
-        if (geometry.width === monW && geometry.height === monH) return
-        monW = geometry.width
-        monH = geometry.height
+        const z = zoomOf(gdkmonitor)
+        if (geometry.width / z === monW && geometry.height / z === monH && z === zoom) return
+        zoom = z
+        monW = geometry.width / z
+        monH = geometry.height / z
         relayout()
     }
-    monW = gdkmonitor.get_geometry().width
-    monH = gdkmonitor.get_geometry().height
+    zoom = zoomOf(gdkmonitor)
+    monW = gdkmonitor.get_geometry().width / zoom
+    monH = gdkmonitor.get_geometry().height / zoom
     monitorRef = gdkmonitor
     const measured = gdkmonitor.connect("notify::geometry", measure)
     onCleanup(() => gdkmonitor.disconnect(measured))
+    // (kiwi's size there changed in the settings)
+    onCleanup(conf.subscribe(measure))
 
     // re-read on every popup: the clipboard can change while the menu is shut
     const [canPaste, setCanPaste] = createState(false)
@@ -933,19 +956,20 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             },
             { separator: true },
             {
-                label: "Change Wallpaper…",
-                icon: "preferences-desktop-wallpaper-symbolic",
-                onClick: promptWallpaper,
+                label: "Open in Files",
+                icon: "folder-symbolic",
+                onClick: () => openPath(DESKTOP_DIR),
             },
             {
                 label: "Open Terminal Here",
                 icon: "utilities-terminal-symbolic",
                 onClick: () => openTerminal(DESKTOP_DIR),
             },
+            { separator: true },
             {
-                label: "Open in Files",
-                icon: "folder-symbolic",
-                onClick: () => openPath(DESKTOP_DIR),
+                label: "Change Wallpaper…",
+                icon: "preferences-desktop-wallpaper-symbolic",
+                onClick: promptWallpaper,
             },
             {
                 label: "Desktop Settings…",
@@ -974,7 +998,7 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             namespace={LAYER.plain}
             name="ags-desktop"
             class={themeClasses(t => `Desktop ${t}`)}
-            css={conf(c => `--primary: ${c.primary_color};`)}
+            css={primaryCss}
             gdkmonitor={gdkmonitor}
             // IGNORE: cover the full monitor (under bar and dock) so the
             // rubber band isn't clipped at the exclusive zones; the icon
@@ -984,9 +1008,26 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             application={app}
             layer={Astal.Layer.BOTTOM}
             // on-demand: clicking the desktop focuses it (like any desktop),
-            // enabling Delete-to-trash and Enter-to-open on the selection
-            keymode={Astal.Keymode.ON_DEMAND}
+            // enabling Delete-to-trash and Enter-to-open on the selection.
+            // Only once it's on screen: Hyprland hands an on-demand layer the
+            // keyboard as it maps, and the desktop took it from the window in
+            // use whenever the shell started.
+            keymode={Astal.Keymode.NONE}
             $={(self) => {
+                const win = self as Astal.Window
+                win.connect("map", () => {
+                    const clock = win.get_frame_clock()
+                    if (!clock) return
+                    const id = clock.connect("after-paint", () => {
+                        clock.disconnect(id)
+                        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                            if (win.get_mapped()) win.keymode = Astal.Keymode.ON_DEMAND
+                            return GLib.SOURCE_REMOVE
+                        })
+                    })
+                })
+                win.connect("unmap", () => { win.keymode = Astal.Keymode.NONE })
+
                 // visibility is applied AFTER construction, never as a
                 // constructor prop: gnim hands all props to the constructor
                 // in written order, so a window that is visible at construct
@@ -1047,6 +1088,7 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 self.add_controller(keys)
             }}
         >
+            <Zoomed>
             <overlay
                 $={(self) => {
                     desktopMenu.set_parent(self)
@@ -1199,6 +1241,7 @@ export default function Desktop({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 }}
             />
             </overlay>
+            </Zoomed>
         </window>
     )
 }

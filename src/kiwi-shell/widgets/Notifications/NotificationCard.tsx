@@ -14,6 +14,7 @@ import { loadThumbnail } from "../services/wallpaper"
 import { clientSelector, focusWindow } from "../../hypr"
 import { ColumnFactory } from "./AnimatedColumn"
 import { CardRow, GroupRow, Row, appMatchesClient, clearAll, dismissAll, toggleGroup } from "./store"
+import { EditWidgets, leaveLine, takeLine, updateLine } from "../Widgets/Lines"
 
 const log = logger("notifications")
 
@@ -44,13 +45,15 @@ const disposers = new WeakMap<Gtk.Widget, () => void>()
 
 export const rowFactory: ColumnFactory<Row> = {
     create(row) {
+        // (widgets are kept between openings: Widgets/Lines.tsx)
+        if (row.kind === "widgets") return takeLine(row)
         return createRoot(dispose => {
             const [state, setState] = createState<Row>(row)
             const widget =
-                row.kind === "calendar" ? CalendarRow()
-                : row.kind === "header" ? Header()
+                row.kind === "header" ? Header()
                 : row.kind === "empty" ? Empty()
                 : row.kind === "group" ? GroupHeader({ row: state as Accessor<GroupRow> })
+                : row.kind === "widget-edit" ? EditWidgets()
                 : Card({ row: state as Accessor<CardRow> })
             updaters.set(widget, setState)
             disposers.set(widget, dispose)
@@ -58,9 +61,11 @@ export const rowFactory: ColumnFactory<Row> = {
         })
     },
     update(widget, row) {
+        if (row.kind === "widgets") return updateLine(widget, row)
         updaters.get(widget)?.(row)
     },
     dispose(widget) {
+        leaveLine(widget)
         disposers.get(widget)?.()
         disposers.delete(widget)
         updaters.delete(widget)
@@ -68,26 +73,6 @@ export const rowFactory: ColumnFactory<Row> = {
 }
 
 // ─── Rows ─────────────────────────────────────────────────────────────────────
-
-// today, and the month around it; back on today at each opening
-function CalendarRow() {
-    return (
-        <box class="nc-card nc-calendar" orientation={Gtk.Orientation.VERTICAL}>
-            <label class="today" xalign={0} label={minuteNow(t => t.format("%A, %B %-d") ?? "")} />
-            <Gtk.Calendar showHeading showDayNames showWeekNumbers={false}
-                $={(self: Gtk.Calendar) => {
-                    const today = () => {
-                        const now = GLib.DateTime.new_now_local()
-                        self.set_year(now.get_year())
-                        self.set_month(now.get_month() - 1)
-                        self.set_day(now.get_day_of_month())
-                    }
-                    today()
-                    self.connect("map", today)
-                }} />
-        </box>
-    ) as Gtk.Widget
-}
 
 function Header() {
     return (

@@ -1,4 +1,5 @@
 import { Gtk } from "ags/gtk4"
+import { Zoomed } from "../../zoom"
 import GLib from "gi://GLib"
 
 import { minuteNow } from "../../services/minuteClock"
@@ -24,11 +25,13 @@ export default function DateCenter() {
                     calendar?.set_month(today.get_month() - 1)
                     calendar?.set_day(today.get_day_of_month())
                 }}>
-                <box orientation={Gtk.Orientation.VERTICAL}>
-                    <label class="today" xalign={0} label={minuteNow(t => t.format("%A, %B %-d") ?? "")} />
-                    <Gtk.Calendar showHeading showDayNames showWeekNumbers={false}
-                        $={self => { calendar = self }} />
-                </box>
+                <Zoomed>
+                    <box orientation={Gtk.Orientation.VERTICAL}>
+                        <label class="today" xalign={0} label={minuteNow(t => t.format("%A, %B %-d") ?? "")} />
+                        <Gtk.Calendar showHeading showDayNames showWeekNumbers={false}
+                            $={self => { calendar = self }} />
+                    </box>
+                </Zoomed>
             </popover>
         </menubutton>
     )

@@ -29,10 +29,17 @@ export function HomeFolderButton({ menuSlot }: { menuSlot: MenuSlot }) {
 
     const [hop, setHop] = createState<Hop>("")
 
+    // and the folders bookmarked in the file manager (its sidebar's), read
+    // again at each opening, leaving out what is above already
+    const [bookmarks, setBookmarks] = createState(readBookmarks(commonDirs.map(d => d.path)))
+
     const menu = ContextMenu({
         class: "app-context-menu",
-        iconSize: 20,
-        onVisible: setMenuOpen,
+        iconSize: 16,
+        onVisible: open => {
+            if (open) setBookmarks(readBookmarks(commonDirs.map(d => d.path)))
+            setMenuOpen(open)
+        },
         items: [
             // what the left click does, spelled out — the rest of the menu is
             // shortcuts past home, so home itself has to be one of them
@@ -43,6 +50,12 @@ export function HomeFolderButton({ menuSlot }: { menuSlot: MenuSlot }) {
                 icon: dir.icon,
                 onClick: () => openPath(dir.path),
             })),
+            { separator: true, visible: bookmarks.as(b => b.length > 0) },
+            {
+                rows: bookmarks.as(list => list.map(b => ({
+                    key: b.path, label: b.name, icon: "folder", onClick: () => openPath(b.path),
+                }))),
+            },
         ],
     })
 
@@ -78,6 +91,24 @@ export function HomeFolderButton({ menuSlot }: { menuSlot: MenuSlot }) {
     )
 }
 
+// GTK's bookmarks file: "file:///path Name" a line, the name optional
+function readBookmarks(shown: string[]): { path: string, name: string }[] {
+    const file = `${GLib.get_user_config_dir()}/gtk-3.0/bookmarks`
+    let text = ""
+    try {
+        text = new TextDecoder().decode(GLib.file_get_contents(file)[1])
+    } catch {
+        return []
+    }
+    return text.split("\n").flatMap(line => {
+        const [uri, ...name] = line.trim().split(" ")
+        if (!uri?.startsWith("file://")) return []
+        const path = Gio.File.new_for_uri(uri).get_path()
+        if (!path || path === HOME || shown.includes(path) || !GLib.file_test(path, GLib.FileTest.IS_DIR)) return []
+        return [{ path, name: name.join(" ") || GLib.path_get_basename(path) }]
+    })
+}
+
 // every dock's trash watch, held so none is collected (one per display)
 const trashMonitors = new Set<Gio.FileMonitor>()
 
@@ -107,7 +138,7 @@ export function TrashButton({ menuSlot }: { menuSlot: MenuSlot }) {
 
     const menu = ContextMenu({
         class: "app-context-menu",
-        iconSize: 20,
+        iconSize: 16,
         onVisible: setMenuOpen,
         items: [
             {

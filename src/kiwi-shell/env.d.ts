@@ -25,3 +25,9 @@ declare module "*.css" {
   const content: string
   export default content
 }
+
+// Evolution Data Server, loaded when a calendar widget is there
+// (widgets/services/calendar.ts); no types are generated for it
+declare module "gi://EDataServer?version=1.2" { const lib: any; export default lib }
+declare module "gi://ECal?version=2.0" { const lib: any; export default lib }
+declare module "gi://ICalGLib?version=3.0" { const lib: any; export default lib }

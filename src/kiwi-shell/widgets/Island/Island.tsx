@@ -23,6 +23,7 @@ import WeatherCenter from "./center/WeatherCenter"
 import "./sources/media"
 import "./sources/performance"
 import "./sources/alerts"
+import { Zoomed, zoomOf } from "../zoom"
 
 const log = logger("island")
 const { TOP, LEFT, RIGHT, BOTTOM } = Astal.WindowAnchor
@@ -298,6 +299,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 remeasureOn(self, () => `${conf().bar_margin}`, () => gdkmonitor.get_geometry().width)
             }}
         >
+            <Zoomed>
             <overlay>
             <Row class="island-row" $={(self: InstanceType<typeof Row>) => {
                 row = self
@@ -320,6 +322,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             <box $type="overlay" class="island-keepalive" canTarget={false}
                 halign={Gtk.Align.START} valign={Gtk.Align.START} widthRequest={1} heightRequest={1} />
             </overlay>
+            </Zoomed>
         </window>
     )
 }
@@ -371,7 +374,10 @@ export function IslandCard() {
         if (widget) showing = open.id
         origin = { origin: open.origin, id: open.id }
         setCardOn(open.monitor)
-        morph.open(open.from, widget, open.what)
+        // from the island's window into the card's own, kiwi's size apart
+        const zoom = zoomOf(monitorOf(open.monitor))
+        const { x, y, width, height } = open.from
+        morph.open({ x: x / zoom, y: y / zoom, width: width / zoom, height: height / zoom }, widget, open.what)
     }
     onCleanup(opened.subscribe(follow))
 
@@ -430,13 +436,17 @@ export function IslandCard() {
                 let last = ""
                 morph.onLayout = shape => {
                     const surface = self.get_surface()
-                    const [ok, origin] = morph.compute_point(self, new Graphene.Point().init(0, 0))
-                    if (!surface || !ok) return
+                    // (both corners: the card may be drawn larger than it's laid out)
+                    const win = self as Gtk.Widget
+                    const [ok, start] = morph.compute_point(win, new Graphene.Point().init(shape.x, shape.y))
+                    const [ok2, end] = morph.compute_point(win,
+                        new Graphene.Point().init(shape.x + shape.width, shape.y + shape.height))
+                    if (!surface || !ok || !ok2) return
                     const rect = new Cairo.RectangleInt()
-                    rect.x = Math.floor(origin.x + shape.x)
-                    rect.y = Math.floor(origin.y + shape.y)
-                    rect.width = Math.ceil(shape.width)
-                    rect.height = Math.ceil(shape.height)
+                    rect.x = Math.floor(start.x)
+                    rect.y = Math.floor(start.y)
+                    rect.width = Math.ceil(end.x - start.x)
+                    rect.height = Math.ceil(end.y - start.y)
                     const signature = `${rect.x},${rect.y},${rect.width},${rect.height}`
                     if (signature === last) return
                     last = signature
@@ -455,7 +465,7 @@ export function IslandCard() {
                 onCleanup(cardOn.subscribe(size))
             }}
         >
-            {morph}
+            <Zoomed>{morph}</Zoomed>
         </window>,
     ]
 }

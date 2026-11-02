@@ -1,6 +1,25 @@
+@use 'theme' as *;
+
 * {
   font-family: 'Quicksand', sans-serif;
   color: unset;
+}
+
+// the shell's own text size rather than the desktop's (GNOME's 11pt is
+// 14.7px, a Mac's 13pt): what doesn't set one takes it from its window
+window {
+  font-size: $body;
+}
+
+// a small label, as macOS's: libadwaita's is a wide slab of black
+tooltip.background {
+  font-size: $callout;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background-color: rgba(36, 36, 38, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  box-shadow: none;
 }
 
 menubutton popover {

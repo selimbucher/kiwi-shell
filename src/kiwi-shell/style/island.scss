@@ -12,7 +12,7 @@ $purple: #bf5af2;
 $red: #ff453a;
 $yellow: #ffd60a;
 
-$height: 34px; // the bar's other pills, border included
+$height: $bar-height; // the bar's other pills, border included
 
 @mixin flat-button {
     background: none;
@@ -48,10 +48,10 @@ window.IslandBar {
     }
 
     .island {
-        border-radius: 17px;
+        border-radius: $height * 0.5;
         min-height: $height - 2px;
         padding: 0 10px;
-        font-size: 12px;
+        font-size: $callout;
         font-weight: 600;
     }
 
@@ -98,7 +98,7 @@ window.IslandBar {
         transition: background-color 200ms ease-out;
         min-width: 0;
         min-height: 6px;
-        margin: 13px 0;
+        margin: ($height - 2px - 6px) * 0.5 0;
         background-color: var(--k-quiet);
         border-radius: 13px;
     }
@@ -132,12 +132,12 @@ window.IslandBar {
 
 .island-calendar, .island-weather-popover {
     box-shadow: none;
-    margin-top: 6px;
+    margin-top: z(6px);
 
     contents {
         @include menu;
-        border-radius: 17px;
-        padding: 12px;
+        border-radius: z(17px);
+        padding: z(12px);
     }
 }
 
@@ -152,7 +152,7 @@ window.IslandBar {
 
         .place {
             font-weight: 700;
-            font-size: 13px;
+            font-size: $body;
         }
         .now {
             font-size: 40px;
@@ -170,7 +170,7 @@ window.IslandBar {
 
             .when {
                 color: var(--k-fg-3);
-                font-size: 11px;
+                font-size: $subheadline;
             }
             image {
                 margin: 6px 0;
@@ -320,7 +320,7 @@ window.IslandCardWindow {
     .island-card {
         padding: 16px 18px;
         min-width: 340px;
-        font-size: 12px;
+        font-size: $callout;
     }
 
     .island-media {
@@ -338,7 +338,7 @@ window.IslandCardWindow {
         }
         .title {
             font-weight: 700;
-            font-size: 14px;
+            font-size: $body;
         }
         .artist {
             color: var(--k-fg-3);
@@ -349,7 +349,7 @@ window.IslandCardWindow {
         .progress {
             .time {
                 color: var(--k-fg-3);
-                font-size: 11px;
+                font-size: $subheadline;
                 font-feature-settings: "tnum";
             }
             // a scale keeps 4px either side of its bar (global.scss)
@@ -376,7 +376,7 @@ window.IslandCardWindow {
             }
             .title {
                 font-weight: 700;
-                font-size: 14px;
+                font-size: $body;
             }
             .stats {
                 color: var(--k-fg-3);
@@ -384,7 +384,7 @@ window.IslandCardWindow {
                 font-feature-settings: "tnum";
             }
             .big {
-                font-size: 22px;
+                font-size: $title-1;
                 font-weight: 700;
                 font-feature-settings: "tnum";
                 margin-left: 12px;

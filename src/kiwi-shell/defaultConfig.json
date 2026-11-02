@@ -14,6 +14,7 @@
   "desktop_icons": true,
   "desktop_free_placement": true,
   "popup_monitor": "active",
+  "interface_scale": {},
   "search_engine": "duckduckgo",
   "dock_arpeggio": false,
   "indicator_bar_position": "bottom",
@@ -32,10 +33,16 @@
     "charging": true,
     "focus": true
   },
+  "widgets": [
+    { "kind": "up-next", "size": "medium" },
+    { "kind": "weather", "size": "medium" },
+    { "kind": "batteries", "size": "small" },
+    { "kind": "month", "size": "small" }
+  ],
   "shortcuts": {
     "launcher": "Super",
     "app_switcher": "Alt+Tab",
-    "mission_control": "Ctrl+Super+Up",
+    "mission_control": "Super+Tab",
     "desktop_left": "Ctrl+Super+Left",
     "desktop_right": "Ctrl+Super+Right",
     "workspace_switcher": "",

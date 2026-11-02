@@ -15,6 +15,7 @@ import { mapVersion, canonicalEntry } from "../desktopEntries"
 import { entryForClient } from "../appIcon"
 import { clientSelector, focusWindow, genieTo, genieWatch, hideSpecialOn, moveWindowToWorkspace, pluginsReady, raiseWindow } from "../../hypr"
 import { LAYER } from "../services/theme"
+import { zoomOfWidget } from "../zoom"
 import type Gtk from "gi://Gtk?version=4.0"
 
 // How much of the bottom edge the dock is covering right now. Zero in
@@ -254,7 +255,9 @@ function surfaceRect(icon: Gtk.Widget, minimizing: boolean) {
     let bar: Gtk.Widget | null = icon
     while (bar && !bar.has_css_class("dock-bar")) bar = bar.get_parent()
     const parent = bar?.get_parent()
-    const slide = bar && parent ? bar.get_allocation().y - (parent.get_height() - bar.get_height()) : 0
+    // (in the dock's own units, smaller than the window's by kiwi's size)
+    const slide = bar && parent
+        ? (bar.get_allocation().y - (parent.get_height() - bar.get_height())) * zoomOfWidget(bar) : 0
 
     const staysHidden = !(dockShowing.get(root)?.(minimizing) ?? true)
     // The window is drawn under the dock, so what shows of it ends at the

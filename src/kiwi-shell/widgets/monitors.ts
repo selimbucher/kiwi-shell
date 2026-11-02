@@ -68,10 +68,12 @@ export function remeasureOn(
     key: () => string,
     width: () => number = () => -1,
 ) {
-    let last = key()
+    // kiwi's size on the displays (widgets/zoom.tsx) changes every panel's
+    const keyed = () => `${key()}|${JSON.stringify(conf().interface_scale ?? {})}`
+    let last = keyed()
     // conf outlives the window (a monitor unplugged)
     onCleanup(conf.subscribe(() => {
-        const next = key()
+        const next = keyed()
         if (next === last) return
         last = next
         GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {

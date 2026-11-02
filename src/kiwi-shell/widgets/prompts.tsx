@@ -5,22 +5,18 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createBinding, For, onCleanup } from "ags"
 import { readFile, writeFileAsync } from "ags/file"
 
-import { conf } from "./config"
-import { themeClasses, LAYER } from "./services/theme"
+import { themeClasses, LAYER, primaryCss } from "./services/theme"
 import Hyprland from "gi://AstalHyprland"
 import { Icon } from "./iconNames"
 import { playSound } from "./sound";
 import { popupGdkMonitor, destroyWindow } from "./monitors"
+import { Zoomed } from "./zoom"
 
 export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monitor }) {
     return (
         <window
             namespace={LAYER.panel}
-            css={conf.as(conf => 
-                `
-                --primary: ${conf.primary_color};
-                `
-            )}
+            css={primaryCss}
             name="ags-prompt"
             class={themeClasses(t => `Prompt ${t}`)}
             gdkmonitor={createComputed(get => get(popupGdkMonitor) ?? gdkmonitor)}
@@ -54,10 +50,12 @@ export default function Prompt({ gdkmonitor, onSetup }: { gdkmonitor: Gdk.Monito
                 onCleanup(() => destroyWindow(self))
             }}
         >
-            <box>
-                <WifiPrompt />
-                <ChoicePrompt />
-            </box>
+            <Zoomed>
+                <box>
+                    <WifiPrompt />
+                    <ChoicePrompt />
+                </box>
+            </Zoomed>
         </window>
     )
 }

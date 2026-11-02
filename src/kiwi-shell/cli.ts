@@ -2,6 +2,7 @@ import Quarrel from "gi://Quarrel"
 import app from "ags/gtk4/app"
 import { setLogLevel } from "./log"
 import { previewNightShift } from "./widgets/services/nightShiftSchedule"
+import { autoZoom, displayKey, displayName } from "./widgets/zoom"
 
 // kiwictl command dispatch, parsed with Quarrel. Option/flag objects keep
 // their parsed state, so the command tree is rebuilt for every request —
@@ -39,6 +40,13 @@ export function handleCliRequest(argv: string[], respond: (response: string) => 
     if (argv[0] === "night-shift-preview") {
         previewNightShift(argv[1] === "end" ? null : Number(argv[1]))
         respond("")
+        return
+    }
+    // and its interface size page: the displays there are, each with the
+    // size kiwi takes on it by itself
+    if (argv[0] === "displays") {
+        respond(JSON.stringify(app.get_monitors().map(m =>
+            ({ key: displayKey(m), name: displayName(m), auto: autoZoom(m) }))))
         return
     }
 

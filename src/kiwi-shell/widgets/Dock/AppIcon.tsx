@@ -13,6 +13,7 @@ import { closeWindow, clientSelector } from "../../hypr"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { LAYER } from "../services/theme"
 import { conf } from "../config"
+import { Zoomed } from "../zoom"
 import { logger } from "../../log"
 const log = logger("dock")
 
@@ -294,7 +295,7 @@ const PREVIEW_HOVER_CLOSE_MS = 300
 // its unmapped tiles measured as nothing: the compositor was never asked
 // and the flyout came up with blank pictures. Still: a window nobody can
 // see keeps the last frame it drew rather than being woken for a thumbnail.
-const flyout = new LiveTiles({ set: "dock-flyout", namespace: LAYER.dock, popup: true, motion: "still", radius: 6 })
+const flyout = new LiveTiles({ set: "dock-flyout", namespace: LAYER.dock, popup: true, motion: "still", radius: 4 })
 let openFlyout: Gtk.Popover | null = null
 
 function WindowPreviews(
@@ -368,7 +369,7 @@ function WindowPreviews(
                 })
             }}
         >
-            {pane}
+            <Zoomed>{pane}</Zoomed>
         </popover>
     ) as Gtk.Popover
 }
@@ -527,27 +528,51 @@ const NIX_PIN_HINT = "Pinned apps come from your Nix configuration"
 function AppContextMenu(entry, clientsBinding, application, name, pinned, onPinChange, setMenuOpen) {
     // the actions the .desktop file itself declares — "New Private Window",
     // "New Incognito Tab", a player's Play/Pause. The app already ships them;
-    // not offering them was the only reason they were missing.
-    const actions: ContextMenuItem[] = (application?.list_actions() ?? [])
+    // not offering them was the only reason they were missing. No icon of
+    // their own: one window icon on all of them said nothing.
+    const declared: string[] = application?.list_actions() ?? []
+    // the app's own way to a new window, where it has one ("New Empty
+    // Window"): opening the app again only brings some of them forward
+    const newWindowAction = declared.find(a => /^new (empty )?window$/i.test(application.get_action_name(a) ?? ""))
+    const actions: ContextMenuItem[] = declared
+        .filter(action => action !== newWindowAction)
         .map((action: string) => ({
             label: application.get_action_name(action),
-            icon: "window-new-symbolic",
             onClick: () => application.launch_action(action, null),
         }))
 
-    const hasWindows = clientsBinding.as(clients => clients.length > 0)
+    const hasWindows = clientsBinding.as((clients: Hyprland.Client[]) => clients.length > 0)
+    const focused = createBinding(hyprland, "focusedClient")
+
+    // its windows by name, as a Mac's dock lists them: the one in front
+    // checked, a minimized one marked, each brought forward from here
+    const windowRows = createComputed(get => (get(clientsBinding) as Hyprland.Client[]).map((client: Hyprland.Client) => ({
+        key: client.address,
+        label: createBinding(client, "title").as(t => t || name),
+        icon: createComputed(get => get(createBinding(client, "workspace"))?.name === MINIMIZED_WS
+            ? "window-minimize-symbolic"
+            : get(focused)?.address === client.address ? "object-select-symbolic" : ""),
+        onClick: () => isMinimized(client) ? restoreClient(client) : focusClient(client),
+    })))
 
     const items: ContextMenuItem[] = [
+        { rows: windowRows, visible: hasWindows },
+        { separator: true, visible: hasWindows },
         {
-            label: name,
+            // a new window while it runs, the app itself while it doesn't
+            label: hasWindows.as((has: boolean) => has ? "New Window" : "Open"),
             // not the default .dock-app-icon class: that one carries the
             // dock's hover lift and its icon-size drop shadow, and the menu
             // lives inside the very button that triggers them
-            icon: <AppIconImage entry={entry} pixelSize={20} cssClass="context-menu-icon" /> as Gtk.Widget,
+            icon: <AppIconImage entry={entry} pixelSize={16} cssClass="context-menu-icon" /> as Gtk.Widget,
             sensitive: !!application,
-            onClick: () => { if (application) launchApp(application) },
+            onClick: () => {
+                if (!application) return
+                if (newWindowAction && clientsBinding().length > 0) application.launch_action(newWindowAction, null)
+                else launchApp(application)
+            },
         },
-        ...(actions.length ? [{ separator: true } as ContextMenuItem, ...actions] : []),
+        ...actions,
         { separator: true },
         {
             label: "Unpin from Dock",
@@ -567,6 +592,13 @@ function AppContextMenu(entry, clientsBinding, application, name, pinned, onPinC
         },
         { separator: true, visible: hasWindows },
         {
+            label: clientsBinding.as((clients: Hyprland.Client[]) => clients.length > 1 ? "Minimize All" : "Minimize"),
+            icon: "window-minimize-symbolic",
+            visible: createComputed(get => (get(clientsBinding) as Hyprland.Client[]).some((c: Hyprland.Client) =>
+                get(createBinding(c, "workspace"))?.name !== MINIMIZED_WS)),
+            onClick: () => (clientsBinding() as Hyprland.Client[]).filter(c => !isMinimized(c)).forEach(minimizeClient),
+        },
+        {
             // it always closed every window of the app; only the label lied
             label: clientsBinding.as(clients =>
                 clients.length > 1 ? "Close All Windows" : "Close Window"),
@@ -583,7 +615,7 @@ function AppContextMenu(entry, clientsBinding, application, name, pinned, onPinC
     return ContextMenu({
         items,
         class: "app-context-menu",
-        iconSize: 20,
+        iconSize: 16,
         onVisible: setMenuOpen,
     })
 }

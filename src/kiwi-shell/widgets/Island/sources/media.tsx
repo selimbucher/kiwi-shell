@@ -276,6 +276,16 @@ function decodedCover(file: string, size: number, then: (texture: Gdk.Texture | 
 const NO_COVER = "none"
 const COVER_FADE_MS = 180
 
+// A player's file:// cover as a path; none for one GLib can't read ("file://"
+// alone, a host in it): thrown, it took the whole island's media view down.
+function localPath(uri: string): string {
+    try {
+        return GLib.filename_from_uri(uri)[0] ?? ""
+    } catch {
+        return ""
+    }
+}
+
 function Cover({ player, size }: { player: Mpris.Player; size: number }) {
     // the player's own URL, not AstalMpris's copy of it (cover_art): it copies
     // a web one through gvfs, and with that off the copy fails and keeps the
@@ -292,7 +302,7 @@ function Cover({ player, size }: { player: Mpris.Player; size: number }) {
     const look = () => {
         const asked = wanted = source()
         if (!asked) return setArt(NO_COVER)
-        if (!isWebCover(asked)) return show(asked, asked.startsWith("file://") ? GLib.filename_from_uri(asked)[0] ?? "" : asked)
+        if (!isWebCover(asked)) return show(asked, asked.startsWith("file://") ? localPath(asked) : asked)
         const fetched = fetchedCover(asked)
         if (fetched) return show(asked, fetched)
         void coverFile(asked).then(file => { if (wanted === asked) show(asked, file ?? "") })

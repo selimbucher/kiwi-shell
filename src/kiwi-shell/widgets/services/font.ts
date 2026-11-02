@@ -49,6 +49,41 @@ function systemFamily(): string {
 
 const quote = (family: string) => `"${family.replace(/["\\]/g, "")}"`
 
+// ─── Matched ahead ────────────────────────────────────────────────────────────
+// Each size and weight Pango meets for the first time is a fontconfig match,
+// a search through every font installed: with a big collection (all of
+// Google Fonts is ~10 000 files) several ms each, and the first opening of
+// Spotlight spent 70 ms on its sizes. The shell's own (style/_theme.scss,
+// and the widgets' big numbers) are matched while nothing happens, one at a
+// time, a moment after the start.
+
+const SIZES = [9, 10, 11, 12, 13, 15, 17, 22, 26, 30, 40]
+const WEIGHTS = [Pango.Weight.LIGHT, Pango.Weight.NORMAL, Pango.Weight.MEDIUM, Pango.Weight.SEMIBOLD, Pango.Weight.BOLD]
+let matching = 0
+
+function matchAhead(family: string) {
+    if (matching) GLib.source_remove(matching)
+    const queue = SIZES.flatMap(size => WEIGHTS.map(weight => {
+        const desc = Pango.FontDescription.from_string(family)
+        desc.set_absolute_size(size * Pango.SCALE)
+        desc.set_weight(weight)
+        return desc
+    }))
+    matching = GLib.timeout_add(GLib.PRIORITY_LOW, 2000, () => {
+        // a widget's context: the font options and resolution a label's have
+        const context = new Gtk.Label().get_pango_context()
+        const language = Pango.Language.get_default()
+        matching = GLib.idle_add(GLib.PRIORITY_LOW, () => {
+            const desc = queue.shift()
+            if (desc) context.load_fontset(desc, language)
+            if (queue.length) return GLib.SOURCE_CONTINUE
+            matching = 0
+            return GLib.SOURCE_REMOVE
+        })
+        return GLib.SOURCE_REMOVE
+    })
+}
+
 export function useShellFont() {
     bringQuicksand()
     const display = Gdk.Display.get_default()
@@ -67,6 +102,7 @@ export function useShellFont() {
         applied = css
         provider.load_from_string(css)
         log.info(family ? `the shell's font: ${family}` : "the shell's font: Quicksand")
+        matchAhead(family || QUICKSAND_FAMILY)
     }
     apply()
     conf.subscribe(apply)

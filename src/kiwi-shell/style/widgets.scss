@@ -1,0 +1,729 @@
+@use 'theme' as *;
+
+// ─── The pane ─────────────────────────────────────────────────────────────────
+
+// Lines a column gap apart, as the two widgets in one; the padding is room
+// for the remove button over the corner, the cards' 12px margin the rest.
+.widget-line {
+    margin: 6px 12px 0 8px;
+    padding: 4px 0 0 4px;
+}
+
+.widget {
+    border-radius: 20px;
+    @include panel;
+    box-shadow: var(--k-highlight), var(--k-shadow);
+}
+
+// arranged by dragging: the one picked up fades, the one under the pointer
+// is ringed, and a bar shows the side it will land on (before: left or top)
+.widget {
+    transition: opacity 160ms ease, box-shadow 120ms ease;
+
+    &.dragged {
+        opacity: 0.35;
+    }
+
+    &.drop-target {
+        box-shadow: var(--k-highlight), 0 0 0 2px rgba(255, 255, 255, 0.18), var(--k-shadow);
+    }
+}
+
+.widget-drop-bar {
+    background-color: var(--primary, #0a84ff);
+    border-radius: 100px;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+
+    &.down {
+        min-width: 4px;
+        margin: 16px 3px;
+    }
+
+    &.across {
+        min-height: 4px;
+        margin: 3px 16px;
+    }
+}
+
+.widget-content,
+.widget .cal {
+    padding: 14px;
+}
+
+.widget-broken {
+    color: var(--k-fg-2);
+    font-size: $callout;
+
+    .widget-broken-hint {
+        color: var(--k-fg-3);
+    }
+}
+
+// on the corner while the widgets are edited, as a notification's close
+.widget-remove {
+    margin: -4px 0 0 -4px;
+    min-width: 20px;
+    min-height: 20px;
+    padding: 0;
+    border-radius: 100px;
+    background-color: var(--k-close);
+    background-image: none;
+    border: 1px solid var(--k-border);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    color: var(--k-fg);
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 160ms ease, transform 200ms cubic-bezier(0.2, 0.9, 0.3, 1.2),
+        background-color 120ms ease, color 120ms ease;
+
+    &.shown {
+        opacity: 1;
+        transform: none;
+    }
+
+    &:hover {
+        background-color: #fff;
+        color: rgb(28, 28, 30);
+    }
+}
+
+.widget-edit-row {
+    margin: 12px 12px 10px 12px;
+}
+
+// ─── Calendar ─────────────────────────────────────────────────────────────────
+
+// the Calendar app's own red, as a Mac's widgets have it
+$calendar-red: #ff453a;
+
+.cal-weekday {
+    font-size: $subheadline;
+    font-weight: 700;
+    color: $calendar-red;
+}
+
+.cal-date {
+    font-size: 30px;
+    font-weight: 400;
+    color: var(--k-fg);
+    margin-top: -3px;
+
+    &.compact {
+        font-size: 22px;
+        margin-top: -2px;
+    }
+}
+
+.cal-event {
+    min-height: 0;
+    padding: 3px 6px 3px 3px;
+    border-radius: 7px;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+
+    &:hover {
+        filter: brightness(1.25);
+    }
+}
+
+.cal-bar {
+    min-width: 3px;
+    border-radius: 2px;
+}
+
+.cal-title {
+    font-size: $callout;
+    font-weight: 600;
+}
+
+.cal-time {
+    font-size: $footnote;
+    font-weight: 500;
+    color: var(--k-fg-3);
+}
+
+.cal-day {
+    font-size: $footnote;
+    font-weight: 700;
+    color: var(--k-fg-3);
+    margin-top: 3px;
+}
+
+.cal-more {
+    font-size: $footnote;
+    font-weight: 500;
+    color: var(--k-fg-3);
+    margin-left: 9px;
+}
+
+.cal-countdown {
+    font-size: $subheadline;
+    font-weight: 600;
+    color: var(--k-fg-2);
+}
+
+.cal-line {
+    min-height: 0;
+    padding: 2px 4px;
+    border-radius: 6px;
+    background: none;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+
+    &:hover {
+        background-color: var(--k-fill);
+    }
+}
+
+.cal-line-dot {
+    min-width: 7px;
+    min-height: 7px;
+    border-radius: 100px;
+}
+
+.cal-line-title {
+    font-size: $callout;
+    font-weight: 600;
+}
+
+.cal-line-time {
+    font-size: $subheadline;
+    font-weight: 500;
+    color: var(--k-fg-3);
+}
+
+.cal-nothing {
+    font-size: $callout;
+    font-weight: 500;
+    color: var(--k-fg-3);
+}
+
+.cal-none-icon {
+    color: var(--k-fg-3);
+}
+
+.cal-none {
+    font-size: $body;
+    font-weight: 600;
+    color: var(--k-fg-2);
+}
+
+.cal-none-hint {
+    font-size: $subheadline;
+    color: var(--k-fg-3);
+}
+
+.cal-join {
+    min-width: 22px;
+    min-height: 22px;
+    padding: 0;
+    border-radius: 100px;
+    background: rgba(255, 255, 255, 0.16);
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    color: var(--k-fg);
+
+    &:hover {
+        background: rgba(255, 255, 255, 0.28);
+    }
+}
+
+.cal-month {
+    font-size: $footnote;
+    font-weight: 700;
+    color: $calendar-red;
+
+    &.large {
+        font-size: $title-3;
+        color: var(--k-fg);
+    }
+}
+
+.cal-year {
+    font-size: $title-3;
+    font-weight: 700;
+    color: $calendar-red;
+}
+
+.cal-rule {
+    background-color: var(--k-divider);
+    min-height: 1px;
+}
+
+// ─── Weather ──────────────────────────────────────────────────────────────────
+
+// the sky of the weather, by day and by night
+.weather-sky {
+    color: #fff;
+
+    label {
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+    }
+
+    image {
+        color: #fff;
+    }
+}
+
+.sky-clear-day { background-image: linear-gradient(to bottom, #2f7fd6, #6aaeea); }
+.sky-clear-night { background-image: linear-gradient(to bottom, #0a1633, #27406b); }
+.sky-cloudy-day { background-image: linear-gradient(to bottom, #5a7896, #8ba3ba); }
+.sky-cloudy-night { background-image: linear-gradient(to bottom, #1a2230, #3a4657); }
+.sky-rain-day { background-image: linear-gradient(to bottom, #45586b, #6c7f92); }
+.sky-rain-night { background-image: linear-gradient(to bottom, #121a24, #2e3946); }
+.sky-snow-day { background-image: linear-gradient(to bottom, #73879c, #a3b3c4); }
+.sky-snow-night { background-image: linear-gradient(to bottom, #1d2532, #434e5d); }
+.sky-fog-day { background-image: linear-gradient(to bottom, #7e8994, #a6afb8); }
+.sky-fog-night { background-image: linear-gradient(to bottom, #23272d, #454a51); }
+.sky-storm { background-image: linear-gradient(to bottom, #262a35, #4a5060); }
+.sky-plain { color: var(--k-fg); }
+
+.weather-place {
+    font-size: $body;
+    font-weight: 600;
+}
+
+.weather-here {
+    opacity: 0.85;
+}
+
+.weather-now {
+    font-size: 40px;
+    font-weight: 300;
+    margin-top: -4px;
+}
+
+.weather-condition,
+.weather-range {
+    font-size: $callout;
+    font-weight: 600;
+}
+
+.weather-range {
+    font-weight: 500;
+}
+
+.weather-icon {
+    margin-bottom: 2px;
+}
+
+.weather-hour .weather-when,
+.weather-day .weather-when {
+    font-size: $footnote;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.weather-day .weather-when {
+    font-size: $callout;
+    color: #fff;
+}
+
+.weather-degrees,
+.weather-high {
+    font-size: $callout;
+    font-weight: 600;
+}
+
+.weather-low {
+    font-size: $callout;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.weather-rain {
+    font-size: 9px;
+    font-weight: 700;
+    color: #8fd0ff;
+}
+
+.weather-rule {
+    background-color: rgba(255, 255, 255, 0.18);
+    min-height: 1px;
+    margin: 10px 0 4px;
+}
+
+.weather-scale {
+    min-height: 4px;
+    border-radius: 2px;
+    background-color: rgba(0, 0, 0, 0.18);
+}
+
+.weather-span {
+    min-height: 4px;
+    border-radius: 2px;
+    background-image: linear-gradient(to right, #9ed8ff, #ffd36b);
+}
+
+.weather-picker-title {
+    font-size: $body;
+    font-weight: 700;
+}
+
+.weather-picker entry {
+    min-height: 26px;
+    font-size: $callout;
+    border-radius: 7px;
+}
+
+.weather-found-row {
+    min-height: 0;
+    padding: 4px 6px;
+    border-radius: 6px;
+    background: none;
+    border: none;
+    box-shadow: none;
+    font-size: $callout;
+
+    &:hover {
+        background-color: var(--k-fill-hover);
+    }
+}
+
+.weather-found-where {
+    color: var(--k-fg-3);
+    font-size: $subheadline;
+}
+
+.weather-picker-hint {
+    font-size: $subheadline;
+    color: var(--k-fg-3);
+    margin: 4px 2px 0;
+}
+
+// ─── Batteries ────────────────────────────────────────────────────────────────
+
+.battery-icon {
+    color: var(--k-fg);
+}
+
+.battery-level {
+    font-size: $body;
+    font-weight: 600;
+
+    &.big {
+        font-size: $title-2;
+    }
+
+    &.huge {
+        font-size: 30px;
+        font-weight: 400;
+    }
+}
+
+.battery-name {
+    font-size: $body;
+    font-weight: 600;
+}
+
+.battery-status {
+    font-size: $subheadline;
+    font-weight: 500;
+    color: var(--k-fg-3);
+}
+
+.battery-facts {
+    padding: 8px 0 4px;
+    border-top: 1px solid var(--k-divider);
+    border-bottom: 1px solid var(--k-divider);
+    margin-bottom: 2px;
+}
+
+.battery-fact-name {
+    font-size: $footnote;
+    font-weight: 600;
+    color: var(--k-fg-3);
+}
+
+.battery-fact {
+    font-size: $title-3;
+    font-weight: 600;
+}
+
+.battery-axis {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--k-fg-4);
+}
+
+.battery-none-icon {
+    color: var(--k-fg-3);
+}
+
+.battery-none {
+    font-size: $callout;
+    font-weight: 600;
+    color: var(--k-fg-3);
+}
+
+// ─── The gallery ──────────────────────────────────────────────────────────────
+
+.gallery {
+    opacity: 0;
+    transform: scale(0.96);
+    transition: opacity 180ms ease, transform 240ms cubic-bezier(0.2, 0.9, 0.3, 1);
+
+    &.open {
+        opacity: 1;
+        transform: none;
+    }
+
+    border-radius: 22px;
+    background-color: var(--k-menu);
+    background-image: var(--k-sheen);
+    border: 1px solid var(--k-border);
+    box-shadow: var(--k-highlight), 0 18px 50px rgba(0, 0, 0, 0.45);
+    color: var(--k-fg);
+}
+
+.gallery-side {
+    padding: 14px 10px;
+    border-right: 1px solid var(--k-divider);
+}
+
+.gallery-search {
+    min-height: 28px;
+    margin-bottom: 10px;
+    border-radius: 8px;
+    font-size: $callout;
+}
+
+.gallery-app {
+    min-height: 0;
+    padding: 6px 8px;
+    border-radius: 7px;
+    background: none;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    color: var(--k-fg);
+    font-size: $body;
+    font-weight: 500;
+
+    &:hover {
+        background-color: var(--k-fill);
+    }
+
+    &.selected {
+        background-color: var(--k-fill-active);
+    }
+}
+
+.gallery-shelf {
+    padding: 20px 22px;
+}
+
+// a preview fades in as it's built (Gallery.tsx)
+@keyframes gallery-preview-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.gallery-slot > .widget {
+    animation: gallery-preview-in 160ms ease-out;
+}
+
+.gallery-kind {
+    font-size: $title-3;
+    font-weight: 700;
+}
+
+.gallery-about {
+    font-size: $callout;
+    color: var(--k-fg-3);
+}
+
+.gallery-item {
+    padding: 0;
+    min-height: 0;
+    border-radius: 20px;
+    background: none;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    // room for the + over its corner
+    margin: 6px 0 0 6px;
+    transition: transform 160ms ease;
+
+    &:hover {
+        transform: scale(1.02);
+    }
+
+    &:active {
+        transform: scale(0.98);
+    }
+}
+
+// the +, as on a Mac's: on the corner, green
+.gallery-add {
+    margin: -6px 0 0 -6px;
+    min-width: 22px;
+    min-height: 22px;
+    border-radius: 100px;
+    background-color: #30d158;
+    color: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    transition: transform 160ms cubic-bezier(0.2, 0.9, 0.3, 1.4);
+
+    image {
+        margin: 5px;
+    }
+}
+
+.gallery-item:hover .gallery-add {
+    transform: scale(1.12);
+}
+
+.gallery-foot {
+    padding: 10px 14px;
+    border-top: 1px solid var(--k-divider);
+}
+
+.gallery-done {
+    min-height: 0;
+    padding: 5px 18px;
+    border-radius: 8px;
+    background-color: var(--primary, #0a84ff);
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    color: #fff;
+    font-size: $body;
+    font-weight: 600;
+}
+
+.gallery-none {
+    font-size: $body;
+    color: var(--k-fg-3);
+    margin-top: 40px;
+}
+
+// ─── World clock ──────────────────────────────────────────────────────────────
+
+.clock-city {
+    font-size: $callout;
+    font-weight: 600;
+}
+
+.clock-when {
+    font-size: $footnote;
+    font-weight: 500;
+    color: var(--k-fg-3);
+}
+
+.clock-digital {
+    font-size: $title-3;
+    font-weight: 500;
+}
+
+.clock-picker-title {
+    font-size: $body;
+    font-weight: 700;
+}
+
+.clock-picker entry {
+    min-height: 26px;
+    font-size: $callout;
+    border-radius: 7px;
+
+    &:disabled {
+        opacity: 0.6;
+    }
+}
+
+.clock-picker-done {
+    min-height: 0;
+    padding: 2px 10px;
+    border-radius: 100px;
+    background: var(--k-fill);
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    font-size: $subheadline;
+    font-weight: 700;
+    color: var(--k-fg);
+}
+
+.clock-picker-row {
+    min-height: 0;
+    padding: 4px 6px;
+    border-radius: 6px;
+    background: none;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    font-size: $callout;
+
+    &:hover {
+        background-color: var(--k-fill-hover);
+    }
+}
+
+.clock-picker-where {
+    color: var(--k-fg-3);
+    font-size: $subheadline;
+}
+
+.clock-picker-city {
+    padding: 1px 0 1px 0;
+    border-radius: 6px;
+    font-size: $callout;
+
+    &.replacing {
+        background-color: var(--k-fill);
+    }
+}
+
+.clock-picker-pick {
+    min-height: 0;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: none;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    font-weight: normal;
+
+    &:hover {
+        background-color: var(--k-fill-hover);
+    }
+}
+
+.clock-picker-remove {
+    min-width: 18px;
+    min-height: 18px;
+    padding: 0;
+    border-radius: 100px;
+    background: var(--k-fill);
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    color: var(--k-fg-2);
+}
+
+// ─── Note ─────────────────────────────────────────────────────────────────────
+
+.note-text,
+.note-text text {
+    background: none;
+    color: var(--k-fg);
+    font-size: $body;
+    font-weight: 400;
+    caret-color: #ffd60a;
+}
+
+.note-text text selection {
+    background-color: rgba(255, 214, 10, 0.35);
+}
+
+.note scrolledwindow {
+    background: none;
+}
+
+.note-placeholder {
+    font-size: $body;
+    color: var(--k-fg-4);
+}

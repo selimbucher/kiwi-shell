@@ -17,13 +17,15 @@
     color: var(--k-fg-2);
     // the labels inside read it off the nearest element that sets it
     --k-text-shadow: var(--k-float-text-shadow);
-    border-radius: 28px;
-    padding: 10px;
+    // 64px high with the search alone: room round the query, the results
+    // kept close
+    border-radius: 25px;
+    padding: 8px;
     box-shadow: var(--k-float-highlight), var(--k-float-shadow);
 }
 
 .launcher-search-row {
-    padding: 6px 16px;
+    padding: 6px 15px;
 }
 
 .launcher-search-icon {
@@ -35,10 +37,10 @@
     border: none;
     box-shadow: none;
     outline: none;
-    font-size: 22px;
+    font-size: $title-1;
     color: var(--k-fg);
     caret-color: var(--primary);
-    min-height: 42px;
+    min-height: 34px;
     padding: 0;
 
     placeholder {
@@ -61,16 +63,16 @@
 // which source a run of rows came from, so a window and an app that share a
 // name are told apart without a second look
 .launcher-group {
-    font-size: 11px;
+    font-size: $subheadline;
     font-weight: 600;
     letter-spacing: 0.6px;
     color: var(--k-fg-4);
-    padding: 8px 14px 3px 14px;
+    padding: 8px 12px 3px 12px;
 }
 
 .launcher-row {
-    border-radius: 14px;
-    padding: 7px 12px;
+    border-radius: 12px;
+    padding: 5px 10px;
     transition: background-color 100ms ease;
 
     &.selected {
@@ -90,12 +92,12 @@
 }
 
 .launcher-row-name {
-    font-size: 14px;
+    font-size: $body;
     color: var(--k-fg);
 }
 
 .launcher-row-desc {
-    font-size: 11px;
+    font-size: $subheadline;
     color: var(--k-fg-4);
 }
 
@@ -105,12 +107,17 @@
 }
 
 .launcher-verb-label {
-    font-size: 11px;
+    font-size: $subheadline;
     color: var(--k-fg-3);
 }
 
+// Shift+Enter's and Enter's apart
+.launcher-verb-key + .launcher-verb-label {
+    margin-left: 6px;
+}
+
 .launcher-verb-key {
-    font-size: 11px;
+    font-size: $subheadline;
     color: var(--k-fg-2);
     background-color: var(--k-fill);
     border-radius: 5px;

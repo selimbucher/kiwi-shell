@@ -7,8 +7,7 @@ import Hyprland from "gi://AstalHyprland"
 import Pango from "gi://Pango"
 import GLib from "gi://GLib"
 import Cairo from "gi://cairo"
-import { conf } from "../config"
-import { themeClasses, LAYER } from "../services/theme"
+import { themeClasses, LAYER, primaryCss } from "../services/theme"
 import { playSound } from "../sound"
 import { captureWindowToTexture, freshClientSize, getCachedTexture, reservePreviewSize } from "./clientCachingService"
 import { isValidClient, isMinimized, restoreClient, focusClient } from "../Dock/dock-state"
@@ -18,6 +17,7 @@ import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { applyBinds, currentBinds, registerBindSetup, closeWindow, clientSelector, type BindOp } from "../../hypr"
 import { shortcuts, combo, releaseCombos, heldModifiers, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
+import { Zoomed, zoomOf, zoomOfWidget } from "../zoom"
 import { isOpen as missionControlOpen } from "../MissionControl/MissionControl"
 
 export const [isVisible, setVisibility] = createState(false)
@@ -251,7 +251,7 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
     return [
         <window
             namespace={LAYER.switcher}
-            css={conf(conf => `--primary: ${conf.primary_color};`)}
+            css={primaryCss}
             visible={isVisible}
             name="ags-app-switcher"
             class={themeClasses(t => `AppSwitcher ${t}`)}
@@ -269,7 +269,7 @@ export default function AppSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor })
                 })
             }}
         >
-            <Windows gdkmonitor={gdkmonitor} />
+            <Zoomed><Windows gdkmonitor={gdkmonitor} /></Zoomed>
         </window>,
         <SwitcherClose gdkmonitor={gdkmonitor} />,
     ]
@@ -371,10 +371,12 @@ function SwitcherClose({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
         if (!twin || !switcher) return
         const [dx, dy] = twin.get_surface_transform()
         const below = Math.round((twin.get_height() - switcher.get_height()) / 2)
-        const size = CLOSE_SIZE + 2 * CLOSE_PAD
+        // (the × is drawn at kiwi's size, placed in its own units)
+        const zoom = zoomOfWidget(fixed)
+        const size = (CLOSE_SIZE + 2 * CLOSE_PAD) * zoom
         const x = Math.round(t.x - size / 2), y = Math.round(t.y + below - size / 2)
-        fixed.move(button, x - dx, y - dy)
-        region([x, y, size, size])
+        fixed.move(button, (x - dx) / zoom, (y - dy) / zoom)
+        region([x, y, Math.ceil(size), Math.ceil(size)])
     }
 
     const fadeTo = (to: number, then?: () => void) => {
@@ -453,7 +455,7 @@ function SwitcherClose({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 })
             }}
         >
-            {fixed}
+            <Zoomed>{fixed}</Zoomed>
         </window>
     )
 }
@@ -564,7 +566,9 @@ function Windows({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     // hidden rebuilt every picture for nothing.
     const layout = createComputed(get => {
         const monitor = shownOn.peek() ?? gdkmonitor
-        const { width, height } = monitor.get_geometry()
+        // (in kiwi's units on that display)
+        const zoom = zoomOf(monitor)
+        const width = monitor.get_geometry().width / zoom, height = monitor.get_geometry().height / zoom
         // rows wrap well before the screen edge so the panel never reads
         // as a full-width band
         const tallest = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.round(height * HEIGHT_SHARE)))

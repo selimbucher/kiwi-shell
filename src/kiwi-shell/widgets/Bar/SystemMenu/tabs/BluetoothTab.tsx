@@ -1,7 +1,8 @@
 import { Gtk } from "ags/gtk4"
 import AstalBluetooth from "gi://AstalBluetooth"
 import GLib from "gi://GLib"
-import { createBinding, createComputed, createState, onCleanup } from "ags"
+import Gio from "gi://Gio"
+import { With, createBinding, createComputed, createMemo, createState, onCleanup } from "ags"
 
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
 import { KeyedList } from "../../../KeyedList"
@@ -9,6 +10,7 @@ import { ContextMenu } from "../../../ContextMenu"
 import { logger } from "../../../../log"
 import { registerBluetoothAgent, expectPairing, pairingOver } from "../../../../bluetoothAgent"
 import { call as bluez, devicePath, onAdapter, setAdapter, setProperty } from "../../../services/bluez"
+import { PART_ICONS, PART_NAMES, pods, shownCharges, type Shown } from "../../../services/airpods"
 const log = logger("bluetooth")
 import { bluetoothTabOpen } from "../SystemMenu"
 import { openChoicePrompt } from "../../../prompts"
@@ -303,12 +305,18 @@ function Device({ device, paired }) {
     return section === (paired ? "known" : "other")
   })
 
+  // AirPods: their buds and case, as a Mac's Bluetooth menu shows them
+  const podsShown = createMemo((): Shown[] => {
+    const found = pods().find((p) => p.path === devicePath(device))
+    return found && connectedBinding() ? shownCharges(found) : []
+  }, { equals: (a, b) => JSON.stringify(a) === JSON.stringify(b) })
+
   // battery_percentage is a 0..1 fraction (astal divides the bluez byte by 100)
   // and is -1 on anything without a Battery1 interface. A reading left over from
   // the last session says nothing about a device that isn't connected.
   const batteryLabel = createComputed((get) => {
     const percentage = get(batteryBinding)
-    if (!get(connectedBinding) || percentage <= 0) return ""
+    if (!get(connectedBinding) || percentage <= 0 || get(podsShown).length) return ""
     return `${Math.round(percentage * 100)}%`
   })
 
@@ -366,6 +374,24 @@ function Device({ device, paired }) {
           label={batteryLabel}
           visible={batteryLabel((b) => b !== "")}
         />
+        <With value={podsShown}>
+          {(shown: Shown[]) => (
+            <box class="bt-pods" spacing={8} visible={shown.length > 0}>
+              {shown.map((c) => (
+                <box spacing={3} tooltipText={PART_NAMES[c.part] || undefined}>
+                  <Gtk.Image
+                    gicon={Gio.ThemedIcon.new_from_names(PART_ICONS[c.part])}
+                    pixelSize={14}
+                  />
+                  <label
+                    class={c.charging ? "bt-battery charging" : "bt-battery"}
+                    label={`${Math.round(c.level * 100)}%`}
+                  />
+                </box>
+              ))}
+            </box>
+          )}
+        </With>
         <label label={statusLabel} visible={statusLabel((s) => s !== "")} />
       </box>
     </button>

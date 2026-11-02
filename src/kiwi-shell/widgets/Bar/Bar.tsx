@@ -11,13 +11,13 @@ import SystemMenu, { systemMenuOpen, closeSystemMenu } from "./SystemMenu/System
 import { closeNc } from "../Notifications/NotificationCenter"
 import Island from "../Island/Island"
 import PowerMenu from "./PowerMenu"
-import { toggleLauncher } from "../Launcher/Launcher"
 import Tray, { hasTrayItems } from "./Tray"
 import { conf } from "../config"
 import { network, wifiProperty } from "../services/network"
 import { Icon, iconTheme, wifiIcon } from "../iconNames"
 import { themeClasses, LAYER } from "../services/theme"
 import { minuteNow, twelveHours, clockTime } from "../services/minuteClock"
+import { Zoomed } from "../zoom"
 
 // the current Network, not the first one (services/network.ts)
 const wiredBinding = network.as(n => n.wired)
@@ -71,7 +71,7 @@ export default function Bar({
                 remeasureOn(self, () => `${conf().bar_margin}`)
             }}
         >
-            <Tray />
+            <Zoomed><Tray /></Zoomed>
         </window>,
 
         <Island gdkmonitor={gdkmonitor} />,
@@ -109,10 +109,12 @@ export default function Bar({
                 remeasureOn(self, () => `${conf().bar_margin}|${conf().island?.center === "date"}`)
             }}
         >
-            <MenuButtons
-                toggleNc={guardedToggleNc}
-                onToggleNcReady={(w) => { toggleNcButton = w }}
-            />
+            <Zoomed>
+                <MenuButtons
+                    toggleNc={guardedToggleNc}
+                    onToggleNcReady={(w) => { toggleNcButton = w }}
+                />
+            </Zoomed>
         </window>,
     ]
 }
@@ -131,14 +133,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
 
     return (
         <box class="MenuButtons">
-            {/* Spotlight for the pointer too, as macOS has it in its menu
-                bar: a key alone (Super) left no way in without the keyboard,
-                and with it none to an app not in the dock */}
-            <button class="powermenu-toggle spotlight-toggle" tooltipText="Spotlight: search apps, windows and the web"
-                onClicked={toggleLauncher}>
-                <Gtk.Image iconName="system-search-symbolic" pixelSize={14} />
-            </button>
-            <menubutton class="toggle-powermenu" tooltipText="Control Center">
+            <menubutton class="toggle-powermenu">
                 <box class="icons">
                     <QuietIcon />
                     <PreferencesIcon />
@@ -148,10 +143,10 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
                 <SystemMenu />
             </menubutton>
             <button class="toggle-nc" onclicked={toggleNc} $={(self) => onToggleNcReady(self)}
-                tooltipText={minuteNow(now => `${now.format("%A, %e %B %Y")?.replace(/\s+/g, " ")}\nClick for notifications`)}>
+                tooltipText={minuteNow(now => now.format("%A, %e %B %Y")?.replace(/\s+/g, " ") ?? "")}>
                 <label class={conf(c => c.island?.center === "date" ? "time only" : "time")} label={time} />
             </button>
-            <menubutton class={"powermenu-toggle"} tooltipText="Shut Down, Restart, Sleep…">
+            <menubutton class={"powermenu-toggle"}>
                 <Gtk.Image
                     class="power-icon"
                     iconName={"system-shutdown-symbolic"}
@@ -164,7 +159,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
                     onShow={() => closeNc()}
                     $={(self: Gtk.Popover) => keyboardWhileOpen(self)}
                 >
-                    <PowerMenu />
+                    <Zoomed><PowerMenu /></Zoomed>
                 </popover>
             </menubutton>
         </box>

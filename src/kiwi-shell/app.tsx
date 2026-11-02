@@ -23,6 +23,7 @@ import { logger } from "./log"
 
 import steamDesktopPatcher from "./widgets/services/steamDesktopPatcher";
 import nightShiftService from "./widgets/services/nightShiftSchedule"
+import airpodsService from "./widgets/services/airpods"
 import { loadPlugins } from "./hypr"
 import { standOnOwnBase } from "./widgets/services/gtkBase"
 import { useShellFont } from "./widgets/services/font"
@@ -43,6 +44,7 @@ app.start({
     useShellFont()
     steamDesktopPatcher()
     nightShiftService()
+    airpodsService()
     loadPlugins()
 
     const monitors = createBinding(app, "monitors")

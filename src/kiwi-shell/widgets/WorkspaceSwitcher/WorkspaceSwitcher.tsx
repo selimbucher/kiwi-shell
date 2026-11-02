@@ -5,8 +5,8 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createEffect, For, onCleanup } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { entryForClient, AppIconImage } from "../appIcon"
-import { conf } from "../config"
-import { themeClasses, LAYER } from "../services/theme"
+import { Zoomed, zoomOf } from "../zoom"
+import { themeClasses, LAYER, primaryCss } from "../services/theme"
 import { heldPopupMonitor, destroyWindow } from "../monitors"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
@@ -212,7 +212,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
     return (
         <window
             namespace={LAYER.switcher}
-            css={conf(conf => `--primary: ${conf.primary_color};`)}
+            css={primaryCss}
             visible={isVisible}
             name="ags-workspace-switcher"
             class={themeClasses(t => `WorkspaceSwitcher ${t}`)}
@@ -230,7 +230,7 @@ export default function WorkspaceSwitcher({ gdkmonitor }: { gdkmonitor: Gdk.Moni
                 })
             }}
         >
-            {menu()}
+            <Zoomed>{menu()}</Zoomed>
         </window>
     )
 }
@@ -282,9 +282,10 @@ function canvasWidth(id: number, height: number): number {
 // card height whose rows also fit its height. Rows hold equally many cards
 // where the widths allow it, so 7 cards read as 4 + 3 rather than 6 + 1.
 function layoutCards(ids: number[], monitor: Gdk.Monitor): { height: number, rows: number[][] } {
-    const area = monitor.get_geometry()
-    const maxWidth = area.width * 0.85 - 2 * PANEL_PADDING
-    const maxHeight = area.height * 0.85 - 2 * PANEL_PADDING
+    // (in kiwi's units on that display, widgets/zoom.tsx)
+    const area = monitor.get_geometry(), zoom = zoomOf(monitor)
+    const maxWidth = area.width / zoom * 0.85 - 2 * PANEL_PADDING
+    const maxHeight = area.height / zoom * 0.85 - 2 * PANEL_PADDING
     const cardWidth = (id: number, height: number) =>
         canvasWidth(id, height) + CARD_CHROME_WIDTH + CARD_SPACING
     const fits = (row: number[], height: number) =>

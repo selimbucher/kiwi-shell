@@ -11,7 +11,7 @@ import { createState, createRoot, onCleanup, type Accessor } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { entryForClient, AppIconImage } from "../appIcon"
 import { conf } from "../config"
-import { themeClasses, LAYER } from "../services/theme"
+import { themeClasses, LAYER, primaryCss } from "../services/theme"
 import { popupGdkMonitor, destroyWindow } from "../monitors"
 import { livePreviews, LiveTiles, PreviewPane, raisePreview, selectPreview, type Rect } from "../services/previews"
 import { captureWindowToTexture, getCachedTexture, reservePreviewSize } from "../AppSwitcher/clientCachingService"
@@ -2242,7 +2242,7 @@ export default function MissionControl({ gdkmonitor }: { gdkmonitor: Gdk.Monitor
     return [
         <window
             namespace={LAYER.missionControl}
-            css={conf(conf => `--primary: ${conf.primary_color};`)}
+            css={primaryCss}
             visible={isOpen}
             name="ags-mission-control"
             class={themeClasses(t => `MissionControl ${t}`)}

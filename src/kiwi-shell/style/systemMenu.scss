@@ -2,17 +2,17 @@
 
 .system-menu-popover contents {
   @include menu;
-  min-width: 300px;
-  padding: 12px;
+  min-width: z(300px);
+  padding: z(12px);
   margin-right: 0;
-  margin-top: 10px;
-  border-radius: 15px;
+  margin-top: z(10px);
+  border-radius: z(15px);
 
   .performance-graphs {
     padding: 22px 10px;
     .performance-label {
       font-weight: bold;
-      font-size: 15px;
+      font-size: $title-3;
     }
   }
 
@@ -23,13 +23,13 @@
     border-top: 1px solid var(--k-divider);
 
     .energy-title {
-      font-size: 12px;
+      font-size: $callout;
       font-weight: 700;
       color: var(--k-fg-3);
       margin-bottom: 4px;
     }
     .energy-none {
-      font-size: 12px;
+      font-size: $callout;
       color: var(--k-fg-3);
     }
     .energy-app {
@@ -48,12 +48,12 @@
 
   .system-percentage {
     font-weight: bold;
-    font-size: 13px;
+    font-size: $body;
     color: var(--k-fg-2);
     margin-left: 4px;
 
     .percent-symbol {
-      font-size: 13px;
+      font-size: $body;
       transform: scale(0.7) translateX(-0.7px) translateY(-1.5px);
       transform-origin: bottom left;
       font-weight: bold;
@@ -89,7 +89,7 @@
       background: none;
       border-radius: 11px;
       padding: 4px 10px;
-      font-size: 12px;
+      font-size: $callout;
       &:hover {
         background: var(--k-fill-subtle);
       }
@@ -102,19 +102,19 @@
 
   // wallpaper section: shared by the card, grid and row designs
   .wallpaper-name {
-    font-size: 13px;
+    font-size: $body;
     font-weight: bold;
     color: var(--k-fg);
   }
   .wallpaper-folder {
-    font-size: 11px;
+    font-size: $subheadline;
     color: var(--k-fg-3);
   }
   .wallpaper-icon-button, .wallpaper-choose {
     border: none;
     box-shadow: none;
     border-radius: 12px;
-    font-size: 12px;
+    font-size: $callout;
     color: var(--k-fg-2);
     background: var(--k-fill);
     &:hover {
@@ -212,12 +212,16 @@
   // placeholder shown in place of a list that has nothing in it yet
   .list-empty {
     padding: 4px 6px;
-    font-size: 13px;
+    font-size: $body;
     color: var(--k-fg-4);
   }
 
   .bt-battery {
-    font-size: 12px;
+    font-size: $callout;
+    color: var(--k-fg-3);
+  }
+
+  .bt-pods image {
     color: var(--k-fg-3);
   }
 
@@ -227,13 +231,17 @@
       margin-bottom: -4px;
     }
     
+    // one height with a line under the name or without: the row's other
+    // buttons stretched to Night Shift's while it had one
     button {
       background: var(--k-fill);
       box-shadow: none;
       border: none;
-      padding: 8px 10px;
-      font-size: 17px;
-      font-weight: lighter;
+      min-height: 40px;
+      padding: 0 10px;
+      // as a Mac's Control Center names its controls
+      font-size: $body;
+      font-weight: 600;
       color: var(--k-fg);
       border-radius: 14px;
       label {
@@ -254,7 +262,7 @@
       }
       // a line under the name: how long it stays so (Night Shift)
       .option-detail {
-        font-size: 11px;
+        font-size: $footnote;
         font-weight: normal;
         opacity: 0.7;
       }
@@ -269,7 +277,7 @@
   }
 
   .donut-overlay {
-    font-size: 14px;
+    font-size: $body;
     font-weight: bold;
   }
 
@@ -355,7 +363,7 @@
     //min-height: 130px;
 
     .section-header {
-      font-size: 14px;
+      font-size: $body;
       margin-bottom: 8px;
       &.mt {
         margin-top: 24px;
@@ -363,7 +371,7 @@
     }
 
     .large-header {
-      font-size: 14px;
+      font-size: $body;
       color: var(--k-fg-2);
     }
 
@@ -394,7 +402,7 @@
           box-shadow: none;
           border: none;
           padding: 6px 10px;
-          font-size: 14px;
+          font-size: $body;
           font-weight: lighter;
           color: var(--k-fg);
           border-radius: 12px;

@@ -18,6 +18,7 @@ import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import Gtk4LayerShell from "gi://Gtk4LayerShell"
 import KiwiSurface from "gi://KiwiSurface"
+import { Zoomed, zoomOf } from "../zoom"
 
 const clients = clientsBinding
 const activeWorkspace = createBinding(hyprland, "focusedWorkspace")
@@ -155,7 +156,9 @@ const px = (icon: number, fraction: number, min = 0) =>
 // it out, so windows don't make room for it either.
 const headroomFor = (icon: number) => px(icon, DOCK.hop) + px(icon, DOCK.lift, 3)
 
-function dockCss(icon: number, margin: number, primary: string) {
+// (zoom: kiwi's size on the display, widgets/zoom.tsx. The headroom is the
+// window's padding, outside the zoomed pill, so it's grown here)
+function dockCss(icon: number, margin: number, primary: string, zoom: number) {
     const shadow = (y: number, blur: number) =>
         `drop-shadow(0 ${y}px ${blur}px rgba(0, 0, 0, 0.3))`
     return `
@@ -165,7 +168,7 @@ function dockCss(icon: number, margin: number, primary: string) {
     --hop-duration: ${HOP_MS}ms;
     --hop-settle-height: ${Math.round(px(icon, DOCK.hop) * SETTLE)}px;
     --hop-settle-duration: ${SETTLE_MS}ms;
-    --dock-headroom: ${headroomFor(icon)}px;
+    --dock-headroom: ${Math.round(headroomFor(icon) * zoom)}px;
     --icon-size: ${icon}px;
     --icon-cell-half: ${(icon + 2 * px(icon, DOCK.gap / 2, 1)) / 2}px;
     --icon-drop: ${Math.round(icon * 1.75)}px;
@@ -252,7 +255,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
     let selfRef: Astal.Window | null = null
     let dockBoxRef: Gtk.Widget | null = null
 
-    const headroom = () => headroomFor(conf().dock_icon_size)
+    const headroom = () => Math.round(headroomFor(conf().dock_icon_size) * zoomOf(gdkmonitor))
     // The band the pill sits in, in screen pixels: the surface without the
     // headroom above it. Measured on the surface, because the window's own
     // height leaves out its padding, and the headroom is that padding.
@@ -566,7 +569,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             namespace={LAYER.dock}
             css={createComputed(get => {
                 const c = get(conf)
-                return dockCss(c.dock_icon_size, c.dock_margin, c.primary_color)
+                return dockCss(c.dock_icon_size, c.dock_margin, c.primary_color, zoomOf(gdkmonitor))
             })}
             name="ags-dock"
             class={createComputed(get => {
@@ -710,11 +713,13 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 })
             }}
         >
-            <DockBar
-                menuSlot={menuSlot}
-                showDock={showDock}
-                onDockBoxReady={(widget) => { dockBoxRef = widget }}
-            />
+            <Zoomed>
+                <DockBar
+                    menuSlot={menuSlot}
+                    showDock={showDock}
+                    onDockBoxReady={(widget) => { dockBoxRef = widget }}
+                />
+            </Zoomed>
         </window>
     ), <EdgeSensor gdkmonitor={gdkmonitor} poke={poke} />]
 }

@@ -7,8 +7,10 @@ A macOS-style desktop shell for Hyprland.
 - **Dock** with window previews, minimizing into it
 - **Mission Control** and desktops, as macOS has them, with trackpad gestures
 - **App switcher** with live window previews
-- **Launcher** for apps, open windows, sums and the web
+- **Spotlight** for apps, open windows, files, settings, sums and units, commands and the web
 - **Menu bar** with the system menu, tray and notifications
+- **Notification Center** with widgets: calendar, weather, batteries, world clock and notes
+- **AirPods**: the battery of each bud and the case, and pausing when one comes out
 - **Dynamic Island** in the bar: desktops, date or weather, and music, privacy dots and alerts as they happen
 - **Accent colour** from the wallpaper, **Night Shift**, desktop icons
 - **Kiwi Settings** for all of it
@@ -17,6 +19,7 @@ A macOS-style desktop shell for Hyprland.
 
 - Hyprland 0.56 or newer, with a Lua config
 - NetworkManager, BlueZ, power-profiles-daemon and WirePlumber; UPower on laptops
+- Evolution Data Server for calendar events in the widgets (comes with GNOME Calendar)
 
 ## Install
 
@@ -24,6 +27,8 @@ A macOS-style desktop shell for Hyprland.
 
 ```bash
 sudo pacman -S networkmanager bluez power-profiles-daemon wireplumber upower
+# calendar events in Notification Center's widgets
+sudo pacman -S evolution-data-server
 yay -S kiwi-shell
 
 # the Hyprland plugin: live previews, the minimize animation, Mission Control
@@ -80,7 +85,7 @@ Then log out and back in: Hyprland keeps the plugin it loaded.
 |---|---|
 | Launcher | Tap Super |
 | App switcher | Alt+Tab |
-| Mission Control | Ctrl+Super+Up, or three fingers up |
+| Mission Control | Super+Tab, or three fingers up |
 | Desktop on the left / right | Ctrl+Super+Left / Right, or three fingers sideways |
 | Notifications | Four fingers left |
 | Classic workspace switcher | None |
@@ -90,12 +95,41 @@ Change them in Kiwi Settings → Keybinds (+ adds another), or in Home Manager, 
 ```nix
 services.kiwi-shell.settings.shortcuts = {
   mission_control = "Ctrl+Up";
-  workspace_switcher = "Super+Tab";   # held like Alt+Tab
+  workspace_switcher = "Super+grave";   # held like Alt+Tab
   launcher = [ "Super" "Super+space" ];   # several for one action
 };
 ```
 
 Leave these keys out of your Hyprland config: Kiwi Shell takes them while it runs.
+
+## AirPods
+
+```ini
+# /etc/bluetooth/main.conf: their battery in other apps too (UPower)
+[General]
+Experimental = true
+```
+
+```
+# ~/.config/wireplumber/wireplumber.conf.d/51-bluez-avrcp.conf: double and triple press
+monitor.bluez.properties = {
+  bluez5.dummy-avrcp-player = true
+}
+```
+
+```bash
+sudo systemctl restart bluetooth
+systemctl --user restart wireplumber
+```
+
+On NixOS:
+
+```nix
+hardware.bluetooth.settings.General.Experimental = true;
+services.pipewire.wireplumber.extraConfig."51-bluez-avrcp" = {
+  "monitor.bluez.properties"."bluez5.dummy-avrcp-player" = true;
+};
+```
 
 ## Look
 

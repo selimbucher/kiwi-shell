@@ -4,7 +4,7 @@ window.Bar {
   background: transparent;
   color: var(--k-fg);
 
-  > box {
+  > zoom > box {
     margin: 4px;
     margin-bottom: var(--bar-margin);
   }
@@ -19,10 +19,11 @@ window.Bar {
 
   .MenuButtons, .Tray {
     @include panel;
-    border-radius: 20px;
-    padding: 4px;
+    border-radius: $bar-height * 0.5;
+    // a button's 24px high inside, $bar-height in all
+    padding: ($bar-height - 2px - 24px) * 0.5 4px;
     font-weight: 400;
-    font-size: 12px;
+    font-size: $callout;
 
 
     .toggle-powermenu {

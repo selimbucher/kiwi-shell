@@ -3,7 +3,7 @@ import { createState } from "ags"
 
 import { logger } from "../../log"
 import { conf } from "../config"
-import { placeOf, type Place } from "./weather"
+import { placeOf, timeZonePlace, type Place } from "./places"
 import { minuteNow } from "./minuteClock"
 
 const log = logger("sun")
@@ -33,38 +33,6 @@ function savePlace(city: string, place: Place) {
     } catch (e) {
         log.warn("couldn't keep the place:", e as Error)
     }
-}
-
-// "+4723+00832" (±DDMM±DDDMM, or with seconds) as degrees
-function coordinates(text: string): [number, number] | null {
-    const m = text.match(/^([+-])(\d{2})(\d{2})(\d{2})?([+-])(\d{3})(\d{2})(\d{2})?$/)
-    if (!m) return null
-    const degrees = (sign: string, d: string, min: string, s?: string) =>
-        (sign === "-" ? -1 : 1) * (Number(d) + Number(min) / 60 + Number(s ?? 0) / 3600)
-    return [degrees(m[1], m[2], m[3], m[4]), degrees(m[5], m[6], m[7], m[8])]
-}
-
-// the time zone's own city (Europe/Zurich: Zurich)
-function timeZonePlace(): Place | null {
-    // (a path where the zone came from /etc/localtime: /etc/zoneinfo/Europe/Zurich)
-    const id = GLib.TimeZone.new_local().get_identifier().replace(/^:/, "")
-    const zone = id.replace(/^.*zoneinfo\//, "")
-    const dirs = [id.match(/^(.*zoneinfo)\//)?.[1], GLib.getenv("TZDIR"), "/usr/share/zoneinfo", "/etc/zoneinfo"]
-        .filter(Boolean) as string[]
-    // (zone.tab too: zones merged into another, Europe/Amsterdam into
-    // Brussels, are only there)
-    for (const dir of dirs) for (const file of ["zone1970.tab", "zone.tab"]) {
-        try {
-            const table = new TextDecoder().decode(GLib.file_get_contents(`${dir}/${file}`)[1])
-            for (const line of table.split("\n")) {
-                const [, at, name] = line.split("\t")
-                if (name !== zone) continue
-                const found = coordinates(at)
-                if (found) return { name: zone, latitude: found[0], longitude: found[1] }
-            }
-        } catch { /* not here */ }
-    }
-    return null
 }
 
 const [place, setPlace] = createState<Place | null>(null)

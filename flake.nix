@@ -177,6 +177,9 @@
             pkgs.libsoup_3
             # TLS for libsoup (the island's weather fetches over https)
             pkgs.glib-networking
+            # the calendar widgets read GNOME Calendar's events (services/calendar.ts)
+            pkgs.evolution-data-server
+            pkgs.libical
             astal-latest.packages.${system}.quarrel
             app-capture
             hyprland-shortcuts
@@ -391,7 +394,11 @@
             else if builtins.isFloat v then
               lib.types.float
             else if builtins.isList v then
-              lib.types.listOf lib.types.str
+              # the widgets: a list of { kind, size, ... }
+              (if v != [ ] && builtins.isAttrs (builtins.head v) then
+                lib.types.listOf (lib.types.attrsOf lib.types.anything)
+              else
+                lib.types.listOf lib.types.str)
             else
               lib.types.str;
 

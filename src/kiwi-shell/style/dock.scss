@@ -117,15 +117,15 @@
 .app-context-menu {
     @extend .context-menu;
     // the dock sits on the screen edge: lift the menu off it
-    margin-bottom: 10px;
+    margin-bottom: z(10px);
 }
 
 .dock-previews {
-    margin-bottom: 10px;
+    margin-bottom: z(10px);
     contents {
         @include menu;
-        padding: 6px;
-        border-radius: 12px;
+        padding: z(6px);
+        border-radius: z(10px);
     }
     // while its pane waits for the compositor's tiles (services/previews.ts):
     // nothing to see, but still a frame to commit
@@ -139,7 +139,7 @@
 
 .dock-preview-item {
     padding: 6px;
-    border-radius: 9px;
+    border-radius: 8px;
     transition: background-color 150ms ease;
 
     &:hover {
@@ -148,12 +148,12 @@
 }
 
 .dock-preview-title {
-    font-size: 10px;
+    font-size: $footnote;
     color: var(--k-fg-2);
 }
 
 .dock-preview-shot {
-    border-radius: 6px;
+    border-radius: 4px;
     background-color: var(--k-well);
 }
 

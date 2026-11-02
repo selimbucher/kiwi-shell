@@ -19,7 +19,7 @@ export type ShortcutName =
 export const DEFAULT_SHORTCUTS: Record<ShortcutName, string> = {
     launcher: "Super",
     app_switcher: "Alt+Tab",
-    mission_control: "Ctrl+Super+Up",
+    mission_control: "Super+Tab",
     desktop_left: "Ctrl+Super+Left",
     desktop_right: "Ctrl+Super+Right",
     workspace_switcher: "",
