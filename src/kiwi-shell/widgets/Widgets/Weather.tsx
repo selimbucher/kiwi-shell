@@ -1,4 +1,5 @@
 import { Gtk, Gdk } from "ags/gtk4"
+import { ZoomImage } from "../zoom"
 import GLib from "gi://GLib"
 import GioUnix from "gi://GioUnix"
 import Pango from "gi://Pango"
@@ -57,7 +58,7 @@ function Now({ f, spec, wide }: { f: Forecast, spec: WidgetSpec, wide: boolean }
         <box spacing={4}>
             <label class="weather-place" label={f.place} ellipsize={Pango.EllipsizeMode.END} xalign={0} />
             {/* the place followed, not one picked for this widget */}
-            <Gtk.Image class="weather-here" iconName="find-location-symbolic" pixelSize={10} visible={!spec.city} />
+            <ZoomImage class="weather-here" iconName="find-location-symbolic" pixelSize={10} visible={!spec.city} />
         </box>
     )
     const range = <label class="weather-range" label={today ? `H:${deg(today.high)} L:${deg(today.low)}` : ""} xalign={wide ? 1 : 0} />
@@ -67,7 +68,7 @@ function Now({ f, spec, wide }: { f: Forecast, spec: WidgetSpec, wide: boolean }
                 {place}
                 <label class="weather-now" label={deg(f.now.degrees)} xalign={0} />
                 <box vexpand />
-                <Gtk.Image class="weather-icon" iconName={sky.icon} pixelSize={18} halign={Gtk.Align.START} />
+                <ZoomImage class="weather-icon" iconName={sky.icon} pixelSize={18} halign={Gtk.Align.START} />
                 <label class="weather-condition" label={sky.text} xalign={0} ellipsize={Pango.EllipsizeMode.END} />
                 {range}
             </box>
@@ -80,7 +81,7 @@ function Now({ f, spec, wide }: { f: Forecast, spec: WidgetSpec, wide: boolean }
                 <label class="weather-now" label={deg(f.now.degrees)} xalign={0} />
             </box>
             <box orientation={Gtk.Orientation.VERTICAL} valign={Gtk.Align.END} halign={Gtk.Align.END}>
-                <Gtk.Image class="weather-icon" iconName={sky.icon} pixelSize={18} halign={Gtk.Align.END} />
+                <ZoomImage class="weather-icon" iconName={sky.icon} pixelSize={18} halign={Gtk.Align.END} />
                 <label class="weather-condition" label={sky.text} xalign={1} />
                 {range}
             </box>
@@ -94,7 +95,7 @@ function Hours({ f }: { f: Forecast }) {
             {hoursFrom(f, 6).map((h, i) => (
                 <box orientation={Gtk.Orientation.VERTICAL} class="weather-hour" spacing={3}>
                     <label class="weather-when" label={hourLabel(h.time, i === 0)} />
-                    <Gtk.Image iconName={condition(h.code, h.day).icon} pixelSize={16} />
+                    <ZoomImage iconName={condition(h.code, h.day).icon} pixelSize={16} />
                     <Rain chance={h.rain} />
                     <label class="weather-degrees" label={deg(h.degrees)} />
                 </box>
@@ -115,7 +116,7 @@ function Days({ f }: { f: Forecast }) {
                 <box class="weather-day" spacing={8}>
                     <label class="weather-when" label={dayLabel(d.date, i === 0)} xalign={0} widthChars={6} />
                     <box orientation={Gtk.Orientation.VERTICAL} widthRequest={26} valign={Gtk.Align.CENTER}>
-                        <Gtk.Image iconName={condition(d.code).icon} pixelSize={16} />
+                        <ZoomImage iconName={condition(d.code).icon} pixelSize={16} />
                         <Rain chance={d.rain} />
                     </box>
                     <label class="weather-low" label={deg(d.low)} widthChars={4} xalign={1} hexpand />

@@ -2,7 +2,7 @@ import { Gtk, Gdk } from "ags/gtk4"
 import type { MenuSlot } from "./dock-state"
 import { createState, createComputed, createBinding, createEffect, For, onCleanup } from "ags"
 import Pango from "gi://Pango"
-import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient, registerDockIcon, clientsBinding as windowsBinding } from "./dock-state"
+import { hyprland, list, setList, saveList, isNixManaged, isValidClient, launchBounce, type Hop, MINIMIZED_WS, isMinimized, isClientVisible, minimizeClient, restoreClient, focusClient, registerDockIcon, dockIconSize, clientsBinding as windowsBinding } from "./dock-state"
 import Hyprland from "gi://AstalHyprland"
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu"
 import { letGoOnClose, launchApp } from "./dock-utils"
@@ -13,7 +13,7 @@ import { closeWindow, clientSelector } from "../../hypr"
 import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { LAYER } from "../services/theme"
 import { conf } from "../config"
-import { Zoomed } from "../zoom"
+import { ZoomImage, Zoomed } from "../zoom"
 import { logger } from "../../log"
 const log = logger("dock")
 
@@ -254,9 +254,7 @@ export function AppIcon({ entry, menuSlot }: { entry: string, menuSlot: MenuSlot
                     {menu}
                     {previews}
                     <overlay>
-                        <AppIconImage entry={entry} pixelSize={
-                            conf.as(conf => conf.dock_icon_size)
-                        } />
+                        <AppIconImage entry={entry} pixelSize={dockIconSize} />
                         <box $type="overlay" class="dots-container" orientation={Gtk.Orientation.VERTICAL}>
                             <box vexpand={true}></box>
                             <box class="client-dots" halign={Gtk.Align.CENTER}>
@@ -456,7 +454,7 @@ function WindowPreviewItem({ client, pickerOpen, popdown, tiles }: {
                     class="dock-preview-close"
                     onclicked={() => closeWindow(clientSelector(client))}
                 >
-                    <Gtk.Image iconName="window-close-symbolic" pixelSize={10} />
+                    <ZoomImage iconName="window-close-symbolic" pixelSize={10} />
                 </button>
             </box>
             {/* scroll-less viewport sized to the window's aspect ratio:

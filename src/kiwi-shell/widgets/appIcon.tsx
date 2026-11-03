@@ -1,5 +1,6 @@
 import { Gtk, Gdk } from "ags/gtk4"
 import Gio from "gi://Gio"
+import { ZoomImage } from "./zoom"
 import GioUnix from "gi://GioUnix"
 import GLib from "gi://GLib"
 import { Binding } from "ags"
@@ -178,7 +179,7 @@ export function AppIconImage({ entry, pixelSize = 56, cssClass = "dock-app-icon"
     cssClass?: string
 }) {
     return (
-        <Gtk.Image
+        <ZoomImage
             gicon={giconForEntry(entry)}
             pixelSize={pixelSize}
             class={cssClass}

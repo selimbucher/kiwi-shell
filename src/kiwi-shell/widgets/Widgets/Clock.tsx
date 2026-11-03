@@ -1,4 +1,5 @@
 import { Gtk, Gdk } from "ags/gtk4"
+import { ZoomImage } from "../zoom"
 import GLib from "gi://GLib"
 import Pango from "gi://Pango"
 import { With, createComputed, createState, onCleanup, type Accessor } from "ags"
@@ -197,7 +198,7 @@ function CityPicker({ spec, done }: { spec: Accessor<WidgetSpec>, done: () => vo
                                                 setReplacing(null)
                                                 save(list.filter(c => !sameCity(c, city)))
                                             }}>
-                                            <Gtk.Image iconName="list-remove-symbolic" pixelSize={10} />
+                                            <ZoomImage iconName="list-remove-symbolic" pixelSize={10} />
                                         </button>
                                         : <box />}
                                 </box>

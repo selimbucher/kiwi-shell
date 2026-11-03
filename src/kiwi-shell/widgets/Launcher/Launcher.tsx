@@ -1,7 +1,7 @@
 import KiwiSurface from "gi://KiwiSurface"
 import Cairo from "gi://cairo"
 import { logger } from "../../log"
-import { Zoomed, zoomOf } from "../zoom"
+import { ZoomImage, Zoomed, zoomOf } from "../zoom"
 const log = logger("launcher")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
@@ -215,7 +215,7 @@ function ResultRow({ row, index }: { row: Row, index: Accessor<number> }) {
                     self.add_controller(click)
                 }}
             >
-                <Gtk.Image
+                <ZoomImage
                     iconName={result.iconName}
                     gicon={result.gicon}
                     // the Top Hit a size up, as a Mac's
@@ -391,7 +391,7 @@ export default function Launcher({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                     $={(self) => { panelRef = self }}
                 >
                     <box class="launcher-search-row" spacing={10}>
-                        <Gtk.Image
+                        <ZoomImage
                             iconName="system-search-symbolic"
                             pixelSize={18}
                             class="launcher-search-icon"

@@ -5,7 +5,6 @@ import { createBinding, createComputed, onCleanup } from "ags"
 
 import { battery } from "../services/battery"
 import Network from "gi://AstalNetwork"
-import Notifd from "gi://AstalNotifd"
 
 import SystemMenu, { systemMenuOpen, closeSystemMenu } from "./SystemMenu/SystemMenu"
 import { closeNc } from "../Notifications/NotificationCenter"
@@ -17,7 +16,7 @@ import { network, wifiProperty } from "../services/network"
 import { Icon, iconTheme, wifiIcon } from "../iconNames"
 import { themeClasses, LAYER } from "../services/theme"
 import { minuteNow, twelveHours, clockTime } from "../services/minuteClock"
-import { Zoomed } from "../zoom"
+import { ZoomImage, Zoomed } from "../zoom"
 
 // the current Network, not the first one (services/network.ts)
 const wiredBinding = network.as(n => n.wired)
@@ -25,7 +24,6 @@ const wifiStateBinding = wifiProperty("state", Network.DeviceState.UNAVAILABLE)
 const activeAPBinding = wifiProperty<Network.AccessPoint | null>("activeAccessPoint", null)
 
 const hasBattery = battery.get_is_present()
-const dontDisturb = createBinding(Notifd.get_default(), "dont-disturb")
 
 const { TOP, LEFT, RIGHT } = Astal.WindowAnchor
 
@@ -135,7 +133,6 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
         <box class="MenuButtons">
             <menubutton class="toggle-powermenu">
                 <box class="icons">
-                    <QuietIcon />
                     <PreferencesIcon />
                     <NetworkIcon />
                     <BatteryIcon />
@@ -147,7 +144,7 @@ function MenuButtons({ toggleNc, onToggleNcReady }: {
                 <label class={conf(c => c.island?.center === "date" ? "time only" : "time")} label={time} />
             </button>
             <menubutton class={"powermenu-toggle"}>
-                <Gtk.Image
+                <ZoomImage
                     class="power-icon"
                     iconName={"system-shutdown-symbolic"}
                     pixelSize={14}
@@ -183,7 +180,7 @@ function BatteryIcon() {
         return left ? `${percent}, ${left} left` : percent
     })
     return (
-        <Gtk.Image
+        <ZoomImage
             visible={hasBattery}
             class="batteryIcon"
             pixelSize={16}
@@ -193,25 +190,12 @@ function BatteryIcon() {
     )
 }
 
-// Do Not Disturb on, for as long as it is, as a Mac's menu bar shows a Focus:
-// otherwise nothing said the banners were being held back
-function QuietIcon() {
-    return (
-        <Gtk.Image
-            visible={dontDisturb}
-            class="quietIcon"
-            pixelSize={16}
-            iconName="notifications-disabled-symbolic"
-        />
-    )
-}
-
 // With Wi-Fi, its signal; with a cable alone (a desktop on Ethernet),
 // whether the cable is connected; with neither, nothing. Followed, since
 // NetworkManager can come back with other devices (a USB Wi-Fi stick).
 function NetworkIcon() {
     return (
-        <Gtk.Image
+        <ZoomImage
             class="networkIcon"
             visible={network(n => !!(n.wifi || n.wired))}
             iconSize={Gtk.IconSize.NORMAL}

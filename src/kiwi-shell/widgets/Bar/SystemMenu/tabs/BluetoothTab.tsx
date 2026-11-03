@@ -1,7 +1,9 @@
 import { Gtk } from "ags/gtk4"
+import { ZoomImage } from "../../../zoom"
 import AstalBluetooth from "gi://AstalBluetooth"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
+import Pango from "gi://Pango"
 import { With, createBinding, createComputed, createMemo, createState, onCleanup } from "ags"
 
 import { Icon, BluetoothDeviceIcon } from "../../../iconNames"
@@ -365,7 +367,9 @@ function Device({ device, paired }) {
           iconName={iconBinding.as((s) => BluetoothDeviceIcon(s))}
         />
         <label
-          label={deviceName.as((n) => n || "Unknown Device")}
+          label={deviceName.as((n) => (n || "Unknown Device").replace(/\s*[-–—]\s*Find My\b.*$/i, "").trim())}
+          ellipsize={Pango.EllipsizeMode.END}
+          maxWidthChars={18}
           hexpand={true}
           halign={Gtk.Align.START}
         />
@@ -379,7 +383,7 @@ function Device({ device, paired }) {
             <box class="bt-pods" spacing={8} visible={shown.length > 0}>
               {shown.map((c) => (
                 <box spacing={3} tooltipText={PART_NAMES[c.part] || undefined}>
-                  <Gtk.Image
+                  <ZoomImage
                     gicon={Gio.ThemedIcon.new_from_names(PART_ICONS[c.part])}
                     pixelSize={14}
                   />

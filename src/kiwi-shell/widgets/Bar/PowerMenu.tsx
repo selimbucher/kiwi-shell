@@ -1,4 +1,5 @@
 import { Gtk } from "ags/gtk4"
+import { ZoomImage } from "../zoom"
 import { shutDown, restart, sleep, lock, logOut } from "../power"
 
 // Named under each, as macOS and Windows name them: five round symbols for
@@ -16,7 +17,7 @@ function PowerButton({ name, icon, exec }: (typeof buttons)[number]) {
   return (
     <button onClicked={() => exec()}>
       <box orientation={Gtk.Orientation.VERTICAL} spacing={6}>
-        <Gtk.Image iconName={icon} pixelSize={32} />
+        <ZoomImage iconName={icon} pixelSize={32} />
         <label class="power-label" label={name} />
       </box>
     </button>

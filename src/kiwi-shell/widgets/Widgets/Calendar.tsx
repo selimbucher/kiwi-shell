@@ -1,4 +1,5 @@
 import { Gtk, Gdk } from "ags/gtk4"
+import { ZoomImage } from "../zoom"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import Pango from "gi://Pango"
@@ -145,7 +146,7 @@ function EventRow({ event, day, now }: { event: CalendarEvent, day: GLib.DateTim
                             } catch { /* no browser */ }
                             closeCenter()
                         }}>
-                        <Gtk.Image iconName="camera-video-symbolic" pixelSize={12} />
+                        <ZoomImage iconName="camera-video-symbolic" pixelSize={12} />
                     </button>
                     : <box />}
             </box>
@@ -217,7 +218,7 @@ function NoEvents({ status }: { status: CalendarStatus }) {
     const missing = status === "missing"
     return (
         <box orientation={Gtk.Orientation.VERTICAL} spacing={4} valign={Gtk.Align.CENTER} halign={Gtk.Align.CENTER} vexpand hexpand>
-            <Gtk.Image class="cal-none-icon" iconName="x-office-calendar-symbolic" pixelSize={22} />
+            <ZoomImage class="cal-none-icon" iconName="x-office-calendar-symbolic" pixelSize={22} />
             <label class="cal-none" label={missing ? "No Calendars" : "No Events"} />
             <label class="cal-none-hint" justify={Gtk.Justification.CENTER} wrap maxWidthChars={26}
                 label={missing ? "Calendars come from Evolution Data Server, as GNOME Calendar's do."

@@ -5,7 +5,7 @@ import AstalNetwork from "gi://AstalNetwork"
 
 import { logger } from "../../log"
 import { conf } from "../config"
-import { getJson, placeOf, timeZonePlace } from "./places"
+import { getJson, placeOf, herePlace } from "./places"
 
 const log = logger("weather")
 
@@ -171,7 +171,7 @@ async function refresh(asked: string) {
     }
     s.fetching = true
     try {
-        const place = asked ? await placeOf(asked) : timeZonePlace()
+        const place = asked ? await placeOf(asked) : await herePlace()
         if (!place) {
             s.setProblem(asked ? `No place called ${asked}` : "No city set")
             return

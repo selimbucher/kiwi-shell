@@ -1,4 +1,5 @@
 import app from "ags/gtk4/app"
+import { ZoomImage } from "../../zoom"
 import { Gtk } from "ags/gtk4"
 import { createState, type Accessor } from "ags"
 import AstalWp from "gi://AstalWp"
@@ -358,7 +359,7 @@ export function PrivacyIcons({ parted }: { parted: boolean }) {
                 return (
                     <revealer transitionType={Gtk.RevealerTransitionType.SLIDE_RIGHT} transitionDuration={200}
                         revealChild={on} valign={Gtk.Align.CENTER}>
-                        <Gtk.Image class={on(o => o ? `kind ${k.tone} on` : `kind ${k.tone}`)}
+                        <ZoomImage class={on(o => o ? `kind ${k.tone} on` : `kind ${k.tone}`)}
                             iconName={privacy(p => iconOf(k, p))} pixelSize={14} valign={Gtk.Align.CENTER} />
                     </revealer>
                 )
@@ -373,7 +374,7 @@ export function PrivacyCard() {
         <box class="island-card island-privacy-card" orientation={Gtk.Orientation.VERTICAL}>
             {KINDS.map(k => (
                 <box class="use" visible={privacy(p => p[k.key].length > 0)}>
-                    <Gtk.Image class={`kind-icon ${k.tone}`} iconName={privacy(p => iconOf(k, p))} pixelSize={16} valign={Gtk.Align.CENTER} />
+                    <ZoomImage class={`kind-icon ${k.tone}`} iconName={privacy(p => iconOf(k, p))} pixelSize={16} valign={Gtk.Align.CENTER} />
                     <box orientation={Gtk.Orientation.VERTICAL} hexpand>
                         <label class="kind" label={k.title} xalign={0} />
                         <label class="apps" xalign={0} wrap

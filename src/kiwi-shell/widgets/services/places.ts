@@ -139,3 +139,33 @@ export function timeZonePlace(): Place | null {
     const found = zones().find(z => z.zone === zone)
     return found ? { name: found.name, latitude: found.latitude, longitude: found.longitude } : null
 }
+
+// ─── Here ───────────────────────────────────────────────────────────────────
+// "Here" for the weather with no city set: the machine's own city, by IP
+// (ipapi.co, no account, no key). The server only ever sees the IP the
+// request comes from anyway; the coordinates it returns are what the weather
+// then sends to Open-Meteo, as a typed city's would be. Cached half an hour,
+// and it falls back to the time zone's city when offline, rate-limited or
+// blocked — so a stationary machine with the right zone still works and a
+// laptop follows where it is. This is the practical equivalent of Apple's
+// "My Location" on Linux: GPS/Wi-Fi positioning (CoreLocation / GeoClue) has
+// no working backend on a desktop since Mozilla's location service closed, so
+// IP is the realistic accuracy either way.
+let hereCache: { place: Place; at: number } | null = null
+const HERE_TTL_MS = 30 * 60 * 1000
+
+export async function herePlace(): Promise<Place | null> {
+    if (hereCache && Date.now() - hereCache.at < HERE_TTL_MS) return hereCache.place
+    try {
+        const data = await getJson("https://ipapi.co/json/")
+        const latitude = Number(data?.latitude)
+        const longitude = Number(data?.longitude)
+        if (Number.isFinite(latitude) && Number.isFinite(longitude) && (latitude !== 0 || longitude !== 0)) {
+            const city = typeof data?.city === "string" && data.city.trim() ? data.city.trim() : zoneCity(localZone())
+            const place: Place = { name: city, latitude, longitude }
+            hereCache = { place, at: Date.now() }
+            return place
+        }
+    } catch { /* offline, rate-limited or blocked — fall back to the zone */ }
+    return timeZonePlace()
+}

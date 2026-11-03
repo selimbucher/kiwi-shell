@@ -1,4 +1,5 @@
 import { createState, createBinding, createComputed, For, With } from "ags"
+import { ZoomImage } from "../../../zoom"
 import { execAsync } from "ags/process"
 import Network from "gi://AstalNetwork"
 import { Gtk } from "ags/gtk4"
@@ -94,7 +95,7 @@ export default function NetworkTab({ visible }) {
           css={rotation((r) => `transform: rotate(${r}deg);`)}
         >
           <box>
-            <Gtk.Image
+            <ZoomImage
               iconName="update-symbolic"
               pixelSize={14}
               visible={scanningBinding((s) => !s)}
@@ -186,7 +187,7 @@ function AccessPoint(ap) {
     >
       <box spacing={8}>
         {menu}
-        <Gtk.Image
+        <ZoomImage
           class="networkIcon"
           pixelSize={16}
           iconName={createComputed((get) => {
@@ -206,7 +207,7 @@ function AccessPoint(ap) {
         <label label="Connecting…" visible={isConnectingBinding} />
         <label label="Connected" visible={isActiveBinding} />
         {ap.flags !== 0 && (
-          <Gtk.Image
+          <ZoomImage
             pixelSize={14}
             iconName="network-wireless-encrypted-symbolic"
           />

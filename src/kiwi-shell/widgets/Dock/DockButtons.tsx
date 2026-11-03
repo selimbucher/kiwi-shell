@@ -1,10 +1,11 @@
 import { Gtk, Gdk } from "ags/gtk4"
+import { ZoomImage } from "../zoom"
 import { createState, onCleanup } from "ags"
 import Gio from "gi://Gio"
 import GLib from "gi://GLib"
 import { conf } from "../config"
 import { playSound } from "../sound"
-import { HOME, launchBounce, type Hop, type MenuSlot } from "./dock-state"
+import { HOME, launchBounce, dockIconSize, type Hop, type MenuSlot } from "./dock-state"
 import { openUri, openPath, emptyTrash, letGoOnClose } from "./dock-utils"
 import { ContextMenu } from "../ContextMenu"
 import { openChoicePrompt } from "../prompts"
@@ -80,9 +81,9 @@ export function HomeFolderButton({ menuSlot }: { menuSlot: MenuSlot }) {
             >
                 <box orientation={Gtk.Orientation.VERTICAL}>
                     {menu}
-                    <Gtk.Image
+                    <ZoomImage
                         iconName="user-home"
-                        pixelSize={conf.as(conf => conf.dock_icon_size)}
+                        pixelSize={dockIconSize}
                         class="dock-app-icon"
                     />
                 </box>
@@ -210,9 +211,9 @@ export function TrashButton({ menuSlot }: { menuSlot: MenuSlot }) {
             >
                 <box orientation={Gtk.Orientation.VERTICAL}>
                     {menu}
-                    <Gtk.Image
+                    <ZoomImage
                         iconName={trashEmpty.as(e => e ? "user-trash" : "user-trash-full")}
-                        pixelSize={conf.as(conf => conf.dock_icon_size)}
+                        pixelSize={dockIconSize}
                         class="dock-app-icon"
                     />
                 </box>

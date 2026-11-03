@@ -1,4 +1,5 @@
 import { logger } from "../../log"
+import { ZoomImage } from "../zoom"
 const log = logger("mission-control")
 import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
@@ -1432,7 +1433,7 @@ class Scene {
     private makePlus(): Gtk.Button {
         const plus = new Gtk.Button({ cssClasses: ["mc-add", "mc-target"], focusable: false })
         const disc = new Gtk.Box({ cssClasses: ["mc-add-disc"], halign: Gtk.Align.CENTER, valign: Gtk.Align.CENTER })
-        disc.append(new Gtk.Image({ iconName: "list-add-symbolic", pixelSize: 16 }))
+        disc.append(new ZoomImage({ iconName: "list-add-symbolic", pixelSize: 16 }))
         plus.set_child(disc)
         plus.set_size_request(PEEK_SHOWN, this.size.height)
         plus.connect("clicked", () => {
@@ -2077,7 +2078,7 @@ function CloseButton({ monitor }: { monitor: Accessor<Gdk.Monitor> }) {
                         void removeDesktop(v.monitor.name, target.desktop).then(refresh)
                 }}
             >
-                <Gtk.Image iconName="window-close-symbolic" pixelSize={11} />
+                <ZoomImage iconName="window-close-symbolic" pixelSize={11} />
             </button>
         </window>
     )

@@ -1,4 +1,5 @@
 import { createState, onCleanup, type Accessor } from "ags"
+import { ZoomImage } from "../../../zoom"
 import { Gtk, Gdk } from "ags/gtk4"
 import Gio from "gi://Gio"
 import Pango from "gi://Pango"
@@ -202,7 +203,7 @@ function WallpaperGrid() {
                     const add = new Gtk.Button({
                         cssClasses: ["wallpaper-thumb", "add"],
                         tooltipText: "Choose a picture…",
-                        child: new Gtk.Image({ iconName: "list-add-symbolic", pixelSize: 16 }),
+                        child: new ZoomImage({ iconName: "list-add-symbolic", pixelSize: 16 }),
                     })
                     add.connect("clicked", promptWallpaper)
                     self.append(add)

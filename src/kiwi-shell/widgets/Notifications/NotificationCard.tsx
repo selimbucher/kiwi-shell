@@ -1,4 +1,5 @@
 import { Gtk, Gdk } from "ags/gtk4"
+import { ZoomImage } from "../zoom"
 import Notifd from "gi://AstalNotifd"
 import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
@@ -88,7 +89,7 @@ function Header() {
 function Empty() {
     return (
         <box class="nc-empty" orientation={Gtk.Orientation.VERTICAL} spacing={6}>
-            <Gtk.Image iconName="notifications-symbolic" pixelSize={22} class="nc-empty-icon" />
+            <ZoomImage iconName="notifications-symbolic" pixelSize={22} class="nc-empty-icon" />
             <label class="nc-empty-text" label="No Notifications" />
         </box>
     ) as Gtk.Widget
@@ -112,7 +113,7 @@ function GroupHeader({ row }: { row: Accessor<GroupRow> }) {
                 <label label="Show Less" />
             </button>
             <button class="nc-round" onClicked={() => dismissAll(row().members)}>
-                <Gtk.Image iconName="window-close-symbolic" pixelSize={10} />
+                <ZoomImage iconName="window-close-symbolic" pixelSize={10} />
             </button>
         </box>
     ) as Gtk.Widget
@@ -242,7 +243,7 @@ function Card({ row }: { row: Accessor<CardRow> }) {
                 valign={Gtk.Align.START}
                 onClicked={() => dismissAll(row().members)}
             >
-                <Gtk.Image iconName="window-close-symbolic" pixelSize={9} />
+                <ZoomImage iconName="window-close-symbolic" pixelSize={9} />
             </button>
         </overlay>
     ) as Gtk.Widget
@@ -258,7 +259,7 @@ function ActionButton(n: Notifd.Notification, action: Notifd.Action, row: Access
             }}
         >
             {n.actionIcons
-                ? <Gtk.Image iconName={action.id} pixelSize={14} />
+                ? <ZoomImage iconName={action.id} pixelSize={14} />
                 : <label
                     label={action.label}
                     ellipsize={Pango.EllipsizeMode.END}
@@ -425,7 +426,7 @@ function picture(path: string, size: number, cssClass: string, fit: Gtk.ContentF
 function iconWidget(source: Source, size: number, cssClass: string): Gtk.Widget {
     if ("path" in source) return picture(source.path, size, cssClass, Gtk.ContentFit.CONTAIN)
     return (
-        <Gtk.Image
+        <ZoomImage
             iconName={source.name}
             pixelSize={size}
             class={cssClass}

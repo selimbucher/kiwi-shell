@@ -1,4 +1,5 @@
 import { Gtk, Gdk } from "ags/gtk4"
+import { ZoomImage } from "../../zoom"
 import { createBinding, createComputed, createMemo, createState, onCleanup, With, type Accessor } from "ags"
 import GLib from "gi://GLib"
 import GObject from "gi://GObject"
@@ -317,7 +318,7 @@ function Cover({ player, size }: { player: Mpris.Player; size: number }) {
                 {(now: Gdk.Texture | typeof NO_COVER | null) => {
                     const waited = before === null
                     before = now
-                    if (now === NO_COVER) return <Gtk.Image class="island-cover-none" gicon={playerPids.as(() => giconForEntry(entryOf(player)))}
+                    if (now === NO_COVER) return <ZoomImage class="island-cover-none" gicon={playerPids.as(() => giconForEntry(entryOf(player)))}
                         pixelSize={size} /> as Gtk.Widget
                     const widget = new CoverArt()
                     widget.size = size

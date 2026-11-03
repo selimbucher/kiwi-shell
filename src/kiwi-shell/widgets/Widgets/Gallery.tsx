@@ -8,7 +8,7 @@ import { With, createComputed, createRoot, createState, onCleanup, type Accessor
 import { conf } from "../config"
 import { LAYER, themeClasses, primaryCss } from "../services/theme"
 import { destroyWindow } from "../monitors"
-import { Zoomed, zoomOf } from "../zoom"
+import { ZoomImage, Zoomed, zoomOf } from "../zoom"
 import { KINDS, addWidget, editingWidgets, setEditingWidgets, sizeOf, type Kind, type WidgetSize, type WidgetSpec } from "./model"
 import { WidgetFrame } from "./Frame"
 
@@ -77,7 +77,7 @@ function Preview({ kind, size }: { kind: Kind, size: WidgetSize }) {
             <overlay>
                 {slot}
                 <box $type="overlay" class="gallery-add" halign={Gtk.Align.START} valign={Gtk.Align.START} canTarget={false}>
-                    <Gtk.Image iconName="list-add-symbolic" pixelSize={12} />
+                    <ZoomImage iconName="list-add-symbolic" pixelSize={12} />
                 </box>
             </overlay>
         </button>
@@ -213,7 +213,7 @@ export function Gallery({ monitor, columnWidth }: { monitor: Accessor<Gdk.Monito
         >
             <Zoomed>
                 <box hexpand vexpand>
-                    <box hexpand vexpand marginEnd={columnWidth}>
+                    <box hexpand vexpand>
                         <box class="gallery" halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER} hexpand vexpand
                             widthRequest={narrow(n => n ? NARROW_WIDTH : PANEL_WIDTH)} heightRequest={PANEL_HEIGHT}
                             $={(self: Gtk.Box) => { panel = self }}>
@@ -232,7 +232,7 @@ export function Gallery({ monitor, columnWidth }: { monitor: Accessor<Gdk.Monito
                                                 <button class={shown(s => s?.name === a.name ? "gallery-app selected" : "gallery-app")}
                                                     onClicked={() => setChosen(a.name)}>
                                                     <box spacing={8}>
-                                                        <Gtk.Image iconName={a.icon} pixelSize={16} />
+                                                        <ZoomImage iconName={a.icon} pixelSize={16} />
                                                         <label label={a.name} xalign={0} ellipsize={Pango.EllipsizeMode.END} />
                                                     </box>
                                                 </button>

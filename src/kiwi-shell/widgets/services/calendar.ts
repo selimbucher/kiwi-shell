@@ -3,6 +3,7 @@ import Gio from "gi://Gio"
 import { createState } from "ags"
 
 import { logger } from "../../log"
+import { notify } from "../../notify"
 import { minuteNow } from "./minuteClock"
 
 const log = logger("calendar")
@@ -459,6 +460,9 @@ export function openCalendar(at?: { date?: GLib.DateTime, event?: CalendarEvent 
         ?? Gio.AppInfo.get_default_for_type("text/calendar", false)
     if (!app) {
         log.info("no calendar app to open")
+        notify("No Calendar App",
+            "Install GNOME Calendar to open events and dates from here.",
+            { icon: "x-office-calendar-symbolic" })
         return
     }
     const exe = app.get_executable()

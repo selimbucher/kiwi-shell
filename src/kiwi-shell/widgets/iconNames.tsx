@@ -1,5 +1,6 @@
 import Gtk from "gi://Gtk"
 import { createState, createComputed } from "ags"
+import { ZoomImage } from "./zoom"
 
 const gtkSettings = Gtk.Settings.get_default()
 
@@ -28,7 +29,7 @@ export function Icon({ iconName, pixelSize = 64, class: className = "", visible 
     })
 
     return (
-        <Gtk.Image
+        <ZoomImage
             visible={resolvedVisible}
             class={className}
             iconName={resolvedName}

@@ -2,7 +2,7 @@ import app from "ags/gtk4/app"
 import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { createState, createComputed, createRoot, onCleanup } from "ags"
 import { destroyWindow } from "../monitors"
-import { Zoomed, zoomOf } from "../zoom"
+import { ZoomImage, Zoomed, zoomOf } from "../zoom"
 import { readFile, writeFileAsync } from "ags/file"
 import Gio from "gi://Gio"
 import GioUnix from "gi://GioUnix"
@@ -846,8 +846,8 @@ function DesktopIcon({ item }: { item: DesktopItem }) {
             {menu}
 
             {item.gicon
-                ? <Gtk.Image gicon={item.gicon} pixelSize={48} class="desktop-item-icon" halign={Gtk.Align.CENTER} />
-                : <Gtk.Image iconName="text-x-generic" pixelSize={48} class="desktop-item-icon" halign={Gtk.Align.CENTER} />}
+                ? <ZoomImage gicon={item.gicon} pixelSize={48} class="desktop-item-icon" halign={Gtk.Align.CENTER} />
+                : <ZoomImage iconName="text-x-generic" pixelSize={48} class="desktop-item-icon" halign={Gtk.Align.CENTER} />}
             <label
                 class="desktop-item-label"
                 visible={renaming((r) => !r)}

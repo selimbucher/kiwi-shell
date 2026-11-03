@@ -33,6 +33,12 @@ export function setDockOverlap(connector: string, px: number) {
 // when the dock is off. The desktop's icons keep out of it in every mode, the
 // auto-hide dock being up exactly when the desktop is in view.
 export const [dockBands, setDockBands] = createState<Record<string, number>>({})
+
+// The dock icon size actually rendered: the configured size, shrunk only when
+// a very large interface scale (or a very full dock) would otherwise push the
+// pill past the screen edge. Dock.tsx computes it per monitor; in practice the
+// primary dock drives it.
+export const [dockIconSize, setDockIconSize] = createState<number>(conf.peek().dock_icon_size)
 export function setDockBand(connector: string, px: number) {
     const now = dockBands.peek()
     if ((now[connector] ?? 0) !== px) setDockBands({ ...now, [connector]: px })

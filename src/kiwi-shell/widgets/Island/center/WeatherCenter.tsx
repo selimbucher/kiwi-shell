@@ -1,5 +1,5 @@
 import { Gtk } from "ags/gtk4"
-import { Zoomed } from "../../zoom"
+import { ZoomImage, Zoomed } from "../../zoom"
 import { With } from "ags"
 import GLib from "gi://GLib"
 
@@ -40,7 +40,7 @@ function Details({ f }: { f: Forecast }) {
                 {hoursFrom(f, 6).map((h, i) => (
                     <box orientation={Gtk.Orientation.VERTICAL} class="hour">
                         <label class="when" label={hourLabel(h.time, i === 0)} />
-                        <Gtk.Image iconName={condition(h.code, h.day).icon} pixelSize={18} />
+                        <ZoomImage iconName={condition(h.code, h.day).icon} pixelSize={18} />
                         <label class="degrees" label={deg(h.degrees)} />
                     </box>
                 ))}
@@ -49,7 +49,7 @@ function Details({ f }: { f: Forecast }) {
                 {days.map((d, i) => (
                     <box class="day">
                         <label class="when" label={dayLabel(d.date, i === 0)} xalign={0} widthChars={6} />
-                        <Gtk.Image iconName={condition(d.code).icon} pixelSize={16} />
+                        <ZoomImage iconName={condition(d.code).icon} pixelSize={16} />
                         <label class="low" label={deg(d.low)} widthChars={4} xalign={1} />
                         {/* the day's range on the week's scale, as Apple Weather draws it */}
                         <box class="scale" hexpand valign={Gtk.Align.CENTER}>
@@ -72,10 +72,10 @@ export default function WeatherCenter() {
                 <With value={forecast}>
                     {(f: Forecast | null) => f
                         ? <box spacing={5}>
-                            <Gtk.Image iconName={condition(f.now.code, f.now.day).icon} pixelSize={16} />
+                            <ZoomImage iconName={condition(f.now.code, f.now.day).icon} pixelSize={16} />
                             <label label={deg(f.now.degrees)} />
                         </box>
-                        : <Gtk.Image iconName="weather-few-clouds-symbolic" pixelSize={16} />}
+                        : <ZoomImage iconName="weather-few-clouds-symbolic" pixelSize={16} />}
                 </With>
             </box>
             <popover class="island-weather-popover" hasArrow={false} autohide>

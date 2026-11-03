@@ -50,6 +50,11 @@
     padding: 14px;
 }
 
+// the batteries widget crowds its edges at the wide and large sizes
+.widget-content.batteries {
+    padding: 16px 18px;
+}
+
 .widget-broken {
     color: var(--k-fg-2);
     font-size: $callout;
@@ -537,15 +542,16 @@ $calendar-red: #ff453a;
 }
 
 .gallery-item {
-    padding: 0;
+    // room for the + over its corner, as padding not margin so the badge
+    // (pulled up-left into it) stays inside the button and a click on it adds
+    padding: 6px 0 0 6px;
     min-height: 0;
     border-radius: 20px;
     background: none;
     background-image: none;
     border: none;
     box-shadow: none;
-    // room for the + over its corner
-    margin: 6px 0 0 6px;
+    margin: 0;
     transition: transform 160ms ease;
 
     &:hover {

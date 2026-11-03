@@ -1,9 +1,31 @@
 import GObject from "gi://GObject"
 import Gsk from "gi://Gsk"
+import Gio from "gi://Gio"
 import { Astal, Gdk, Gtk } from "ags/gtk4"
 import app from "ags/gtk4/app"
 
 import { conf } from "./config"
+
+// ─── When a display's zoom may have changed ─────────────────────────────────────
+// Icons look their resolution up from their zoom (below), so they're told when
+// any of what decides it changes. Coalesced to a microtask: by then every box
+// has followed and set its own zoom, so each listener reads a settled tree.
+
+const zoomChangeCbs = new Set<() => void>()
+/** Runs `cb` whenever a display's zoom may have changed; returns an unsubscribe. */
+export function onZoomChange(cb: () => void): () => void {
+    zoomChangeCbs.add(cb)
+    return () => { zoomChangeCbs.delete(cb) }
+}
+let emitQueued = false
+function emitZoomChange() {
+    if (emitQueued) return
+    emitQueued = true
+    Promise.resolve().then(() => {
+        emitQueued = false
+        for (const cb of [...zoomChangeCbs]) { try { cb() } catch (e) { console.error(e) } }
+    })
+}
 
 // ─── kiwi's own size on each display ──────────────────────────────────────────
 // Apart from the apps': a display at scale 1, for more room for apps, keeps
@@ -166,6 +188,7 @@ const ZoomBox = GObject.registerClass(
             }
             const content = this.get_first_child()
             if (content) again(content)
+            emitZoomChange()
         }
     },
 )
@@ -226,3 +249,87 @@ export function zoomOfWidget(widget: Gtk.Widget): number {
     const zoom = widget.get_ancestor(ZoomBox.$gtype) as ZoomBox | null
     return zoom?.zoom ?? 1
 }
+
+// ─── Icons at the zoom's resolution ─────────────────────────────────────────────
+// GTK rasterises an icon to a texture at the widget's integer scale factor and
+// then the zoom transform stretches that bitmap: on a display kept at scale 1
+// and zoomed (an external monitor at 1.25), every icon blurs, while text and
+// borders — drawn through the transform, not from a bitmap — stay crisp. This
+// is a Gtk.Image that, when the size it's drawn at asks for more pixels than
+// the scale factor supplies, looks the icon up at a higher scale and draws that
+// paintable instead, sharp under the transform. Symbolic icons are still
+// recoloured from the CSS (GtkImage does that for any symbolic paintable). At
+// scale 1 with no zoom — or wherever the scale factor already covers the zoom —
+// it is a plain Gtk.Image on the icon-name path, untouched. A drop-in: it takes
+// the same icon-name / gicon / pixel-size, so a site swaps the tag and nothing
+// else.
+export const ZoomImage = GObject.registerClass(
+    { GTypeName: "KiwiZoomImage" },
+    class ZoomImage extends Gtk.Image {
+        private srcName: string | null = null
+        private srcGicon: Gio.Icon | null = null
+        private applying = false
+        private appliedKey = ""
+        private unsub: (() => void) | null = null
+
+        constructor(params?: Partial<Gtk.Image.ConstructorProps>) {
+            super(params)
+            // an imperative `new ZoomImage({ iconName })` set it through super
+            this.srcName = this.get_icon_name()
+            this.srcGicon = this.get_gicon()
+
+            this.connect("notify::icon-name", () => {
+                if (this.applying) return
+                const name = this.get_icon_name()
+                if (name) { this.srcName = name; this.srcGicon = null }
+                else if (!this.srcGicon) this.srcName = null
+                this.appliedKey = ""
+                this.apply()
+            })
+            this.connect("notify::gicon", () => {
+                if (this.applying) return
+                const gicon = this.get_gicon()
+                if (gicon) { this.srcGicon = gicon; this.srcName = null }
+                else if (!this.srcName) this.srcGicon = null
+                this.appliedKey = ""
+                this.apply()
+            })
+            this.connect("notify::pixel-size", () => { this.appliedKey = ""; this.apply() })
+            this.connect("notify::scale-factor", () => { this.appliedKey = ""; this.apply() })
+            this.connect("map", () => {
+                if (!this.unsub) this.unsub = onZoomChange(() => this.apply())
+                this.apply()
+            })
+            this.connect("unmap", () => { this.unsub?.(); this.unsub = null })
+        }
+
+        private apply() {
+            const scale = this.get_scale_factor()
+            const target = Math.ceil(scale * zoomOfWidget(this))
+            // native: GTK's own rasterisation at the scale factor is enough
+            if (target <= scale || (!this.srcName && !this.srcGicon)) {
+                const key = `n:${this.srcName ?? ""}:${this.srcGicon ? "g" : ""}`
+                if (key === this.appliedKey) return
+                this.appliedKey = key
+                this.applying = true
+                if (this.srcName) this.set_from_icon_name(this.srcName)
+                else if (this.srcGicon) this.set_from_gicon(this.srcGicon)
+                this.applying = false
+                return
+            }
+            const display = this.get_display()
+            if (!display) return
+            const size = this.get_pixel_size() > 0 ? this.get_pixel_size() : 16
+            const key = `h:${target}:${size}:${this.srcName ?? this.srcGicon?.to_string() ?? ""}`
+            if (key === this.appliedKey) return
+            const theme = Gtk.IconTheme.get_for_display(display)
+            const paintable = this.srcName
+                ? theme.lookup_icon(this.srcName, null, size, target, this.get_direction(), 0)
+                : theme.lookup_by_gicon(this.srcGicon!, size, target, this.get_direction(), 0)
+            this.appliedKey = key
+            this.applying = true
+            this.set_from_paintable(paintable)
+            this.applying = false
+        }
+    },
+)

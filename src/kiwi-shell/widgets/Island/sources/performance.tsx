@@ -1,4 +1,5 @@
 import { Gtk } from "ags/gtk4"
+import { ZoomImage } from "../../zoom"
 import { createComputed, createState, onCleanup, type Accessor } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import GLib from "gi://GLib"
@@ -509,7 +510,7 @@ const iconOf = (group: Group | undefined) =>
     group?.entry ? giconForEntry(group.entry) : Gio.ThemedIcon.new("am-cpu-symbolic")
 
 export function GroupIcon({ group, size, cssClass = "" }: { group: Group | undefined; size: number; cssClass?: string }) {
-    return <Gtk.Image class={cssClass} gicon={iconOf(group)} pixelSize={size} />
+    return <ZoomImage class={cssClass} gicon={iconOf(group)} pixelSize={size} />
 }
 
 // an app's windows, by the app its process is part of
@@ -541,7 +542,7 @@ function Top({ groups, value }: { groups: Accessor<Group[]>; value: (g: Group) =
                 const quittable = (g: Group | undefined) => !!g?.entry && windowsOf(g).length > 0
                 return (
                     <box class="app" visible={group(g => !!g)}>
-                        <Gtk.Image gicon={group(iconOf)} pixelSize={18} />
+                        <ZoomImage gicon={group(iconOf)} pixelSize={18} />
                         <label class="name" label={group(g => g?.name ?? "")} xalign={0} hexpand
                             ellipsize={Pango.EllipsizeMode.END} maxWidthChars={1} />
                         <label class="value" label={group(g => g ? value(g) : "")} />
@@ -554,7 +555,7 @@ function Top({ groups, value }: { groups: Accessor<Group[]>; value: (g: Group) =
                                 const g = rows()[i]
                                 if (g) for (const client of windowsOf(g)) closeWindow(clientSelector(client))
                             }}>
-                            <Gtk.Image iconName="window-close-symbolic" pixelSize={10} />
+                            <ZoomImage iconName="window-close-symbolic" pixelSize={10} />
                         </button>
                     </box>
                 )
@@ -623,7 +624,7 @@ function Card({ tone, icon, title, value, line, children }: {
     return (
         <box class={`island-card island-performance ${tone}`} orientation={Gtk.Orientation.VERTICAL}>
             <box class="head">
-                <Gtk.Image class="symbol" iconName={icon} pixelSize={22} valign={Gtk.Align.CENTER} />
+                <ZoomImage class="symbol" iconName={icon} pixelSize={22} valign={Gtk.Align.CENTER} />
                 <box orientation={Gtk.Orientation.VERTICAL} hexpand valign={Gtk.Align.CENTER}>
                     <label class="title" label={title} xalign={0} />
                     <label class="stats" label={line} xalign={0} />
@@ -636,7 +637,7 @@ function Card({ tone, icon, title, value, line, children }: {
 }
 
 const Symbol = ({ icon, tone }: { icon: string; tone: string }) =>
-    <Gtk.Image class={`island-symbol ${tone}`} iconName={icon} pixelSize={16} valign={Gtk.Align.CENTER} /> as Gtk.Widget
+    <ZoomImage class={`island-symbol ${tone}`} iconName={icon} pixelSize={16} valign={Gtk.Align.CENTER} /> as Gtk.Widget
 
 const Value = ({ text, tone }: { text: Accessor<string> | string; tone: string }) =>
     <label class={`island-value ${tone}`} label={text} valign={Gtk.Align.CENTER} /> as Gtk.Widget

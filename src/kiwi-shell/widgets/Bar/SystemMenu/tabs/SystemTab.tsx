@@ -1,4 +1,5 @@
 import { Gtk } from "ags/gtk4"
+import { ZoomImage } from "../../../zoom"
 import Pango from "gi://Pango"
 import { execAsync } from "ags/process"
 import { createState, createBinding, createComputed, With, type Accessor } from "ags"
@@ -139,7 +140,7 @@ function OptionButtons(){
           class="bar-button"
           onClicked={() => setPpOpen(v => !v)}
         >
-          <Gtk.Image
+          <ZoomImage
             class="arrow-button"
             iconName={ppOpen(v => v ? "go-up-symbolic" : "go-down-symbolic")}
             pixelSize={16}
@@ -192,7 +193,7 @@ function OptionButtons(){
           }}
         >
 
-          <Gtk.Image iconName={dontDisturb.as(b => b ? "notifications-disabled-symbolic" : "notifications-symbolic")} pixelSize={17}/>
+          <ZoomImage iconName={dontDisturb.as(b => b ? "notifications-disabled-symbolic" : "notifications-symbolic")} pixelSize={17}/>
         </button>
         <button class="option"
         tooltipText="Kiwi Settings"
@@ -205,7 +206,7 @@ function OptionButtons(){
           closeSystemMenu()
         }}
         >
-          <Gtk.Image iconName="preferences-system-symbolic" pixelSize={17}/>
+          <ZoomImage iconName="preferences-system-symbolic" pixelSize={17}/>
         </button>
       </box>
     </box>
@@ -296,7 +297,7 @@ function AudioDevices({ close }) {
                 maxWidthChars={24}
                 ellipsize={Pango.EllipsizeMode.END}
               />
-              <Gtk.Image
+              <ZoomImage
                 class="check"
                 iconName="object-select-symbolic"
                 pixelSize={14}
@@ -321,7 +322,7 @@ function VolumeSlider() {
             return (
               <box class="slider-container">
                 <button class="bar-button" sensitive={false}>
-                  <Gtk.Image class="icon volumeIcon" pixelSize={16} iconName="audio-volume-muted-symbolic" />
+                  <ZoomImage class="icon volumeIcon" pixelSize={16} iconName="audio-volume-muted-symbolic" />
                 </button>
                 <slider hexpand={true} draw_value={false} min={0} max={1} step={0.01} value={0} sensitive={false}/>
               </box>
@@ -334,7 +335,7 @@ function VolumeSlider() {
           return (
             <box class="slider-container">
               <button class="bar-button" onClicked={() => { spk.mute = !spk.mute }}>
-                <Gtk.Image
+                <ZoomImage
                   class="icon volumeIcon"
                   pixelSize={16}
                   iconName={createComputed((get) => volumeIcon(get(volB), get(muteB)))}
@@ -355,7 +356,7 @@ function VolumeSlider() {
                 }}
               />
               <button class="bar-button audio-devices-toggle" onClicked={() => setDevOpen(v => !v)}>
-                <Gtk.Image
+                <ZoomImage
                   class="arrow-button"
                   iconName={devOpen(v => v ? "go-up-symbolic" : "go-down-symbolic")}
                   pixelSize={16}

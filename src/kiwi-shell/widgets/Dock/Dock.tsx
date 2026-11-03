@@ -7,7 +7,7 @@ import { Astal, Gtk, Gdk } from "ags/gtk4"
 import { destroyWindow, primaryGdkMonitor, remeasureOn } from "../monitors"
 import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
-import { hyprland, clientsBinding, list, unpinnedList, restoring, setDockOverlap, setDockBand, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
+import { hyprland, clientsBinding, list, unpinnedList, restoring, setDockOverlap, setDockBand, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, dockIconSize, setDockIconSize, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
@@ -194,6 +194,25 @@ function dockCss(icon: number, margin: number, primary: string, zoom: number) {
     `
 }
 
+// The pill lays out in the zoomed box at screenWidth/zoom logical px and is
+// then drawn zoom× larger; a very large interface scale (or a very full dock)
+// made it wider than the screen, so its ends were clipped. Shrink the icon
+// just enough to fit — never past the set size, never below a floor — the way
+// macOS's dock does. A no-op at ordinary sizes, so no change until it would
+// otherwise be cut off.
+const MIN_DOCK_ICON = 22
+function fitIconSize(icon: number, zoom: number, cells: number, width: number, fullWidth: boolean): number {
+    if (!width || zoom <= 0 || cells <= 0) return icon
+    const gutter = fullWidth ? 8 : 24
+    const avail = width / zoom - 2 * gutter
+    // padX (≈0.4·icon both sides) + cells × cell (≈1.12·icon) + group spacers
+    // and a spare cell for safety (≈1.9·icon); the pill has no padX in taskbar
+    // mode
+    const denom = 1.12 * cells + (fullWidth ? 1.12 : 2.3)
+    const fit = Math.floor(avail / denom)
+    return Math.max(MIN_DOCK_ICON, Math.min(icon, fit))
+}
+
 // ─── Dock ─────────────────────────────────────────────────────────────────────
 
 const UNPINNED_EXIT_DELAY_MS = 500
@@ -231,6 +250,23 @@ const EDGE_BAND_PX = 8
 const SIDE_SLACK_PX = 24
 
 export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
+    // the icon size the pill actually uses, shrunk to fit the screen when a
+    // very large interface scale would otherwise clip it (dock-state shares it
+    // with the icon widgets; the css below uses the same value so padding,
+    // radius and dots shrink with it)
+    const effectiveIcon = createComputed(get => {
+        const c = get(conf)
+        const cells = get(list).length + get(unpinnedList).length
+            + (c.dock_home ? 1 : 0) + (c.dock_trash ? 1 : 0)
+        return fitIconSize(c.dock_icon_size, zoomOf(gdkmonitor), cells,
+            gdkmonitor.get_geometry().width, c.dock_full_width)
+    })
+    const pushIconSize = () => {
+        if (dockIconSize.peek() !== effectiveIcon.peek()) setDockIconSize(effectiveIcon.peek())
+    }
+    pushIconSize()
+    onCleanup(effectiveIcon.subscribe(pushIconSize))
+
     // Each popover of the dock (a menu, a flyout) says for itself whether it
     // is open: one flag shared between them was left wrong by one opening as
     // another closed, or by one going away with its icon while open.
@@ -569,7 +605,7 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             namespace={LAYER.dock}
             css={createComputed(get => {
                 const c = get(conf)
-                return dockCss(c.dock_icon_size, c.dock_margin, c.primary_color, zoomOf(gdkmonitor))
+                return dockCss(get(effectiveIcon), c.dock_margin, c.primary_color, zoomOf(gdkmonitor))
             })}
             name="ags-dock"
             class={createComputed(get => {

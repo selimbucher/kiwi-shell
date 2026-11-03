@@ -1,4 +1,5 @@
 import AstalTray from "gi://AstalTray"
+import { ZoomImage } from "../zoom"
 import { createBinding, For, onCleanup } from "ags"
 import Gtk from "gi://Gtk?version=4.0"
 import GLib from "gi://GLib?version=2.0"
@@ -105,7 +106,7 @@ function TrayIcon({item}){
     const className = isSystemIcon ? "tray-icon system" : "tray-icon"
 
     return (
-        <Gtk.Image
+        <ZoomImage
             class={createBinding(item, 'icon-name').as((name) => className+' icon-'+name)}
             gicon={createBinding(item, 'gicon')}
             pixelSize={16}

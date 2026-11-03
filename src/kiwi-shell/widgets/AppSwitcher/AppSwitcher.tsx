@@ -17,7 +17,7 @@ import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { applyBinds, currentBinds, registerBindSetup, closeWindow, clientSelector, type BindOp } from "../../hypr"
 import { shortcuts, combo, releaseCombos, heldModifiers, type Shortcut } from "../../shortcuts"
 import { globalShortcut } from "../services/globalShortcuts"
-import { Zoomed, zoomOf, zoomOfWidget } from "../zoom"
+import { ZoomImage, Zoomed, zoomOf, zoomOfWidget } from "../zoom"
 import { isOpen as missionControlOpen } from "../MissionControl/MissionControl"
 
 export const [isVisible, setVisibility] = createState(false)
@@ -342,7 +342,7 @@ function SwitcherClose({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
                 settleClose()
                 if (client) closeClientFromSwitcher(client)
             }}>
-            <Gtk.Image iconName="window-close-symbolic" pixelSize={11} />
+            <ZoomImage iconName="window-close-symbolic" pixelSize={11} />
         </button>
     ) as Gtk.Button
     const fixed = new Gtk.Fixed({ hexpand: true, vexpand: true })

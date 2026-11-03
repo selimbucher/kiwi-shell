@@ -1,4 +1,5 @@
 import { Gtk } from "ags/gtk4"
+import { ZoomImage } from "../zoom"
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
 import Pango from "gi://Pango"
@@ -80,7 +81,7 @@ function Ring({ battery, size, icon }: { battery: Battery, size: number, icon: n
         <overlay class="battery-ring" halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER}
             tooltipText={`${battery.of ? `${battery.of}, ` : ""}${battery.name}: ${percent(battery)}${timeLeft(battery) ? `, ${timeLeft(battery)}` : ""}`}>
             {area}
-            <Gtk.Image $type="overlay" class="battery-icon" gicon={Gio.ThemedIcon.new_from_names(battery.icon)} pixelSize={icon}
+            <ZoomImage $type="overlay" class="battery-icon" gicon={Gio.ThemedIcon.new_from_names(battery.icon)} pixelSize={icon}
                 halign={Gtk.Align.CENTER} valign={Gtk.Align.CENTER} />
         </overlay>
     )
@@ -134,7 +135,7 @@ function History({ battery }: { battery: Battery }) {
 function Empty() {
     return (
         <box orientation={Gtk.Orientation.VERTICAL} spacing={6} valign={Gtk.Align.CENTER} halign={Gtk.Align.CENTER} vexpand hexpand>
-            <Gtk.Image class="battery-none-icon" iconName="battery-missing-symbolic" pixelSize={26} />
+            <ZoomImage class="battery-none-icon" iconName="battery-missing-symbolic" pixelSize={26} />
             <label class="battery-none" label="No Batteries" />
         </box>
     )

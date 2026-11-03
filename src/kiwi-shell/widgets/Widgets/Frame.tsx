@@ -1,4 +1,5 @@
 import { Gtk, Gdk } from "ags/gtk4"
+import { ZoomImage } from "../zoom"
 import GLib from "gi://GLib"
 import GObject from "gi://GObject"
 import { createComputed, createRoot, onCleanup, type Accessor } from "ags"
@@ -53,7 +54,7 @@ function Broken({ name }: { name: string }) {
     return (
         <box class="widget-content widget-broken" orientation={Gtk.Orientation.VERTICAL} spacing={4}
             valign={Gtk.Align.CENTER} halign={Gtk.Align.CENTER} hexpand vexpand>
-            <Gtk.Image iconName="dialog-warning-symbolic" pixelSize={20} />
+            <ZoomImage iconName="dialog-warning-symbolic" pixelSize={20} />
             <label label={`${name} can't be shown`} wrap justify={Gtk.Justification.CENTER} />
             <label class="widget-broken-hint" label="Check its entry in config.json." wrap
                 justify={Gtk.Justification.CENTER} />
@@ -115,7 +116,7 @@ export function WidgetFrame({ spec, preview = false }: { spec: Accessor<WidgetSp
             <button $type="overlay" class={editingWidgets(e => e ? "widget-remove shown" : "widget-remove")}
                 canTarget={editingWidgets} focusable={editingWidgets} halign={Gtk.Align.START} valign={Gtk.Align.START}
                 tooltipText="Remove Widget" onClicked={() => removeWidget(spec.peek().id)}>
-                <Gtk.Image iconName="list-remove-symbolic" pixelSize={10} />
+                <ZoomImage iconName="list-remove-symbolic" pixelSize={10} />
             </button>
         </overlay>
     ) as Gtk.Widget
@@ -145,9 +146,19 @@ function arrange(frame: Gtk.Widget, content: Gtk.Widget, spec: Accessor<WidgetSp
     drag.connect("drag-end", () => frame.remove_css_class("dragged"))
     frame.add_controller(drag)
 
-    // the second half: across a small widget, down a wide one
+    // Which side the dragged widget lands on. Not the pointer's half of this
+    // widget — coming in over the far edge then marked the wrong side and you
+    // had to drag all the way across and back. Instead their current order: a
+    // widget from before this one drops after it, one from after drops before,
+    // so hovering anywhere over it is enough and every spot is still reachable
+    // by the widget you drop onto.
     const wide = spec.peek().size !== "small"
-    const after = (x: number, y: number) => wide ? y > height / 2 : x > width / 2
+    const afterFor = (draggedId: string) => {
+        const list = widgetSpecs.peek()
+        const from = list.findIndex(s => s.id === draggedId)
+        const to = list.findIndex(s => s.id === spec.peek().id)
+        return from >= 0 && to >= 0 && from < to
+    }
     const mark = (where: "" | "before" | "after") => {
         frame.remove_css_class("drop-target")
         bar.visible = !!where
@@ -165,22 +176,23 @@ function arrange(frame: Gtk.Widget, content: Gtk.Widget, spec: Accessor<WidgetSp
     drop.set_preload(true)
     drop.connect("accept", (_t, offer: Gdk.Drop) =>
         editingWidgets.peek() && offer.get_formats().contain_gtype(GObject.TYPE_STRING))
-    drop.connect("motion", (target, x, y) => {
+    drop.connect("motion", (target) => {
+        const dragged = String(target.get_value() ?? "")
         // (nowhere to go on itself)
-        if (String(target.get_value() ?? "") === spec.peek().id) {
+        if (dragged === spec.peek().id) {
             mark("")
             return 0
         }
-        mark(after(x, y) ? "after" : "before")
+        mark(afterFor(dragged) ? "after" : "before")
         return Gdk.DragAction.MOVE
     })
     drop.connect("leave", () => mark(""))
-    drop.connect("drop", (_t, dropped: unknown, x, y) => {
+    drop.connect("drop", (_t, dropped: unknown) => {
         mark("")
         const value = String(dropped)
         const id = spec.peek().id
         if (value === id || !widgetSpecs.peek().some(s => s.id === value)) return false
-        if (!after(x, y)) moveWidget(value, id)
+        if (!afterFor(value)) moveWidget(value, id)
         else {
             const list = widgetSpecs.peek().filter(s => s.id !== value)
             moveWidget(value, list[list.findIndex(s => s.id === id) + 1]?.id ?? null)
