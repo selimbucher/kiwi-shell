@@ -89,7 +89,10 @@ export const themeClasses: Accessor<string> = createMemo(() =>
 //     ring of the pane's own anti-aliasing, and it still lets Clear Glass's
 //     barely-there tint (0.12) blur at all.
 
-const IGNORE_ALPHA = 0.05
+// Blur only pixels at least this opaque, so Hyprland doesn't blur the faint
+// anti-aliased edge of a rounded layer into a fizzy halo past its outline.
+// Env-tunable for A/B (KIWI_IGNORE_ALPHA), default 0.05.
+const IGNORE_ALPHA = Number(GLib.getenv("KIWI_IGNORE_ALPHA")) || 0.05
 
 // solid: covers what is behind it, so it is never blurred
 type Rule = { name: string, namespace: string, noAnim?: boolean, solid?: boolean }

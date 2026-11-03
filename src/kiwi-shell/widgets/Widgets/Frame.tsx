@@ -79,7 +79,7 @@ export function WidgetFrame({ spec, preview = false }: { spec: Accessor<WidgetSp
     // (inside its 1px border)
     const frame = (
         <box class={`widget widget-${first.kind} ${first.size}`}
-            overflow={Gtk.Overflow.HIDDEN} hexpand={false} vexpand={false} halign={Gtk.Align.START} valign={Gtk.Align.START}>
+            hexpand={false} vexpand={false} halign={Gtk.Align.START} valign={Gtk.Align.START}>
             {sized(content, width - 2, height - 2)}
         </box>
     ) as Gtk.Widget

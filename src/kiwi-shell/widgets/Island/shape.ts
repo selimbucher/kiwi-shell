@@ -189,6 +189,31 @@ export const IslandShape = GObject.registerClass(
             this.child?.allocate(width, height, baseline, null)
         }
 
+        // The pill's rounded edge is GTK's: the `.island` background and border
+        // (style/island.scss) rasterise analytically through the zoom transform
+        // and stay crisp. Only what the pill holds is clipped to its shape here,
+        // rather than by overflow:HIDDEN round the whole widget — that baked the
+        // pill, edge and all, to an offscreen at the laid-out size, which the
+        // zoom then stretched into a stepped, bright-edged corner (see
+        // widgets/zoom.tsx; the open card rounds its content the same way,
+        // CardMorph below). Clipped to the padding box, inside the 1px panel
+        // border, as the clip it replaces was.
+        vfunc_snapshot(snapshot: Gtk.Snapshot): void {
+            const child = this.child
+            if (!child) return
+            const w = this.get_width(), h = this.get_height()
+            if (w <= 0 || h <= 0) { this.snapshot_child(child, snapshot); return }
+            const inset = 1
+            const r = Math.max(0, (h - 2 * inset) / 2)
+            const corner = new Graphene.Size().init(r, r)
+            const clip = new Gsk.RoundedRect().init(
+                new Graphene.Rect().init(inset, inset, w - 2 * inset, h - 2 * inset),
+                corner, corner, corner, corner)
+            snapshot.push_rounded_clip(clip)
+            this.snapshot_child(child, snapshot)
+            snapshot.pop()
+        }
+
         vfunc_dispose(): void {
             this._ticker?.stop()
             this.child = null

@@ -263,6 +263,11 @@ $calendar-red: #ff453a;
 // the sky of the weather, by day and by night
 .weather-sky {
     color: #fff;
+    // Rounded here (analytically), not by the frame clipping it: a rounded clip
+    // of this layered sky (gradient + overlaid labels) bakes to an offscreen at
+    // the laid-out size and the zoom stretches it, stepping the corner. The
+    // card's inner radius is its 20px less the 1px panel border.
+    border-radius: 19px;
 
     label {
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);

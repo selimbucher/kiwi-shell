@@ -138,7 +138,7 @@ export default function Island({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
 
     // ─── What the island holds ────────────────────────────────────────────
 
-    const shape = new IslandShape({ cssClasses: ["island"], overflow: Gtk.Overflow.HIDDEN, valign: Gtk.Align.CENTER })
+    const shape = new IslandShape({ cssClasses: ["island"], valign: Gtk.Align.CENTER })
 
     const side = (edge: "leading" | "trailing") => {
         const fader = new Fader({ cssClasses: ["island-side", edge], valign: Gtk.Align.CENTER })
