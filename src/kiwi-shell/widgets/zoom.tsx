@@ -268,27 +268,33 @@ export const ZoomImage = GObject.registerClass(
     class ZoomImage extends Gtk.Image {
         private srcName: string | null = null
         private srcGicon: Gio.Icon | null = null
-        private applying = false
+        // what apply() itself last left in icon-name and gicon: a notify raised
+        // inside a handler of the same notify is held until that handler
+        // returns, so apply()'s own change can come in after apply() is done.
+        // The handlers know it by value; a flag set around the call misses it,
+        // and each round would set the icon again, forever
+        private ownName: string | null = null
+        private ownGicon: Gio.Icon | null = null
         private appliedKey = ""
         private unsub: (() => void) | null = null
 
         constructor(params?: Partial<Gtk.Image.ConstructorProps>) {
             super(params)
             // an imperative `new ZoomImage({ iconName })` set it through super
-            this.srcName = this.get_icon_name()
-            this.srcGicon = this.get_gicon()
+            this.srcName = this.ownName = this.get_icon_name()
+            this.srcGicon = this.ownGicon = this.get_gicon()
 
             this.connect("notify::icon-name", () => {
-                if (this.applying) return
                 const name = this.get_icon_name()
+                if (name === this.ownName) return
                 if (name) { this.srcName = name; this.srcGicon = null }
                 else if (!this.srcGicon) this.srcName = null
                 this.appliedKey = ""
                 this.apply()
             })
             this.connect("notify::gicon", () => {
-                if (this.applying) return
                 const gicon = this.get_gicon()
+                if (gicon === this.ownGicon) return
                 if (gicon) { this.srcGicon = gicon; this.srcName = null }
                 else if (!this.srcName) this.srcGicon = null
                 this.appliedKey = ""
@@ -311,10 +317,14 @@ export const ZoomImage = GObject.registerClass(
                 const key = `n:${this.srcName ?? ""}:${this.srcGicon ? "g" : ""}`
                 if (key === this.appliedKey) return
                 this.appliedKey = key
-                this.applying = true
-                if (this.srcName) this.set_from_icon_name(this.srcName)
-                else if (this.srcGicon) this.set_from_gicon(this.srcGicon)
-                this.applying = false
+                this.ownName = this.srcName
+                this.ownGicon = this.srcName ? null : this.srcGicon
+                // a site's own set already shows it, unless a paintable took its place
+                if (this.srcName) {
+                    if (this.get_icon_name() !== this.srcName) this.set_from_icon_name(this.srcName)
+                } else if (this.srcGicon && this.get_gicon() !== this.srcGicon) {
+                    this.set_from_gicon(this.srcGicon)
+                }
                 return
             }
             const display = this.get_display()
@@ -327,9 +337,9 @@ export const ZoomImage = GObject.registerClass(
                 ? theme.lookup_icon(this.srcName, null, size, target, this.get_direction(), 0)
                 : theme.lookup_by_gicon(this.srcGicon!, size, target, this.get_direction(), 0)
             this.appliedKey = key
-            this.applying = true
+            this.ownName = null
+            this.ownGicon = null
             this.set_from_paintable(paintable)
-            this.applying = false
         }
     },
 )
