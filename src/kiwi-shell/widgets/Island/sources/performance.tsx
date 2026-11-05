@@ -32,10 +32,10 @@ const log = logger("island")
 //
 // The CPU shows only at its limit, all of its cores as good as full: the
 // hardware giving all it has, which is as often a good sign (a build using
-// the whole machine) as a bad one. Opened, it has been seen, and keeps out of
-// the island until the spell is over. The cards are a small Activity
-// Monitor, live while open: what is at its limit, and the apps behind it,
-// one with a window quit from there.
+// the whole machine) as a bad one. It shows for as long as it lasts, opened
+// or not: hidden once seen, it would hide a machine still at its limit. The
+// cards are a small Activity Monitor, live while open: what is at its limit,
+// and the apps and jobs behind it, an app with a window quit from there.
 //
 // None of it needs to be on time to the second, and the laptop runs on
 // battery, so the shell looks only every 30 s (one read of /proc/stat,
@@ -87,7 +87,9 @@ const COOLING = 5
 const TICKS_PER_SECOND = 100 // USER_HZ, the unit of /proc/<pid>/stat
 const cores = Math.max(1, (readText("/proc/stat") ?? "").split("\n").filter(l => /^cpu\d/.test(l)).length)
 
-type Proc = { comm: string; ticks: number }
+// ticks: its own CPU time; children: its finished children's, once waited
+// for; pgid: its process group, the job it is part of; start: since boot
+type Proc = { comm: string; ticks: number; children: number; ppid: number; pgid: number; start: number }
 
 function processes(): Map<number, Proc> {
     const all = new Map<number, Proc>()
@@ -101,6 +103,10 @@ function processes(): Map<number, Proc> {
         all.set(Number(name), {
             comm: stat.slice(stat.indexOf("(") + 1, close),
             ticks: Number(fields[11]) + Number(fields[12]),
+            children: Number(fields[13]) + Number(fields[14]),
+            ppid: Number(fields[1]),
+            pgid: Number(fields[2]),
+            start: Number(fields[19]),
         })
     }
     return all
@@ -123,10 +129,42 @@ function nameOf(pid: number, comm: string, cmdline: string | null): string {
     return program.replace(/^\.(.+?)-(un)?wrapped$/, "$1") || comm
 }
 
-function groupOf(pid: number, comm: string): { key: string; name: string; entry: string | null } {
+const SHELL = /^((ba|z|da|k|mk|tc|c)?sh|fish|nu)$/
+const unwrapped = (comm: string) => comm.replace(/^\.(.+?)-(un)?wrapped$/, "$1")
+
+// where a process runs, by its folder's name; none at / or home, or for
+// another user's (a Nix build's)
+function folderOf(pid: number): string | null {
+    try {
+        const cwd = GLib.file_read_link(`/proc/${pid}/cwd`)
+        return cwd === "/" || cwd === GLib.get_home_dir() ? null : GLib.path_get_basename(cwd)
+    } catch {
+        return null
+    }
+}
+
+// A command and all it starts, a build's make and its compilers, share its
+// process group, which a shell gives each command line. Called after its
+// oldest program that isn't a shell, in its folder: "make in wine-build".
+function jobName(pgid: number, procs: Map<number, Proc>): string {
+    let pid = pgid
+    let oldest: Proc | null = null
+    for (const [p, proc] of procs) {
+        if (proc.pgid !== pgid || p === SELF || SHELL.test(unwrapped(proc.comm))) continue
+        if (!oldest || proc.start < oldest.start) [pid, oldest] = [p, proc]
+    }
+    const name = nameOf(pid, procs.get(pid)?.comm ?? "", readText(`/proc/${pid}/cmdline`))
+    const folder = folderOf(pid)
+    return folder ? `${name} in ${folder}` : name
+}
+
+// by app; else by job, given every process (`procs`); else by name
+function groupOf(pid: number, comm: string, procs?: Map<number, Proc>): { key: string; name: string; entry: string | null } {
     const cmdline = readText(`/proc/${pid}/cmdline`)
     const entry = cmdline && pid !== SELF ? entryFromCmdline(cmdline) : null
     if (!entry) {
+        const pgid = procs?.get(pid)?.pgid
+        if (procs && pgid && cmdline && pid !== SELF) return { key: `job:${pgid}`, name: jobName(pgid, procs), entry: null }
         const name = nameOf(pid, comm, cmdline)
         return { key: `name:${name}`, name, entry: null }
     }
@@ -134,10 +172,10 @@ function groupOf(pid: number, comm: string): { key: string; name: string; entry:
     return { key: entry, name, entry }
 }
 
-function sumBy(items: { pid: number; comm: string; value: number }[]): Group[] {
+function sumBy(items: { pid: number; comm: string; value: number }[], procs?: Map<number, Proc>): Group[] {
     const groups = new Map<string, Group>()
     for (const item of items) {
-        const g = groupOf(item.pid, item.comm)
+        const g = groupOf(item.pid, item.comm, procs)
         const sum = groups.get(g.key) ?? { ...g, value: 0, pids: [] }
         sum.value += item.value
         sum.pids.push(item.pid)
@@ -146,16 +184,36 @@ function sumBy(items: { pid: number; comm: string; value: number }[]): Group[] {
     return [...groups.values()].sort((a, b) => b.value - a.value)
 }
 
-/** CPU time between two looks, as shares of one core: by app, busiest first. */
+/**
+ * CPU time between two looks, as shares of one core: by app or job, busiest
+ * first. A process started in between counts all of its time. Most of a
+ * build's runs in compilers started and gone between two looks, and comes
+ * back as their parent's children's time once it has waited for them: that
+ * counts too, less what was counted while they still ran. A whole job that
+ * ended lands its time on a parent in another job at once: not that one's;
+ * nor is what systemd takes in with the orphans it waits for.
+ */
 function cpuBetween(before: Map<number, Proc>, after: Map<number, Proc>, seconds: number): Group[] {
+    const counted = new Map<number, number>()
+    const otherJobEnded = new Set<number>()
+    for (const [pid, proc] of before) {
+        if (after.get(pid)?.comm === proc.comm) continue
+        const parent = after.get(proc.ppid)
+        if (!parent) continue
+        if (parent.pgid !== proc.pgid) otherJobEnded.add(proc.ppid)
+        else counted.set(proc.ppid, (counted.get(proc.ppid) ?? 0) + proc.ticks + proc.children)
+    }
     const items: { pid: number; comm: string; value: number }[] = []
     for (const [pid, proc] of after) {
         const earlier = before.get(pid)
-        if (!earlier || earlier.comm !== proc.comm) continue
-        const value = (proc.ticks - earlier.ticks) / TICKS_PER_SECOND / seconds
+        const was = earlier?.comm === proc.comm ? earlier : null
+        const own = Math.max(0, proc.ticks - (was?.ticks ?? 0))
+        const finished = otherJobEnded.has(pid) || proc.comm === "systemd" ? 0
+            : Math.max(0, proc.children - (was?.children ?? 0) - (counted.get(pid) ?? 0))
+        const value = (own + finished) / TICKS_PER_SECOND / seconds
         if (value >= 0.02) items.push({ pid, comm: proc.comm, value })
     }
-    return sumBy(items)
+    return sumBy(items, after)
 }
 
 /** Resident memory in bytes, by app; biggest first. */
@@ -231,13 +289,11 @@ type MemoryState = { used: number; total: number; top: Group[]; pressured: boole
 type HeatState = { degrees: number; top: Group[]; since: number }
 
 let atLimit: CpuState | null = null
-// its card opened in this spell: out of the island until it is over
-let cpuSeen = false
 let cpuCardOpen = false
 // over while its card was open, which shows on until it closes
 let cpuOver = false
 const [cpu, setCpu] = createState<CpuState | null>(null)
-const showCpu = () => setCpu(atLimit && !cpuSeen ? atLimit : null)
+const showCpu = () => setCpu(atLimit)
 const [memory, setMemory] = createState<MemoryState | null>(null)
 const [heat, setHeat] = createState<HeatState | null>(null)
 
@@ -278,7 +334,6 @@ function look() {
         cpuOver = true
     } else if (atLimit) {
         atLimit = null
-        cpuSeen = false
     }
     showCpu()
 
@@ -417,7 +472,7 @@ function setWatching(on: boolean) {
         busyLooks = hotLooks = 0
         usage.clear()
         atLimit = null
-        cpuSeen = cpuOver = false
+        cpuOver = false
         setEnergy([])
         setCpu(null)
         setMemory(null)
@@ -431,8 +486,8 @@ setWatching(enabled())
 
 // ─── An open card ─────────────────────────────────────────────────────────────
 // Live while it shows: a look of its own every CARD_SECONDS, measured from the
-// last look at first, and none once it closes. The CPU's card closing has
-// been seen: out of the island until the spell is over (or at once, over).
+// last look at first, and none once it closes. The CPU's, over while it was
+// open, leaves the island as it closes.
 
 let cardSource = 0
 let card: { at: number; procs: Map<number, Proc> | null; cpu: [number, number] | null; cores: [number, number][] } | null = null
@@ -467,7 +522,6 @@ opened.subscribe(() => {
         cpuCardOpen = open
         if (!open && atLimit) {
             if (cpuOver) atLimit = null
-            cpuSeen = !cpuOver
             cpuOver = false
             showCpu()
         }
