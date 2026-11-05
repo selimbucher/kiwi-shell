@@ -1,9 +1,10 @@
 import GLib from "gi://GLib"
 import Gio from "gi://Gio"
-import { createState } from "ags"
+import { createMemo, createState } from "ags"
 
 import { logger } from "../../log"
 import { notify } from "../../notify"
+import { mapVersion } from "../desktopEntries"
 import { minuteNow } from "./minuteClock"
 
 const log = logger("calendar")
@@ -452,12 +453,20 @@ export function wantCalendar(): () => void {
 
 // ─── Opening ──────────────────────────────────────────────────────────────────
 
+const gnomeCalendar = () => Gio.AppInfo.get_all().find(a => a.get_id() === "org.gnome.Calendar.desktop") ?? null
+
+/** Whether GNOME Calendar is installed, followed as apps come and go: calendars
+ * are added there, so without it an empty widget says so, not "No Events". */
+export const hasGnomeCalendar = createMemo(() => {
+    mapVersion()
+    return gnomeCalendar() !== null
+})
+
 /** The calendar app, at an event or a day: GNOME Calendar goes straight there. */
 export function openCalendar(at?: { date?: GLib.DateTime, event?: CalendarEvent }) {
     // (GNOME Calendar first, where it's there: it shows these same calendars,
     // where the default for .ics files may be a mail app with its own)
-    const app = Gio.AppInfo.get_all().find(a => a.get_id() === "org.gnome.Calendar.desktop")
-        ?? Gio.AppInfo.get_default_for_type("text/calendar", false)
+    const app = gnomeCalendar() ?? Gio.AppInfo.get_default_for_type("text/calendar", false)
     if (!app) {
         log.info("no calendar app to open")
         notify("No Calendar App",
@@ -469,7 +478,9 @@ export function openCalendar(at?: { date?: GLib.DateTime, event?: CalendarEvent 
     if (app.get_id() === "org.gnome.Calendar.desktop" && exe) {
         const args = at?.event
             ? ["--uuid", [at.event.sourceUid, at.event.uid, at.event.rid].filter(Boolean).join(":")]
-            : at?.date ? ["--date", at.date.format("%F") ?? ""] : []
+            // (--date takes the locale's own date form, 12/24/2026 in en_US;
+            // an ISO date is "invalid")
+            : at?.date ? ["--date", at.date.format("%x") ?? ""] : []
         try {
             Gio.Subprocess.new([exe, ...args], Gio.SubprocessFlags.NONE)
             return

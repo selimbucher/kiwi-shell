@@ -5,7 +5,7 @@ import Gio from "gi://Gio"
 import Pango from "gi://Pango"
 import { With, createComputed, createState, onCleanup, type Accessor } from "ags"
 
-import { calendarEvents, calendarStatus, firstWeekday, openCalendar, type CalendarEvent, type CalendarStatus } from "../services/calendar"
+import { calendarEvents, calendarStatus, firstWeekday, hasGnomeCalendar, openCalendar, type CalendarEvent, type CalendarStatus } from "../services/calendar"
 import { clockTime, minuteNow } from "../services/minuteClock"
 import { centerOpen, closeCenter } from "../Notifications/store"
 import type { WidgetSpec } from "./model"
@@ -154,6 +154,13 @@ function EventRow({ event, day, now }: { event: CalendarEvent, day: GLib.DateTim
     )
 }
 
+// where the counted rest is: "2 more today", "6 more from Saturday 7"
+function moreText(count: number, first: Group, last: Group): string {
+    const name = first.offset < 2 ? dayName(first.day, first.offset).toLowerCase() : dayName(first.day, first.offset)
+    if (first !== last) return `${count} more from ${name}`
+    return first.offset < 2 ? `${count} more ${name}` : `${count} more on ${name}`
+}
+
 // as many rows as there's room for, the rest counted (`header`: what a
 // day's name costs of a row; `more`: whether the rest are counted at all)
 function EventList({ groups, now, rows, headers, header: headerCost = 1, more = true }: {
@@ -162,10 +169,17 @@ function EventList({ groups, now, rows, headers, header: headerCost = 1, more = 
     const list = new Gtk.Box({ orientation: Gtk.Orientation.VERTICAL, spacing: 3, cssClasses: ["cal-list"] })
     let left = rows
     let hidden = 0
+    let firstHidden: Group | null = null
+    let lastHidden: Group | null = null
+    const hide = (group: Group, count: number) => {
+        hidden += count
+        firstHidden ??= group
+        lastHidden = group
+    }
     for (const group of groups) {
         const header = headers === "all" || (headers === "later" && group.offset > 0)
         if (left < (header ? 1 + headerCost : 1)) {
-            hidden += group.events.length
+            hide(group, group.events.length)
             continue
         }
         if (header) {
@@ -174,14 +188,18 @@ function EventList({ groups, now, rows, headers, header: headerCost = 1, more = 
         }
         for (const event of group.events) {
             if (left <= 0) {
-                hidden++
+                hide(group, 1)
                 continue
             }
             list.append(<EventRow event={event} day={group.day} now={now.to_unix()} /> as Gtk.Widget)
             left--
         }
     }
-    if (hidden && more) list.append(<label class="cal-more" label={`${hidden} more`} xalign={0} /> as Gtk.Widget)
+    if (hidden && more) {
+        // (under a day's own name it's that day's: the count alone)
+        const label = headers === "none" ? `${hidden} more` : moreText(hidden, firstHidden!, lastHidden!)
+        list.append(<label class="cal-more" label={label} xalign={0} /> as Gtk.Widget)
+    }
     return list
 }
 
@@ -212,17 +230,27 @@ function Nothing({ text }: { text: string }) {
     return <label class="cal-nothing" label={text} xalign={0} valign={Gtk.Align.START} wrap />
 }
 
+// Why there's nothing: no events at all and no GNOME Calendar to add
+// calendars in, or no Evolution Data Server to read them from, or just none
+// in the next days
+type Empty = "no-app" | "missing" | "none"
+const emptyKind = (status: CalendarStatus, events: CalendarEvent[], app: boolean): Empty =>
+    !app && !events.length ? "no-app" : status === "missing" ? "missing" : "none"
+const EMPTY: Record<Empty, { title: string, hint: string, short: string }> = {
+    "no-app": { title: "No Calendar App", hint: "Install GNOME Calendar to add your calendars.", short: "No calendar app" },
+    "missing": { title: "No Calendars", hint: "Calendars come from Evolution Data Server, as GNOME Calendar's do.", short: "No Calendars" },
+    "none": { title: "No Events", hint: "Nothing in the next days.", short: "No events in the next days" },
+}
+
 // the free part of a wide widget with nothing to show: what to do about it,
 // where there's no calendar to show at all
-function NoEvents({ status }: { status: CalendarStatus }) {
-    const missing = status === "missing"
+function NoEvents({ kind }: { kind: Empty }) {
     return (
         <box orientation={Gtk.Orientation.VERTICAL} spacing={4} valign={Gtk.Align.CENTER} halign={Gtk.Align.CENTER} vexpand hexpand>
             <ZoomImage class="cal-none-icon" iconName="x-office-calendar-symbolic" pixelSize={22} />
-            <label class="cal-none" label={missing ? "No Calendars" : "No Events"} />
+            <label class="cal-none" label={EMPTY[kind].title} />
             <label class="cal-none-hint" justify={Gtk.Justification.CENTER} wrap maxWidthChars={26}
-                label={missing ? "Calendars come from Evolution Data Server, as GNOME Calendar's do."
-                    : "Nothing in the next days."} />
+                label={EMPTY[kind].hint} />
         </box>
     )
 }
@@ -232,17 +260,19 @@ function NoEvents({ status }: { status: CalendarStatus }) {
 export function UpNext({ spec }: { spec: Accessor<WidgetSpec> }) {
     const size = spec.peek().size
     const events = whileOpen(calendarEvents)
-    const shown = createComputed(get => ({ now: get(shownMinute), events: get(events), status: get(calendarStatus) }))
+    const shown = createComputed(get => ({
+        now: get(shownMinute), events: get(events), status: get(calendarStatus), app: get(hasGnomeCalendar),
+    }))
     return (
         <box class="cal up-next" hexpand vexpand $={(self: Gtk.Box) => {
             onClick(self, () => open({ date: minuteNow.peek() }))
             setMenu(self, openItem)
         }}>
             <With value={shown}>
-                {({ now, events, status }: { now: GLib.DateTime, events: CalendarEvent[], status: CalendarStatus }) => {
+                {({ now, events, status, app }: { now: GLib.DateTime, events: CalendarEvent[], status: CalendarStatus, app: boolean }) => {
                     const groups = upcoming(events, now, size === "large" ? 14 : 7)
-                    const none = size !== "small" ? <NoEvents status={status} />
-                        : <Nothing text={status === "missing" ? "No Calendars" : "No events in the next days"} />
+                    const kind = emptyKind(status, events, app)
+                    const none = size !== "small" ? <NoEvents kind={kind} /> : <Nothing text={EMPTY[kind].short} />
                     if (size === "small") {
                         // the next two events, a later day's under its name (a
                         // name is half the height of an event)
@@ -364,7 +394,7 @@ export function Month({ spec }: { spec: Accessor<WidgetSpec> }) {
     // (today again at each opening: the widget is kept between them)
     onCleanup(centerOpen.subscribe(() => { if (centerOpen.peek()) setSelected(null) }))
     const events = whileOpen(calendarEvents)
-    const shown = createComputed(get => ({ now: get(shownMinute), events: get(events) }))
+    const shown = createComputed(get => ({ now: get(shownMinute), events: get(events), app: get(hasGnomeCalendar) }))
     return (
         <box class={`cal month ${size}`} hexpand vexpand
             $={(self: Gtk.Box) => {
@@ -372,7 +402,7 @@ export function Month({ spec }: { spec: Accessor<WidgetSpec> }) {
                 setMenu(self, openItem)
             }}>
             <With value={shown}>
-                {({ now, events }: { now: GLib.DateTime, events: CalendarEvent[] }) => {
+                {({ now, events, app }: { now: GLib.DateTime, events: CalendarEvent[], app: boolean }) => {
                     const monthName = (now.format("%B") ?? "").toUpperCase()
                     if (size === "small") {
                         return (
@@ -399,7 +429,8 @@ export function Month({ spec }: { spec: Accessor<WidgetSpec> }) {
                                         <box orientation={Gtk.Orientation.VERTICAL} spacing={4} hexpand>
                                             <label class="cal-weekday" label={label.toUpperCase()} xalign={0} />
                                             {!list.length
-                                                ? <Nothing text={offset === 0 ? "No more events today" : "No events"} />
+                                                ? <Nothing text={!app && !events.length ? EMPTY["no-app"].short
+                                                    : offset === 0 ? "No more events today" : "No events"} />
                                                 : size === "large"
                                                 ? <EventLines events={list} day={day} rows={3} />
                                                 : <EventList groups={[{ day, offset, events: list }]} now={now} rows={3} headers="none" />}
