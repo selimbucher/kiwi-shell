@@ -64,7 +64,10 @@ let matching = 0
 function matchAhead(family: string) {
     if (matching) GLib.source_remove(matching)
     const queue = SIZES.flatMap(size => WEIGHTS.map(weight => {
-        const desc = Pango.FontDescription.from_string(family)
+        // with the stylesheet's sans-serif after it, as every label asks: to
+        // fontconfig the family alone is another match, made for nothing
+        const desc = new Pango.FontDescription()
+        desc.set_family(`${family},sans-serif`)
         desc.set_absolute_size(size * Pango.SCALE)
         desc.set_weight(weight)
         return desc
@@ -72,10 +75,16 @@ function matchAhead(family: string) {
     matching = GLib.timeout_add(GLib.PRIORITY_LOW, 2000, () => {
         // a widget's context: the font options and resolution a label's have
         const context = new Gtk.Label().get_pango_context()
-        const language = Pango.Language.get_default()
         matching = GLib.idle_add(GLib.PRIORITY_LOW, () => {
             const desc = queue.shift()
-            if (desc) context.load_fontset(desc, language)
+            // laid out as a label's text is: the set alone leaves
+            // fontconfig's match for its first font to the first text
+            if (desc) {
+                const layout = Pango.Layout.new(context)
+                layout.set_font_description(desc)
+                layout.set_text("a", -1)
+                layout.get_extents()
+            }
             if (queue.length) return GLib.SOURCE_CONTINUE
             matching = 0
             return GLib.SOURCE_REMOVE
