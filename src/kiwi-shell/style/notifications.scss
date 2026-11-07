@@ -96,16 +96,18 @@
     padding: 0 6px;
 }
 
-.nc-app-icon {
-    -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+// a filter, not -gtk-icon-shadow: under kiwi's zoom the icon is drawn by
+// ZoomImage, which GtkImage's icon effects don't reach (widgets/zoom.tsx)
+image.nc-app-icon {
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
 }
 
 .nc-avatar {
     border-radius: 100px;
 }
 
-.nc-badge-icon {
-    -gtk-icon-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+image.nc-badge-icon {
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
 
 .nc-thumb {

@@ -1,4 +1,5 @@
 import GObject from "gi://GObject"
+import Graphene from "gi://Graphene"
 import Gsk from "gi://Gsk"
 import Gio from "gi://Gio"
 import { Astal, Gdk, Gtk } from "ags/gtk4"
@@ -251,95 +252,119 @@ export function zoomOfWidget(widget: Gtk.Widget): number {
 }
 
 // ─── Icons at the zoom's resolution ─────────────────────────────────────────────
-// GTK rasterises an icon to a texture at the widget's integer scale factor and
-// then the zoom transform stretches that bitmap: on a display kept at scale 1
-// and zoomed (an external monitor at 1.25), every icon blurs, while text and
-// borders — drawn through the transform, not from a bitmap — stay crisp. This
-// is a Gtk.Image that, when the size it's drawn at asks for more pixels than
-// the scale factor supplies, looks the icon up at a higher scale and draws that
-// paintable instead, sharp under the transform. Symbolic icons are still
-// recoloured from the CSS (GtkImage does that for any symbolic paintable). At
-// scale 1 with no zoom — or wherever the scale factor already covers the zoom —
-// it is a plain Gtk.Image on the icon-name path, untouched. A drop-in: it takes
-// the same icon-name / gicon / pixel-size, so a site swaps the tag and nothing
-// else.
+// Through the zoom transform an icon's texture is resampled, and comes out soft
+// whatever its resolution (a 2× texture under 1.25 is as soft as a 1× one),
+// while text and borders, drawn through the transform, stay crisp. Nor does a
+// higher-scale icon help in a Gtk.Image: GtkImage sets an icon paintable's
+// scale to its own scale factor. So this Gtk.Image, under a zoom, draws its
+// icon itself in the screen's pixels, as an unzoomed icon is drawn: the zoom
+// undone, the icon looked up at the size it takes on the screen and set on
+// whole pixels (a quarter pixel off is soft again). Symbolic icons take the CSS
+// colour, and a widget's CSS filter applies; GtkImage's own icon effects
+// (-gtk-icon-shadow) don't, so the sites use a filter. Without a zoom it is a
+// plain Gtk.Image. A drop-in: it takes the same icon-name / gicon /
+// pixel-size, which GtkImage keeps as given, its size and all.
 export const ZoomImage = GObject.registerClass(
     { GTypeName: "KiwiZoomImage" },
     class ZoomImage extends Gtk.Image {
-        private srcName: string | null = null
-        private srcGicon: Gio.Icon | null = null
-        // what apply() itself last left in icon-name and gicon: a notify raised
-        // inside a handler of the same notify is held until that handler
-        // returns, so apply()'s own change can come in after apply() is done.
-        // The handlers know it by value; a flag set around the call misses it,
-        // and each round would set the icon again, forever
-        private ownName: string | null = null
-        private ownGicon: Gio.Icon | null = null
-        private appliedKey = ""
+        // the icon at its size on the screen, by what it was looked up for
+        private drawn: { key: string; paintable: Gtk.IconPaintable } | null = null
+        // the fraction of a pixel it was set against, and the frames that tell
+        // when it lands on another (moved with what holds it, drawn from cache)
+        private landed = ""
+        private clock: Gdk.FrameClock | null = null
+        private paintId = 0
         private unsub: (() => void) | null = null
 
         constructor(params?: Partial<Gtk.Image.ConstructorProps>) {
             super(params)
-            // an imperative `new ZoomImage({ iconName })` set it through super
-            this.srcName = this.ownName = this.get_icon_name()
-            this.srcGicon = this.ownGicon = this.get_gicon()
-
-            this.connect("notify::icon-name", () => {
-                const name = this.get_icon_name()
-                if (name === this.ownName) return
-                if (name) { this.srcName = name; this.srcGicon = null }
-                else if (!this.srcGicon) this.srcName = null
-                this.appliedKey = ""
-                this.apply()
-            })
-            this.connect("notify::gicon", () => {
-                const gicon = this.get_gicon()
-                if (gicon === this.ownGicon) return
-                if (gicon) { this.srcGicon = gicon; this.srcName = null }
-                else if (!this.srcName) this.srcGicon = null
-                this.appliedKey = ""
-                this.apply()
-            })
-            this.connect("notify::pixel-size", () => { this.appliedKey = ""; this.apply() })
-            this.connect("notify::scale-factor", () => { this.appliedKey = ""; this.apply() })
+            const again = () => { this.drawn = null; this.queue_draw() }
+            for (const prop of ["icon-name", "gicon", "pixel-size", "scale-factor"])
+                this.connect(`notify::${prop}`, again)
             this.connect("map", () => {
-                if (!this.unsub) this.unsub = onZoomChange(() => this.apply())
-                this.apply()
+                if (!this.unsub) this.unsub = onZoomChange(() => { again(); this.follow() })
+                this.follow()
             })
-            this.connect("unmap", () => { this.unsub?.(); this.unsub = null })
+            this.connect("unmap", () => {
+                this.unsub?.()
+                this.unsub = null
+                this.unfollow()
+            })
         }
 
-        private apply() {
-            const scale = this.get_scale_factor()
-            const target = Math.ceil(scale * zoomOfWidget(this))
-            // native: GTK's own rasterisation at the scale factor is enough
-            if (target <= scale || (!this.srcName && !this.srcGicon)) {
-                const key = `n:${this.srcName ?? ""}:${this.srcGicon ? "g" : ""}`
-                if (key === this.appliedKey) return
-                this.appliedKey = key
-                this.ownName = this.srcName
-                this.ownGicon = this.srcName ? null : this.srcGicon
-                // a site's own set already shows it, unless a paintable took its place
-                if (this.srcName) {
-                    if (this.get_icon_name() !== this.srcName) this.set_from_icon_name(this.srcName)
-                } else if (this.srcGicon && this.get_gicon() !== this.srcGicon) {
-                    this.set_from_gicon(this.srcGicon)
-                }
-                return
+        // only zoomed: unzoomed it lands where GtkImage puts it
+        private follow() {
+            const zoomed = zoomOfWidget(this) !== 1
+            if (!zoomed) return this.unfollow()
+            if (this.paintId) return
+            this.clock = this.get_frame_clock()
+            this.paintId = this.clock?.connect("after-paint", () => {
+                if (this.landed && this.landing()?.key !== this.landed) this.queue_draw()
+            }) ?? 0
+        }
+
+        private unfollow() {
+            if (this.clock && this.paintId) this.clock.disconnect(this.paintId)
+            this.clock = null
+            this.paintId = 0
+            this.landed = ""
+        }
+
+        // where the widget's corner falls in screen pixels
+        private landing(): { x: number; y: number; scale: number; key: string } | null {
+            const native = this.get_native()
+            const surface = native?.get_surface()
+            if (!native || !surface) return null
+            const [ok, at] = this.compute_point(native as unknown as Gtk.Widget, new Graphene.Point({ x: 0, y: 0 }))
+            if (!ok) return null
+            const [sx, sy] = native.get_surface_transform()
+            const scale = surface.get_scale()
+            const x = (at.x + sx) * scale, y = (at.y + sy) * scale
+            return { x, y, scale, key: `${(x - Math.floor(x)).toFixed(3)}:${(y - Math.floor(y)).toFixed(3)}` }
+        }
+
+        vfunc_snapshot(snapshot: Gtk.Snapshot) {
+            const zoom = zoomOfWidget(this)
+            const name = this.get_icon_name()
+            const icon = this.get_gicon() ?? (name ? Gio.ThemedIcon.new(name) : null)
+            const land = zoom !== 1 && icon ? this.landing() : null
+            if (!land || !icon) return super.vfunc_snapshot(snapshot)
+            // screen pixels to a unit of the widget's own
+            const screen = land.scale * zoom
+            const width = this.get_width(), height = this.get_height()
+            // where GtkImage puts it: a square of the smaller side, at whole
+            // units, and in it the icon at its size, no bigger, centred
+            // (gtk_image_snapshot, gtk_icon_helper_paintable_snapshot); its
+            // size the pixel size, else the icon size's (16, large 32)
+            const side = Math.min(width, height)
+            const pixelSize = this.get_pixel_size()
+            const iconSize = pixelSize > 0 ? pixelSize : this.get_icon_size() === Gtk.IconSize.LARGE ? 32 : 16
+            const size = Math.min(side, iconSize)
+            const pixels = Math.round(size * screen)
+            if (pixels <= 0) return
+            const key = `${icon.to_string()}:${iconSize}:${pixels}:${this.get_direction()}`
+            if (this.drawn?.key !== key) {
+                // The file GtkImage would pick at the scale the screen asks for
+                // (2 at 1.25, as a scale-2 display shows it): a theme draws an
+                // icon anew for some sizes and scales, and looked up at its
+                // screen size or at scale 1 another drawing came, padded or
+                // another glyph. That file, made at the screen size.
+                const theme = Gtk.IconTheme.get_for_display(this.get_display())
+                const picked = theme.lookup_by_gicon(icon, iconSize, Math.ceil(screen), this.get_direction(), 0)
+                const file = picked.get_file()
+                this.drawn = { key, paintable: file ? Gtk.IconPaintable.new_for_file(file, pixels, 1)
+                    : theme.lookup_by_gicon(icon, pixels, 1, this.get_direction(), 0) }
             }
-            const display = this.get_display()
-            if (!display) return
-            const size = this.get_pixel_size() > 0 ? this.get_pixel_size() : 16
-            const key = `h:${target}:${size}:${this.srcName ?? this.srcGicon?.to_string() ?? ""}`
-            if (key === this.appliedKey) return
-            const theme = Gtk.IconTheme.get_for_display(display)
-            const paintable = this.srcName
-                ? theme.lookup_icon(this.srcName, null, size, target, this.get_direction(), 0)
-                : theme.lookup_by_gicon(this.srcGicon!, size, target, this.get_direction(), 0)
-            this.appliedKey = key
-            this.ownName = null
-            this.ownGicon = null
-            this.set_from_paintable(paintable)
+            // its middle there, its corner on a whole screen pixel
+            const middle = (extent: number) => Math.trunc((extent - side) / 2) + Math.floor(side - Math.ceil(size)) / 2 + size / 2
+            const left = land.x + middle(width) * screen - pixels / 2
+            const top = land.y + middle(height) * screen - pixels / 2
+            this.landed = land.key
+            snapshot.save()
+            snapshot.scale(1 / screen, 1 / screen)
+            snapshot.translate(new Graphene.Point({ x: Math.round(left) - land.x, y: Math.round(top) - land.y }))
+            this.drawn.paintable.snapshot_symbolic(snapshot, pixels, pixels, [this.get_color()])
+            snapshot.restore()
         }
     },
 )
