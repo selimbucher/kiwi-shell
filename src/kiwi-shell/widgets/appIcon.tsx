@@ -69,6 +69,13 @@ export function entryForClient(client: any): string {
 const pidEntryCache = new Map<number, string>()
 mapVersion.subscribe(() => pidEntryCache.clear())
 
+// Where apps are installed: an app run from a path of its own (a store path's
+// lib/obsidian/electron) is known by the directories on the way. Anywhere
+// else they are the user's own (~/Documents/Code/…/python was VS Code's).
+const HOME = GLib.get_home_dir()
+const INSTALLED = ["/nix/store/", "/usr/", "/opt/", "/app/", "/var/lib/flatpak/", "/run/current-system/", "/etc/profiles/",
+    ...[".local/", ".var/", ".nix-profile/", ".steam/"].map(dir => `${HOME}/${dir}`)]
+
 export function entryFromCmdline(cmdline: string): string | null {
     const argv = cmdline.split("\0").filter(Boolean)
     for (const token of argv) {
@@ -76,6 +83,7 @@ export function entryFromCmdline(cmdline: string): string | null {
         if (byBase) return byBase
     }
     for (const token of argv) {
+        if (!INSTALLED.some(dir => token.startsWith(dir))) continue
         for (const part of token.toLowerCase().split(/[/:\s]+/)) {
             const byPart = execToEntry.get(part)
             if (byPart) return byPart
