@@ -48,7 +48,7 @@ window.IslandBar {
     }
 
     .island {
-        border-radius: $height * 0.5;
+        @include pill-ends($height);
         min-height: $height - 2px;
         padding: 0 10px;
         font-size: $callout;
@@ -58,7 +58,7 @@ window.IslandBar {
     .island-bubble {
         @include flat-button;
         @include island-pane;
-        border-radius: 99px;
+        @include disc-ends($height);
         min-width: $height - 2px;
         min-height: $height - 2px;
     }

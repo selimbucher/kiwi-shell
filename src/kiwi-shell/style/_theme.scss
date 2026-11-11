@@ -214,6 +214,22 @@ window.no-blur {
     color: var(--k-fg);
 }
 
+// Round ends for a bordered pane $height tall (border included), a hair short
+// of a half circle. GTK's GPU renderers draw a border corner by corner, each
+// rounded out to whole device pixels (gsk/gpu/shaders/common.glsl,
+// border_get_position), so two arcs meeting inside a pixel both draw it: a
+// translucent border gets a bright dot mid-end wherever a side's middle is off
+// the pixel grid (a 30px pill at kiwi's 1.25 zoom, any odd height at scale 1).
+// Half a px of straight side between them keeps them apart at any scale and
+// zoom of 1 or more. A pill keeps its arcs' width; a disc is short on both.
+@mixin pill-ends($height) {
+    border-radius: #{$height * 0.5} / #{$height * 0.5 - 0.5px};
+}
+
+@mixin disc-ends($size) {
+    border-radius: $size * 0.5 - 0.5px;
+}
+
 // A popover's frame (its padding, corners, gap to what it opens from) is
 // outside its content, which is drawn at kiwi's size on the display
 // (widgets/zoom.tsx): the frame's sizes grow by the --zoom its class sets.

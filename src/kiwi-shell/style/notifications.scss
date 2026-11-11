@@ -162,7 +162,7 @@ image.nc-badge-icon {
     min-width: 20px;
     min-height: 20px;
     padding: 0;
-    border-radius: 100px;
+    @include disc-ends(22px);
     background-color: var(--k-close);
     background-image: none;
     border: 1px solid var(--k-border);
