@@ -575,9 +575,10 @@ export default function Dock({ gdkmonitor }: { gdkmonitor: Gdk.Monitor }) {
             KiwiSurface.set_visible_region(surface, null)
             return
         }
-        // the pill is centred, and its width doesn't change as it slides
+        // the pill is centred, and its width doesn't change as it slides;
+        // laid out at kiwi's size, it is drawn larger by the zoom (zoom.tsx)
         const width = surface.get_width()
-        const half = dockBoxRef.get_width() / 2 + conf().dock_icon_size * 2
+        const half = (dockBoxRef.get_width() / 2 + conf().dock_icon_size * 2) * zoomOf(gdkmonitor)
         const span = new Cairo.RectangleInt()
         span.x = Math.max(0, Math.floor(width / 2 - half))
         span.y = 0
