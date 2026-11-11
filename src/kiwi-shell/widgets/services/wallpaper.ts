@@ -4,6 +4,7 @@ import { Gdk } from "ags/gtk4"
 import Gio from "gi://Gio"
 import GLib from "gi://GLib"
 import GdkPixbuf from "gi://GdkPixbuf"
+import Hyprland from "gi://AstalHyprland"
 
 import { conf, ROOT } from "../config"
 import { logger } from "../../log"
@@ -16,11 +17,15 @@ const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".ti
 
 export const [wallpaperPath, storeWallpaperPath] = createState<string | null>(null)
 
-function parseQuery(output: string): string | null {
-    const line = output.split("\n").find(l => l.includes("image: "))
-    const match = line?.match(/image:\s*(.+)$/)
-    return match ? sameIncluded(match[1].trim()) : null
+// What awww shows on each display: the image, or null for a plain colour
+// (nothing set yet, or an image it could not load).
+async function queryShown(): Promise<Map<string, string | null>> {
+    const namespaces = JSON.parse(await execAsync(["awww", "query", "--json"]))
+    return new Map((namespaces[""] ?? []).map((display: any) =>
+        [String(display.name), typeof display.displaying?.image === "string" ? display.displaying.image : null]))
 }
+
+const firstShown = (shown: Map<string, string | null>) => [...shown.values()].find(image => image) ?? null
 
 // A picture with an included wallpaper's file name (they carry the Unsplash
 // photo id) is that wallpaper: a copy in ~/Pictures, or the included one from
@@ -32,9 +37,10 @@ function sameIncluded(path: string): string {
 
 // Picks up changes made elsewhere (kiwi-settings, a terminal).
 export function refreshWallpaper() {
-    execAsync("awww query")
-        .then(output => {
-            const path = parseQuery(output)
+    queryShown()
+        .then(shown => {
+            const image = firstShown(shown)
+            const path = image ? sameIncluded(image) : null
             if (!path || path === wallpaperPath.get()) return
             log.debug(`the wallpaper is now ${path}`)
             storeWallpaperPath(path)
@@ -62,25 +68,92 @@ async function otherWallpaper(): Promise<boolean> {
     }
 }
 
+// Whoever changes the wallpaper (kiwi-settings, a terminal, the shell
+// itself), awww writes what each display now shows to
+// ~/.cache/awww/<version>/<display>: NUL-separated namespace, resize, filter
+// and image, for each namespace. A display that comes gets its image back from
+// there, by awww itself, without a transition; one it has no image for is
+// left a plain colour.
+const AWWW_CACHE = `${GLib.get_user_cache_dir()}/awww`
+// the running awww's folder there
+let awwwVersion: string | null = null
+
+function readCache(file: string): string | null {
+    try {
+        const fields = new TextDecoder().decode(GLib.file_get_contents(file)[1]).split("\0")
+        for (let i = 0; i + 3 < fields.length; i += 4)
+            if (fields[i] === "") return fields[i + 3]
+    } catch {}
+    return null
+}
+
+// the image awww puts back on the display by itself, if it still can
+function restoredImage(display: string): string | null {
+    const image = awwwVersion ? readCache(`${AWWW_CACHE}/${awwwVersion}/${display}`) : null
+    return image && GLib.file_test(image, GLib.FileTest.EXISTS) ? image : null
+}
+
+function modifiedAt(path: string): number {
+    const info = Gio.File.new_for_path(path).query_info("time::modified", Gio.FileQueryInfoFlags.NONE, null)
+    return info.get_modification_date_time()?.to_unix() ?? 0
+}
+
+// The wallpaper last set on any display, an included one as this kiwi's own
+// copy (a cache can name a kiwi since collected), or a first start's.
+function lastWallpaper(): string | null {
+    let newest: { image: string, time: number } | null = null
+    if (awwwVersion) try {
+        const dir = `${AWWW_CACHE}/${awwwVersion}`
+        const listing = GLib.Dir.open(dir, 0)
+        let name: string | null
+        while ((name = listing.read_name()) !== null) {
+            const cached = readCache(`${dir}/${name}`)
+            const image = cached ? sameIncluded(cached) : null
+            if (!image || !GLib.file_test(image, GLib.FileTest.EXISTS)) continue
+            const time = modifiedAt(`${dir}/${name}`)
+            if (!newest || time > newest.time) newest = { image, time }
+        }
+        listing.close()
+    } catch {}
+    if (newest) return newest.image
+    const included = listWallpapers()
+    return included.find(p => p.endsWith(`/${FIRST_WALLPAPER}`)) ?? included[0] ?? null
+}
+
+// The displays awww shows no image on, and won't put one back on itself (one
+// connected for the first time, or whose image has gone), get the wallpaper
+// at once. The others are awww's to put back, as each display comes: a query
+// can find one blank a moment before.
+async function fillBlank(shown: Map<string, string | null>, only?: string) {
+    const blank = [...shown]
+        .filter(([display, image]) => image === null && (!only || display === only) && !restoredImage(display))
+        .map(([display]) => display)
+    const wallpaper = blank.length ? lastWallpaper() : null
+    if (!wallpaper) return
+    log.info(`nothing on ${blank.join(", ")}, showing ${GLib.path_get_basename(wallpaper)}`)
+    await execAsync(["awww", "img", "--outputs", blank.join(","), "--transition-type", "none", wallpaper])
+        .catch(error => log.error("Failed to set wallpaper:", error))
+}
+
 function findWallpaper(attempt = 0) {
-    execAsync("awww query")
-        .then(output => {
-            const path = parseQuery(output)
-            if (path) return storeWallpaperPath(path)
-            // awww up and showing nothing (it remembers the last image, so
-            // only on a first start): one of the shell's own, not a black screen
-            if (/image:/.test(output) || !output.trim()) return
-            const first = listWallpapers().find(p => p.endsWith(`/${FIRST_WALLPAPER}`)) ?? listWallpapers()[0]
-            if (first) {
-                log.info(`nothing on the screen yet, showing ${GLib.path_get_basename(first)}`)
-                setWallpaper(first)
-            }
+    queryShown()
+        .then(async shown => {
+            awwwVersion ??= (await execAsync(["awww", "--version"]).catch(() => "")).trim().split(" ")[1] ?? null
+            const image = firstShown(shown)
+            storeWallpaperPath(image ? sameIncluded(image) : lastWallpaper())
+            await fillBlank(shown)
         })
         .catch(async () => {
             if (attempt === 0) {
                 if (await otherWallpaper()) return log.info("another program draws the wallpaper; not starting awww")
                 log.debug("awww daemon not running, starting it")
-                execAsync("awww-daemon").catch(() => log.debug("awww-daemon could not be started"))
+                // not on the shell's output: that is a pipe that closes when
+                // the shell stops, and the daemon died writing to it
+                try {
+                    Gio.Subprocess.new(["awww-daemon"], Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_SILENCE)
+                } catch {
+                    log.debug("awww-daemon could not be started")
+                }
             }
             if (attempt + 1 >= ATTEMPTS) return log.debug("giving up on the awww daemon")
             GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
@@ -92,12 +165,29 @@ function findWallpaper(attempt = 0) {
 
 findWallpaper()
 
-// Whoever changes the wallpaper (kiwi-settings, a terminal, the shell
-// itself), awww writes what each display now shows to
-// ~/.cache/awww/<version>/<display>. Watching those files is how the shell
-// hears of it, Mission Control's wallpaper included; one query per change,
-// however many displays it touched.
-const AWWW_CACHE = `${GLib.get_user_cache_dir()}/awww`
+// A display connected: awww lists it once it has set it up, a moment after
+// Hyprland says it's there.
+const LISTED_ATTEMPTS = 5
+
+function fillWhenListed(display: string, attempt = 0) {
+    queryShown()
+        .then(shown => {
+            if (shown.has(display)) return fillBlank(shown, display)
+            if (attempt + 1 >= LISTED_ATTEMPTS) return log.debug(`awww never listed ${display}`)
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250 * 2 ** attempt, () => {
+                fillWhenListed(display, attempt + 1)
+                return GLib.SOURCE_REMOVE
+            })
+        })
+        .catch(() => {})
+}
+
+Hyprland.get_default().connect("monitor-added", (_h: unknown, monitor: Hyprland.Monitor) => {
+    if (awwwVersion && monitor.get_name() !== "FALLBACK") fillWhenListed(monitor.get_name())
+})
+
+// Watching awww's cache is how the shell hears of a new wallpaper, Mission
+// Control's included; one query per change, however many displays it touched.
 const watching = new Map<string, Gio.FileMonitor>()
 let refreshSoon = 0
 
