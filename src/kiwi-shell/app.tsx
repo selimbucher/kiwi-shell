@@ -13,7 +13,7 @@ import Dock from "./widgets/Dock/Dock"
 import Desktop from "./widgets/Desktop/Desktop"
 import Launcher from "./widgets/Launcher/Launcher"
 import Prompt from "./widgets/prompts"
-import { For, This, createBinding, createRoot } from "ags"
+import { For, This, createRoot } from "ags"
 import type { Gdk } from "ags/gtk4"
 import NotificationCenter, {
   toggleNc,
@@ -25,6 +25,7 @@ import steamDesktopPatcher from "./widgets/services/steamDesktopPatcher";
 import nightShiftService from "./widgets/services/nightShiftSchedule"
 import airpodsService from "./widgets/services/airpods"
 import { loadPlugins } from "./hypr"
+import { displays, watchDisplays } from "./widgets/monitors"
 import { standOnOwnBase } from "./widgets/services/gtkBase"
 import { useShellFont } from "./widgets/services/font"
 import "./widgets/services/gestures"
@@ -47,7 +48,7 @@ app.start({
     airpodsService()
     loadPlugins()
 
-    const monitors = createBinding(app, "monitors")
+    watchDisplays()
 
     // The windows there is one of (popups follow popupGdkMonitor) are the
     // first display's, whichever that is: when it goes, they're built again
@@ -58,7 +59,7 @@ app.start({
     let builtFor: Gdk.Monitor | null = null
     let dispose: (() => void) | null = null
     const buildSingles = () => {
-      const first = app.get_monitors()[0] ?? null
+      const first = displays()[0] ?? null
       if (first === builtFor) return
       dispose?.()
       dispose = null
@@ -84,7 +85,7 @@ app.start({
     }
     // each display's bar and dock first, as it always was
     const perDisplay = (
-      <For each={monitors}>
+      <For each={displays}>
         {(gdkmonitor) => (
           <This this={app}>
             <Bar gdkmonitor={gdkmonitor} toggleNc={toggleNc} />
@@ -94,7 +95,7 @@ app.start({
       </For>
     )
     buildSingles()
-    monitors.subscribe(buildSingles)
+    displays.subscribe(buildSingles)
     return perDisplay
   },
 })

@@ -13,7 +13,10 @@
 // Each request is the whole set; a workspace kept before and missing now is
 // let go, and Hyprland drops it if nothing else keeps it. A request with
 // none lets them all go. A monitor that isn't connected keeps its desktops
-// for when it is.
+// for when it is: meanwhile only the ones with windows stay, wherever
+// Hyprland has carried them, and the rest are made again when it connects.
+// It then shows the desktop it showed when it went, which Hyprland does
+// itself only when that workspace was still there.
 //
 // A config reload takes persistence from every workspace no rule asks it for,
 // so the set is applied again after each, and when a monitor is connected.
@@ -49,6 +52,7 @@
 #include <map>
 #include <ranges>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -69,12 +73,16 @@ namespace {
 
             // after the reload has taken persistence away, not before
             m_refreshedListener = Event::bus()->m_events.config.props_refreshed.listen([this](bool) { applySoon(); });
-            m_monitorListener   = Event::bus()->m_events.monitor.added.listen([this](PHLMONITOR) { applySoon(); });
+            m_monitorListener   = Event::bus()->m_events.monitor.added.listen([this](PHLMONITOR monitor) {
+                m_connected.emplace_back(monitor);
+                applySoon();
+            });
             m_frameListener     = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) { tellSlide(monitor); });
             return true;
         }
 
         void exit() {
+            m_connected.clear();
             m_refreshedListener.reset();
             m_monitorListener.reset();
             m_frameListener.reset();
@@ -88,6 +96,8 @@ namespace {
         std::map<std::string, std::vector<WORKSPACEID>> m_kept;
         // the workspaces marked persistent here
         std::vector<PHLWORKSPACEREF> m_ours;
+        // monitors connected since the set was last applied
+        std::vector<PHLMONITORREF> m_connected;
         SP<SHyprCtlCommand>          m_command;
         CHyprSignalListener          m_refreshedListener, m_monitorListener, m_frameListener;
         // where each display's slide was last told to be, by monitor name
@@ -121,7 +131,23 @@ namespace {
             g_pEventLoopManager->doLater([this] {
                 m_applying = false;
                 apply();
+                for (const auto& ref : std::exchange(m_connected, {})) {
+                    if (const auto MONITOR = ref.lock())
+                        showRemembered(MONITOR);
+                }
             });
+        }
+
+        void showRemembered(const PHLMONITOR& monitor) {
+            const auto ID   = State::workspaceState()->rememberedWorkspaceForMonitor(monitor->m_name);
+            const auto KEPT = m_kept.find(monitor->m_name);
+            if (!ID || KEPT == m_kept.end() || !std::ranges::contains(KEPT->second, *ID))
+                return;
+            if (monitor->m_activeWorkspace && monitor->m_activeWorkspace->m_id == *ID)
+                return;
+            const auto WORKSPACE = State::workspaceState()->query().id(*ID).run();
+            if (WORKSPACE && WORKSPACE->m_monitor == monitor)
+                monitor->changeWorkspace(WORKSPACE, false, true, true);
         }
 
         void apply() {

@@ -1,11 +1,44 @@
 import app from "ags/gtk4/app"
 import { Astal, Gdk, Gtk } from "ags/gtk4"
 import GLib from "gi://GLib"
-import { Accessor, createBinding, createComputed, onCleanup } from "ags"
+import { Accessor, createBinding, createComputed, createState, onCleanup } from "ags"
 import Hyprland from "gi://AstalHyprland"
 import { conf } from "./config"
 
 const hyprland = Hyprland.get_default()
+
+// The displays the shell is on, each once GTK knows its name: one plugged in
+// (again) is listed a moment before it has one, and what is built for a
+// display goes by its name (an island built for "" opened its cards on no
+// display, and never closed them). Not Hyprland's FALLBACK, the output it
+// puts up while no display is connected, a monitor asleep say: nobody sees it.
+const FALLBACK = "FALLBACK"
+const [displayList, setDisplayList] = createState<Gdk.Monitor[]>([])
+export const displays: Accessor<Gdk.Monitor[]> = displayList
+
+// the listed monitors still without a name, and their notify::connector
+const unnamed = new Map<Gdk.Monitor, number>()
+
+function listDisplays() {
+    const all = app.get_monitors()
+    for (const monitor of all)
+        if (!monitor.get_connector() && !unnamed.has(monitor))
+            unnamed.set(monitor, monitor.connect("notify::connector", listDisplays))
+    for (const [monitor, handler] of unnamed) {
+        if (!monitor.get_connector() && all.includes(monitor)) continue
+        monitor.disconnect(handler)
+        unnamed.delete(monitor)
+    }
+    const named = all.filter(m => m.get_connector() && m.get_connector() !== FALLBACK)
+    const before = displayList.get()
+    if (named.length !== before.length || named.some((m, i) => m !== before[i])) setDisplayList(named)
+}
+
+/** Keep `displays` with the monitors GTK lists; once, as the shell starts. */
+export function watchDisplays() {
+    app.connect("notify::monitors", listDisplays)
+    listDisplays()
+}
 
 // The monitor that popups — switchers, launcher, OSD, notifications,
 // prompts — appear on. macOS-inspired: the currently active monitor by
@@ -13,7 +46,7 @@ const hyprland = Hyprland.get_default()
 // Undefined only while no monitor exists; callers fall back to their
 // mount monitor.
 export const popupGdkMonitor: Accessor<Gdk.Monitor | undefined> = createComputed(get => {
-    const monitors = get(createBinding(app, "monitors"))
+    const monitors = get(displays)
     const primary = monitors[0]
     if (get(conf).popup_monitor === "primary") return primary
     const focused = get(createBinding(hyprland, "focusedMonitor"))
@@ -37,7 +70,7 @@ export function heldPopupMonitor(shown: Accessor<boolean>): Accessor<Gdk.Monitor
 // The main (first) monitor: where the switchers live, and the one display
 // whose dock stays up on its own.
 export const primaryGdkMonitor: Accessor<Gdk.Monitor | undefined> = createComputed(get =>
-    get(createBinding(app, "monitors"))[0])
+    get(displays)[0])
 
 // Tear down a shell window when its monitor goes away. GTK 4.22's Wayland
 // session-management hook (gtk_application_impl_wayland_window_forget)

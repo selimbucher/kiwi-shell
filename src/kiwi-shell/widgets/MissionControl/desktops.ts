@@ -12,12 +12,20 @@ const hyprland = Hyprland.get_default()
 // What macOS calls Spaces: each display has its own row of desktops, in
 // order, and a desktop stays until it is closed, empty or not — across
 // logins too. Here a desktop is a Hyprland workspace, and a display's desktops
-// are the workspaces on its monitor, by id. Every workspace that turns up on a
-// monitor becomes one of its desktops; one goes when it is closed in Mission
-// Control. The list is saved, and kiwi's plugin keeps each desktop as a
-// workspace even while it is empty (src/hyprland-plugin/desktops.cpp), so
-// Hyprland's workspace swipe goes through exactly these. Without the plugin
-// the empty ones are only the shell's.
+// are the workspaces on its monitor, by id. A workspace that comes into use
+// on a monitor (shown there, or given a window) becomes one of its desktops;
+// one goes when it is closed in Mission Control. The list is saved, and kiwi's
+// plugin keeps each desktop as a workspace even while it is empty
+// (src/hyprland-plugin/desktops.cpp), so Hyprland's workspace swipe goes
+// through exactly these. Without the plugin the empty ones are only the
+// shell's.
+//
+// A display unplugged, or asleep (a monitor that sleeps deeply disconnects),
+// keeps its row. Hyprland carries its workspaces to another display, or holds
+// them on none, and brings them back when it returns: meanwhile those with
+// windows are shown in the other display's row, still the first one's, and
+// the empty ones are let go and made again on its return. Only a
+// desktop moved while both displays are connected changes display.
 
 export type Monitor = {
     name: string
@@ -97,22 +105,37 @@ export function focusedMonitor(): Monitor | null {
     return all.find(m => m.name === name) ?? all[0] ?? null
 }
 
+// Hyprland's stand-in output while no display is connected, and the monitor
+// a workspace names while the display it was on is gone and no other has
+// taken it: neither is a display, and neither has desktops
+const NOT_DISPLAYS = new Set(["FALLBACK", "?"])
+const isDisplay = (name: string | null | undefined): name is string => !!name && !NOT_DISPLAYS.has(name)
+
+// the connected displays, by monitor name
+const displayNames = () => hyprland.get_monitors().map(m => m.get_name()).filter(isDisplay)
+
 // the desktops by monitor name, in order, as saved
 const STATE_FILE = `${GLib.get_user_state_dir()}/kiwi-shell/desktops.json`
+// the file as last read or written
+let saved = ""
 const desktops = new Map<string, number[]>(load())
 
 function load(): [string, number[]][] {
     try {
         const [, bytes] = GLib.file_get_contents(STATE_FILE)
-        const saved = JSON.parse(new TextDecoder().decode(bytes))
-        return Object.entries(saved).filter(([, ids]) => Array.isArray(ids))
-            .map(([name, ids]) => [name, (ids as unknown[]).filter((id): id is number => Number.isInteger(id) && (id as number) > 0)])
+        saved = new TextDecoder().decode(bytes)
+        const rows: [string, number[]][] = []
+        for (const [name, ids] of Object.entries(JSON.parse(saved))) {
+            if (!isDisplay(name) || !Array.isArray(ids)) continue
+            const valid = ids.filter((id): id is number => Number.isInteger(id) && id > 0)
+            if (valid.length) rows.push([name, valid])
+        }
+        return rows
     } catch {
         return []
     }
 }
 
-let saved = JSON.stringify(Object.fromEntries(desktops))
 function save() {
     const text = JSON.stringify(Object.fromEntries(desktops))
     if (text === saved) return
@@ -129,25 +152,72 @@ function save() {
 // not to be taken back in meanwhile
 const closing = new Set<number>()
 
-// What Hyprland has now brought into the list: a workspace on a monitor is
-// that monitor's desktop, and no other's. From AstalHyprland's own list,
-// which its events keep: asked of Hyprland here, every island update and
-// Mission Control opening waited on it, a frame at a time mid-slide.
-function reconcile() {
-    const workspaces = hyprland.get_workspaces()
-        .filter(w => w.id > 0 && w.monitor)
-        .map(w => ({ id: w.id, monitor: w.monitor.get_name() }))
+// the display each desktop is one of
+function displayOf(): Map<number, string> {
+    const of = new Map<number, string>()
+    for (const [name, ids] of desktops)
+        for (const id of ids) of.set(id, name)
+    return of
+}
+
+function take(id: number, display: string) {
+    desktops.set(display, [...(desktops.get(display) ?? []), id].sort((a, b) => a - b))
+}
+
+function drop(id: number, display: string) {
+    const ids = (desktops.get(display) ?? []).filter(other => other !== id)
+    if (ids.length) desktops.set(display, ids)
+    else desktops.delete(display)
+}
+
+// Which displays are connected and where each workspace is, as Hyprland has
+// it now. Astal hears a display has gone only after the moves that carried its
+// workspaces off it, so by Astal's list alone a carried desktop looks moved.
+function compositorNow(): { displays: Set<string>, monitorOf: Map<number, string> } {
+    return {
+        displays: new Set(query("monitors").map(m => m.name).filter(isDisplay)),
+        monitorOf: new Map(query("workspaces").map(w => [w.id, w.monitor])),
+    }
+}
+
+// What Hyprland has now brought into the list: a workspace that came into use
+// on a display is one of its desktops, and one moved from a connected display
+// to another is the other's now. From AstalHyprland's own list, which its
+// events keep: asked of Hyprland here, every island update and Mission
+// Control opening waited on it, a frame at a time mid-slide. Whether a row
+// changed.
+function reconcile(): boolean {
+    const workspaces = hyprland.get_workspaces().filter(w => w.id > 0)
     for (const id of closing)
         if (!workspaces.some(w => w.id === id)) closing.delete(id)
-    for (const [name, ids] of desktops) {
-        const elsewhere = new Set(workspaces.filter(w => w.monitor !== name).map(w => w.id))
-        desktops.set(name, ids.filter(id => !elsewhere.has(id)))
-    }
+    const displays = new Set(displayNames())
+    const of = displayOf()
+    let changed = false
+    let now: ReturnType<typeof compositorNow> | null = null
     for (const w of workspaces) {
-        if (closing.has(w.id)) continue
-        const ids = desktops.get(w.monitor) ?? []
-        if (!ids.includes(w.id)) desktops.set(w.monitor, [...ids, w.id].sort((a, b) => a - b))
+        const monitor = w.monitor?.get_name()
+        const own = of.get(w.id)
+        if (!isDisplay(monitor) || own === monitor || closing.has(w.id)) continue
+        if (own === undefined) {
+            // once in use: the stopgaps Hyprland makes (one for a display as
+            // it connects, one moved off FALLBACK) are neither, and go
+            const shown = w.monitor.get_active_workspace()?.get_id() === w.id
+            if (shown || w.get_clients().length > 0) {
+                take(w.id, monitor)
+                changed = true
+            }
+            continue
+        }
+        // carried while its display is away
+        if (!displays.has(own)) continue
+        now ??= compositorNow()
+        if (now.displays.has(own) && now.monitorOf.get(w.id) === monitor) {
+            drop(w.id, own)
+            take(w.id, monitor)
+            changed = true
+        }
     }
+    return changed
 }
 
 // what wants to know when a display's row changes: the bar's desktops
@@ -160,16 +230,20 @@ export function watchDesktops(changed: () => void): () => void {
 }
 
 // the rows as the bar last had them, and as the plugin last took them: it
-// isn't loaded yet at login, and a set it never took is sent again
+// isn't loaded yet at login, and a set it never took is sent again. The
+// plugin keeps the desktops of connected displays only, so the set goes
+// again when one comes or goes: an absent one's empty desktops are let go.
 let lastSeen = ""
 let lastKept = ""
 function sync() {
     reconcile()
     save()
-    const now = JSON.stringify([...desktops])
-    if (now !== lastKept) void keepDesktops(desktops).then(ok => { if (ok) lastKept = now })
-    if (now === lastSeen) return
-    lastSeen = now
+    const displays = displayNames()
+    const kept = JSON.stringify([[...desktops], displays])
+    if (kept !== lastKept) void keepDesktops(desktops).then(ok => { if (ok) lastKept = kept })
+    const seen = JSON.stringify(displays.map(name => [name, desktopsOn(name)]))
+    if (seen === lastSeen) return
+    lastSeen = seen
     for (const changed of watchers) changed()
 }
 
@@ -221,14 +295,28 @@ registerBindSetup("desktop slide", applyDesktopMotion)
 void pluginsReady.then(sync)
 hyprland.connect("workspace-added", syncSoon)
 hyprland.connect("workspace-removed", syncSoon)
+hyprland.connect("monitor-added", syncSoon)
+hyprland.connect("monitor-removed", syncSoon)
+// and in use: shown, or given a window
+const SYNC_EVENTS = new Set(["moveworkspacev2", "renameworkspace", "workspacev2", "openwindow", "movewindowv2"])
 hyprland.connect("event", (_h: unknown, event: string) => {
-    if (event === "moveworkspacev2" || event === "renameworkspace") syncSoon()
+    if (SYNC_EVENTS.has(event)) syncSoon()
 })
 
-/** The monitor's desktops, as workspace ids in order. */
+/**
+ * The monitor's desktops, as workspace ids in order: its own, and those of a
+ * display that's away that Hyprland has carried here meanwhile.
+ */
 export function desktopsOn(monitor: string): number[] {
-    reconcile()
-    return [...(desktops.get(monitor) ?? [])]
+    if (reconcile()) syncSoon()
+    const own = desktops.get(monitor) ?? []
+    const displays = new Set(displayNames())
+    const of = displayOf()
+    const carried = hyprland.get_workspaces()
+        .filter(w => w.monitor?.get_name() === monitor && !own.includes(w.id))
+        .map(w => w.id)
+        .filter(id => of.has(id) && !displays.has(of.get(id)!))
+    return [...own, ...carried].sort((a, b) => a - b)
 }
 
 /**
@@ -293,7 +381,8 @@ export async function removeDesktop(monitor: string, id: number) {
     for (const window of windowsByDesktop().get(id) ?? [])
         await moveWindowToWorkspace(target, `address:${window.address}`, { follow: false })
     closing.add(id)
-    desktops.set(monitor, (desktops.get(monitor) ?? []).filter(other => other !== id))
+    const own = displayOf().get(id)
+    if (own !== undefined) drop(id, own)
     sync()
     log.info(`desktop ${id} on ${monitor} closed, its windows went to ${target}`)
 }
@@ -330,7 +419,14 @@ export async function moveDesktop(monitor: string, from: number, to: number): Pr
         ...renames.map(({ id }, i) => changeId(spare + i, id)),
     ].join("\n"), "reorder desktops")) return null
     log.info(`desktop ${from + 1} on ${monitor} moved to ${to + 1}`)
-    return new Map(order.map((workspace, place) => [workspace, ids[place]]))
+    const renumbered = new Map(order.map((workspace, place) => [workspace, ids[place]]))
+    // a desktop stays its display's under its new id: a carried one put
+    // among this display's own still goes back with the display it's from
+    for (const [display, row] of desktops)
+        desktops.set(display, row.map(id => renumbered.get(id) ?? id).sort((a, b) => a - b))
+    // once Astal has followed the renumbering
+    syncSoon()
+    return renumbered
 }
 
 /**
