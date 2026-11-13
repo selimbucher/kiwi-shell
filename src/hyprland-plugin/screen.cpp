@@ -11,7 +11,7 @@
 
 #include <plugins/PluginAPI.hpp>
 #include <event/EventBus.hpp>
-#include <managers/EventManager.hpp>
+#include <ipc/s2/S2.hpp>
 #include <managers/SessionLockManager.hpp>
 #include <output/Monitor.hpp>
 #include <state/MonitorState.hpp>
@@ -31,7 +31,7 @@ namespace {
     std::vector<SWatched> g_watched;
 
     void post(const std::string& data) {
-        g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwiscreen", .data = data});
+        IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwiscreen", .data = data});
     }
 
     void watch(const PHLMONITOR& monitor) {

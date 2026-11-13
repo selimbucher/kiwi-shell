@@ -16,10 +16,10 @@
 
 #include <plugins/PluginAPI.hpp>
 #include <plugins/PluginSystem.hpp>
-#include <desktop/view/Window.hpp>
+#include <desktop/view/window/Window.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <event/EventBus.hpp>
-#include <managers/KeybindManager.hpp>
+#include <keybinds/Manager.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <protocols/XDGShell.hpp>
 #include <xwayland/XSurface.hpp>
@@ -64,7 +64,7 @@ namespace {
         // after the request has been dealt with by the protocol
         g_pEventLoopManager->doLater([weak] {
             const auto WINDOW = weak.lock();
-            if (!WINDOW || !WINDOW->m_isMapped || !WINDOW->m_workspace || WINDOW->onSpecialWorkspace())
+            if (!WINDOW || !WINDOW->mapped() || !WINDOW->m_workspace || WINDOW->onSpecialWorkspace())
                 return;
             auto workspace = Kiwi::Genie::minimizedWorkspace();
             if (workspace.empty())
@@ -125,7 +125,7 @@ namespace {
 namespace Kiwi::Minimize {
     bool init(HANDLE) {
         for (const auto& window : Desktop::windowState()->windows())
-            if (window->m_isMapped)
+            if (window->mapped())
                 watch(window);
         g_openListener  = Event::bus()->m_events.window.open.listen([](PHLWINDOW window) { watch(window); });
         g_closeListener = Event::bus()->m_events.window.close.listen([](PHLWINDOW window) { g_watched.erase(window.get()); });

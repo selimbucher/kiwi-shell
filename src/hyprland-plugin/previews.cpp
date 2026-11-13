@@ -114,10 +114,10 @@
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/LayerSurface.hpp>
 #include <desktop/view/Popup.hpp>
-#include <desktop/view/Window.hpp>
+#include <desktop/view/window/Window.hpp>
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
-#include <managers/EventManager.hpp>
+#include <ipc/s2/S2.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <managers/input/trackpad/TrackpadGestures.hpp>
 #include <managers/input/trackpad/gestures/ITrackpadGesture.hpp>
@@ -508,7 +508,7 @@ namespace {
 
             for (const auto& tile : m_tiles) {
                 const auto WINDOW = tile.window.lock();
-                if (!WINDOW || !WINDOW->m_isMapped)
+                if (!WINDOW || !WINDOW->mapped())
                     continue;
                 // the set's alpha, and the tile's own fade
                 const float ALPHA = m_alpha * tile.alpha;
@@ -883,7 +883,7 @@ namespace {
                 const bool WAITED_ON = fly && !m_done;
                 m_done = true;
                 if (WAITED_ON)
-                    g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwipreviews", .data = std::format("flown,{}", name)});
+                    IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwipreviews", .data = std::format("flown,{}", name)});
                 return;
             }
             m_armed = false;
@@ -1059,7 +1059,7 @@ namespace {
             if (!acked)
                 return;
             acked = false;
-            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwipreviews", .data = std::format("drawn,{}", name)});
+            IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwipreviews", .data = std::format("drawn,{}", name)});
         }
 
         // The shell's next frame is the one it shows its pane in. A surface
@@ -1108,7 +1108,7 @@ namespace {
             std::optional<SAnchor> found;
             LAYER->m_popupHead->breadthfirst(
                 [&found](SP<CPopup> node, void*) {
-                    if (found || !node || !node->m_mapped || node->inert() || !node->wlSurface() || !node->wlSurface()->resource())
+                    if (found || !node || !node->mapped() || node->inert() || !node->wlSurface() || !node->wlSurface()->resource())
                         return;
                     found = SAnchor{
                         .origin  = node->coordsGlobal(),
@@ -1247,7 +1247,7 @@ namespace {
                 // frame being drawn will contain it.
                 // Nor will it a window this set has hidden for its flight:
                 // its picture would stand still all through Mission Control.
-                if (!WINDOW || !WINDOW->m_isMapped || (g_pHyprRenderer->shouldRenderWindow(WINDOW, monitor) && !isHidden(tile.window)))
+                if (!WINDOW || !WINDOW->mapped() || (g_pHyprRenderer->shouldRenderWindow(WINDOW, monitor) && !isHidden(tile.window)))
                     continue;
 
                 ++m_counters.keepAlives;
@@ -1376,7 +1376,7 @@ namespace {
             if (SHOWN != m_applied || m_hiddenChanged) {
                 // what of the shell's own goes with the flight follows it
                 if (SHOWN != m_applied)
-                    g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwipreviews", .data = std::format("at,{},{:.3f}", name, SHOWN)});
+                    IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwipreviews", .data = std::format("at,{},{:.3f}", name, SHOWN)});
                 m_applied       = SHOWN;
                 m_hiddenChanged = false;
                 // The windows go as their pictures leave them and are back
@@ -1405,7 +1405,7 @@ namespace {
                 return;
             clear();
             m_done = true;
-            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwipreviews", .data = std::format("flown,{}", name)});
+            IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwipreviews", .data = std::format("flown,{}", name)});
         }
 
         // Hyprland suspends a window whose workspace is not on screen, and
@@ -1421,7 +1421,7 @@ namespace {
         void suspendWoken() {
             for (const auto& ref : m_woken) {
                 const auto WINDOW = ref.lock();
-                if (!WINDOW || !WINDOW->m_isMapped)
+                if (!WINDOW || !WINDOW->mapped())
                     continue;
                 WINDOW->setSuspended(WINDOW->isHidden() || !WINDOW->m_workspace || !WINDOW->m_workspace->isVisible());
             }
@@ -1613,7 +1613,7 @@ namespace {
             const bool OPEN = SET && SET->isOut();
             if (up && !OPEN) {
                 m_swipe.opening = true;
-                g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("open,{}", m_gestureSet)});
+                IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwigesture", .data = std::format("open,{}", m_gestureSet)});
             } else if (!up && OPEN) {
                 m_swipe.progress = SET->shown();
                 SET->hold(m_swipe.progress);
@@ -1622,7 +1622,7 @@ namespace {
             m_swipe.active = true;
             m_swipe.lastAt = Time::steadyNow();
             // the shell lets nothing be pointed at while the fingers have the windows
-            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture", .data = std::format("held,{}", m_gestureSet)});
+            IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwigesture", .data = std::format("held,{}", m_gestureSet)});
         }
 
         void swipeUpdate(float travel, float accelerated, uint32_t ms) {
@@ -1669,7 +1669,7 @@ namespace {
             if (cancelled)
                 out = !m_swipe.opening;
             // with how far and how fast, for tuning on a real trackpad
-            g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwigesture",
+            IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwigesture",
                                                      .data  = std::format("let,{},{},{:.2f},{:.2f},{:.1f},{:.1f}", m_gestureSet, out ? "out" : "home", m_swipe.progress, SPEED,
                                                                           std::abs(m_swipe.travelled) * UNIT_MM, std::abs(m_swipe.accelerated) * UNIT_MM)});
             const auto SET = gestureSet();
@@ -1743,7 +1743,7 @@ namespace {
             if (WORDS.size() == 1 && WORDS[0] == "bars") {
                 std::string out;
                 for (const auto& window : Desktop::windowState()->windows()) {
-                    if (!window->m_isMapped)
+                    if (!window->mapped())
                         continue;
                     const double TOP = barHeight(window);
                     if (TOP > 0)
@@ -1877,7 +1877,7 @@ namespace {
 
                 // closed, or closing, between the shell's list and this call
                 const auto WINDOW = windowFrom(ADDRESS);
-                if (!WINDOW || !WINDOW->m_isMapped || !WINDOW->wlSurface() || !WINDOW->wlSurface()->resource())
+                if (!WINDOW || !WINDOW->mapped() || !WINDOW->wlSurface() || !WINDOW->wlSurface()->resource())
                     continue;
 
                 const CBox RECT{numbers[0], numbers[1], numbers[2], numbers[3]};

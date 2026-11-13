@@ -36,10 +36,10 @@
 #include "kiwi.hpp"
 
 #include <plugins/PluginAPI.hpp>
-#include <desktop/view/Window.hpp>
+#include <desktop/view/window/Window.hpp>
 #include <layout/LayoutManager.hpp>
 #include <layout/target/Target.hpp>
-#include <managers/EventManager.hpp>
+#include <ipc/s2/S2.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <event/EventBus.hpp>
 
@@ -122,7 +122,7 @@ namespace {
             const auto draggedWindow = dragged();
             for (const auto& ref : changed) {
                 const auto w = ref.lock();
-                if (!w || !w->m_isMapped)
+                if (!w || !w->mapped())
                     continue;
                 if (w == draggedWindow)
                     followDrag();
@@ -140,7 +140,7 @@ namespace {
                 return;
             m_frameListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR) {
                 const auto w = dragged();
-                if (w && w->m_isMapped)
+                if (w && w->mapped())
                     post(w);
                 // a drag that ended without setting a last frame: the
                 // listener goes from outside its own emission
@@ -158,7 +158,7 @@ namespace {
                 return;
             last = {.window = w, .box = box};
 
-            g_pEventManager->postEvent(SHyprIPCEvent{
+            IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{
                 .event = "windowgeometry",
                 .data  = std::format("{:x},{},{},{},{}", reinterpret_cast<uintptr_t>(w.get()), static_cast<int>(box.x), static_cast<int>(box.y),
                                      static_cast<int>(box.w), static_cast<int>(box.h)),

@@ -36,13 +36,13 @@
 #include "requests.hpp"
 
 #include <plugins/PluginAPI.hpp>
-#include <desktop/Workspace.hpp>
+#include <workspace/HLWorkspace.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/LayerSurface.hpp>
-#include <desktop/view/Window.hpp>
+#include <desktop/view/window/Window.hpp>
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
-#include <managers/EventManager.hpp>
+#include <ipc/s2/S2.hpp>
 #include <managers/fullscreen/FullscreenController.hpp>
 #include <output/Monitor.hpp>
 #include <render/Framebuffer.hpp>
@@ -382,7 +382,7 @@ void main() {
                 m_watched = std::string{WORDS[1]};
                 m_inside.clear();
                 for (const auto& window : Desktop::windowState()->windows()) {
-                    if (window->m_isMapped && window->m_workspace && window->m_workspace->m_name == m_watched)
+                    if (window->mapped() && window->m_workspace && window->m_workspace->m_name == m_watched)
                         m_inside.emplace_back(window);
                 }
                 return "ok";
@@ -438,8 +438,8 @@ void main() {
         // with the monitor the genie is drawn on, whose dock it goes to: the
         // shell hears of the window's own only after the move
         void post(const char* kind, const PHLWINDOW& window, const PHLMONITOR& monitor) {
-            g_pEventManager->postEvent(
-                SHyprIPCEvent{.event = "kiwigenie", .data = std::format("{},{:x},{}", kind, reinterpret_cast<uintptr_t>(window.get()), monitor->m_name)});
+            IPC::Socket2::sock()->postEvent(
+                IPC::Socket2::SEvent{.event = "kiwigenie", .data = std::format("{},{:x},{}", kind, reinterpret_cast<uintptr_t>(window.get()), monitor->m_name)});
         }
 
         void moved(const PHLWINDOW& window, const PHLWORKSPACE& workspace) {
@@ -587,7 +587,7 @@ void main() {
                 if (!genie.restore || genie.snapshot || genie.monitor != monitor)
                     continue;
                 const auto WINDOW = genie.window.lock();
-                if (!WINDOW || !WINDOW->m_isMapped)
+                if (!WINDOW || !WINDOW->mapped())
                     continue;
 
                 WINDOW->positionAnimation()->warp();

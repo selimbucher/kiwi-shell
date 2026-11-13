@@ -27,10 +27,10 @@
 
 #include <plugins/PluginAPI.hpp>
 #include <plugins/PluginSystem.hpp>
-#include <desktop/view/Window.hpp>
+#include <desktop/view/window/Window.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <desktop/state/FocusState.hpp>
-#include <desktop/Workspace.hpp>
+#include <workspace/HLWorkspace.hpp>
 #include <desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <layout/LayoutManager.hpp>
 #include <layout/space/Space.hpp>
@@ -138,7 +138,7 @@ namespace {
     std::vector<PHLWINDOW> siblingsOf(const PHLWINDOW& w) {
         std::vector<PHLWINDOW> siblings;
         for (const auto& other : Desktop::windowState()->windows()) {
-            if (other == w || !other->m_isMapped || other->isHidden() || !other->m_isFloating || other->parent() || other->isModal())
+            if (other == w || !other->mapped() || other->isHidden() || !other->m_isFloating || other->parent() || other->isModal())
                 continue;
             if (other->m_workspace == w->m_workspace && appOf(other) == appOf(w))
                 siblings.push_back(other);

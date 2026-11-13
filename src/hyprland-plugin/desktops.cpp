@@ -37,10 +37,10 @@
 #include "requests.hpp"
 
 #include <plugins/PluginAPI.hpp>
-#include <desktop/Workspace.hpp>
+#include <workspace/HLWorkspace.hpp>
 #include <config/ConfigValue.hpp>
 #include <event/EventBus.hpp>
-#include <managers/EventManager.hpp>
+#include <ipc/s2/S2.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <output/Monitor.hpp>
 #include <state/MonitorState.hpp>
@@ -120,7 +120,7 @@ namespace {
             const bool MOVED = last.first != WS->m_id || FRACTION != 0.0 || last.second != 0.0;
             last             = {WS->m_id, FRACTION};
             if (MOVED)
-                g_pEventManager->postEvent(SHyprIPCEvent{.event = "kiwidesk", .data = std::format("{},{},{:.4f}", monitor->m_name, WS->m_id, FRACTION)});
+                IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwidesk", .data = std::format("{},{},{:.4f}", monitor->m_name, WS->m_id, FRACTION)});
         }
         bool                         m_applying = false;
 

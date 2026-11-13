@@ -21,8 +21,8 @@
 #include <desktop/state/FadingOutState.hpp>
 #include <desktop/state/ViewHitTester.hpp>
 #include <desktop/state/WindowState.hpp>
-#include <desktop/view/Window.hpp>
-#include <desktop/Workspace.hpp>
+#include <desktop/view/window/Window.hpp>
+#include <workspace/HLWorkspace.hpp>
 #include <desktop/state/FocusState.hpp>
 #include <config/ConfigValue.hpp>
 #include <event/EventBus.hpp>
@@ -106,7 +106,7 @@ namespace {
         std::vector<PHLWINDOW> windows;
         windows.reserve(Desktop::windowState()->windows().size());
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (w->isHidden() || !w->m_isMapped || !self->shouldRenderWindow(w, monitor))
+            if (w->isHidden() || !w->mapped() || !self->shouldRenderWindow(w, monitor))
                 continue;
             // drawn with the pinned ones, over all of these
             if (w->m_isFloating && w->m_pinned)
@@ -179,7 +179,7 @@ namespace {
         static auto PMODALPARENTBLOCKING = CConfigValue<Config::INTEGER>("general:modal_parent_blocking");
         static auto PFOLLOWMOUSESHRINK   = CConfigValue<Config::INTEGER>("input:follow_mouse_shrink");
         const auto  TAKES                = [&](const PHLWINDOW& w) {
-            return w->m_isMapped && !w->isHidden() && !w->m_pinned && w != ignoreWindow && w->m_workspace == WORKSPACE && w->acceptsInput() && !w->m_X11ShouldntFocus &&
+            return w->mapped() && !w->isHidden() && !w->m_pinned && w != ignoreWindow && w->m_workspace == WORKSPACE && w->acceptsInput() && !w->m_X11ShouldntFocus &&
                 !w->m_ruleApplicator->noFocus().valueOrDefault() &&
                 !(*PMODALPARENTBLOCKING && w->m_xdgSurface && w->m_xdgSurface->m_toplevel && w->m_xdgSurface->m_toplevel->anyChildModal());
         };

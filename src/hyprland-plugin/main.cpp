@@ -1,13 +1,14 @@
 #include "kiwi.hpp"
 
 #include <plugins/PluginAPI.hpp>
+#include <ipc/s1/S1.hpp>
 
 #include <format>
 #include <stdexcept>
 #include <string>
 
-static SP<SHyprCtlCommand> g_versionCommand;
-static SP<SHyprCtlCommand> g_partsCommand;
+static SP<IPC::Socket1::SCommand> g_versionCommand;
+static SP<IPC::Socket1::SCommand> g_partsCommand;
 // the parts that started, for `hyprctl kiwi-parts`
 static std::string g_parts;
 
@@ -46,17 +47,17 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO pluginInit(HANDLE handle) {
         if (STARTED)
             g_parts += std::string{g_parts.empty() ? "" : " "} + NAME;
     g_partsCommand = HyprlandAPI::registerHyprCtlCommand(handle,
-                                                         SHyprCtlCommand{
-                                                             .name  = "kiwi-parts",
-                                                             .exact = true,
-                                                             .fn    = [](eHyprCtlOutputFormat, std::string) { return g_parts; },
+                                                         IPC::Socket1::SCommand{
+                                                             .name    = "kiwi-parts",
+                                                             .match   = IPC::Socket1::COMMAND_MATCH_EXACT,
+                                                             .handler = [](const IPC::Socket1::SRequest&) -> IPC::Socket1::SResponse { return g_parts; },
                                                          });
 
     g_versionCommand = HyprlandAPI::registerHyprCtlCommand(handle,
-                                                           SHyprCtlCommand{
-                                                               .name  = "kiwi-version",
-                                                               .exact = true,
-                                                               .fn    = [](eHyprCtlOutputFormat, std::string) { return std::format("{}", Kiwi::PROTOCOL); },
+                                                           IPC::Socket1::SCommand{
+                                                               .name    = "kiwi-version",
+                                                               .match   = IPC::Socket1::COMMAND_MATCH_EXACT,
+                                                               .handler = [](const IPC::Socket1::SRequest&) -> IPC::Socket1::SResponse { return std::format("{}", Kiwi::PROTOCOL); },
                                                            });
 
     return {

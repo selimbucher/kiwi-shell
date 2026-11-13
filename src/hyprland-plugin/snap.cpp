@@ -43,8 +43,8 @@
 #include <desktop/state/ViewHitTester.hpp>
 #include <desktop/state/ViewState.hpp>
 #include <desktop/state/WindowState.hpp>
-#include <desktop/view/Window.hpp>
-#include <desktop/Workspace.hpp>
+#include <desktop/view/window/Window.hpp>
+#include <workspace/HLWorkspace.hpp>
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
 #include <layout/LayoutManager.hpp>
@@ -52,7 +52,7 @@
 #include <layout/space/Space.hpp>
 #include <layout/supplementary/DragController.hpp>
 #include <layout/target/Target.hpp>
-#include <managers/EventManager.hpp>
+#include <ipc/s2/S2.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <managers/fullscreen/FullscreenController.hpp>
 #include <managers/input/InputManager.hpp>
@@ -256,7 +256,7 @@ namespace {
     // ─── Where it goes ────────────────────────────────────────────────────────
 
     bool tiledHere(const PHLWINDOW& w, const PHLWORKSPACE& workspace, const PHLWINDOW& but) {
-        return w != but && !w->m_isFloating && w->m_isMapped && !w->isHidden() && w->m_workspace == workspace;
+        return w != but && !w->m_isFloating && w->mapped() && !w->isHidden() && w->m_workspace == workspace;
     }
 
     bool anyTiled(const PHLWORKSPACE& workspace, const PHLWINDOW& but) {
@@ -947,7 +947,7 @@ namespace {
         });
         if (TAKEN)
             return;
-        g_pEventManager->postEvent(SHyprIPCEvent{
+        IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{
             .event = "kiwisnapped",
             .data  = std::format("{:x},{},{},{},{},{},{}", reinterpret_cast<uintptr_t>(WINDOW.get()), zone == ZONE_LEFT ? "left" : "right", MONITOR->m_name,
                                  std::lround(OTHER.x), std::lround(OTHER.y), std::lround(OTHER.w), std::lround(OTHER.h)),

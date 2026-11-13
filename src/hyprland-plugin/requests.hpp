@@ -5,7 +5,7 @@
 
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/LayerSurface.hpp>
-#include <desktop/view/Window.hpp>
+#include <desktop/view/window/Window.hpp>
 #include <output/Monitor.hpp>
 
 #include <charconv>
@@ -73,7 +73,7 @@ namespace Kiwi {
         for (const auto& level : monitor->m_layerSurfaceLayers) {
             for (const auto& layer : level) {
                 const auto LAYER = layer.lock();
-                if (LAYER && LAYER->m_layerSurface && LAYER->m_namespace == name && LAYER->m_mapped)
+                if (LAYER && LAYER->m_layerSurface && LAYER->m_namespace == name && LAYER->mapped())
                     return LAYER;
             }
         }
