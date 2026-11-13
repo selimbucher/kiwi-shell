@@ -149,9 +149,14 @@
             battery
             network
             # a window's new title taken from its event, not every window
-            # asked for again (and all of theirs notified) at each one
+            # asked for again (and all of theirs notified) at each one; and
+            # Hyprland 0.57's workspaces read, which name special ones by
+            # address rather than number
             (hyprland.overrideAttrs (old: {
-              patches = (old.patches or [ ]) ++ [ ./patches/astal-hyprland-title.patch ];
+              patches = (old.patches or [ ]) ++ [
+                ./patches/astal-hyprland-title.patch
+                ./patches/astal-hyprland-057.patch
+              ];
             }))
             # the default speaker and microphone back on their nodes once
             # wireplumber has restarted, not left on the ones gone

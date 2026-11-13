@@ -115,8 +115,19 @@
 #include <desktop/view/LayerSurface.hpp>
 #include <desktop/view/Popup.hpp>
 #include <desktop/view/window/Window.hpp>
+#include <desktop/view/window/WindowBackend.hpp>
+#include <desktop/view/window/WindowPresentation.hpp>
+#include <render/Context.hpp>
+#include <render/WindowRenderPresentation.hpp>
+#include <render/decorations/AnimatedDecorationGradient.hpp>
+// the border's colours are kept in its decoration, privately; the layout is
+// unaffected, this only lifts the access check for this translation unit
+#define private public
+#include <render/decorations/CHyprBorderDecoration.hpp>
+#undef private
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
+#include <ipc/s1/S1.hpp>
 #include <ipc/s2/S2.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <managers/input/trackpad/TrackpadGestures.hpp>
@@ -204,7 +215,7 @@ namespace {
     // zoomed into): its windows' bars are drawn as if it were on screen
     // (drawBars), its offset held at nothing meanwhile.
     bool heldStill(const PHLWORKSPACE& workspace) {
-        return workspace && !workspace->isVisible() && !workspace->m_renderOffset->isBeingAnimated();
+        return workspace && !workspace->visible() && !workspace->m_renderOffset->isBeingAnimated();
     }
 
     std::optional<CBox> barOf(const PHLWINDOW& window, const PHLMONITOR& monitor) {
@@ -217,8 +228,8 @@ namespace {
         // which drawBars works out afresh for the drawing)
         const auto WORKSPACE = window->m_workspace;
         const bool HELD      = heldStill(WORKSPACE);
-        const auto POS       = window->position(IGeometric::GEOMETRIC_CURRENT) + (HELD ? Vector2D{} : window->m_floatingOffset) +
-            (WORKSPACE && !window->m_pinned && !HELD ? WORKSPACE->m_renderOffset->value() : Vector2D{});
+        const auto POS       = window->position(IGeometric::GEOMETRIC_CURRENT) + (HELD ? Vector2D{} : window->presentation().floatingOffset()) +
+            (WORKSPACE && !(window->m_state & Desktop::View::WINDOW_STATE_PINNED) && !HELD ? WORKSPACE->m_renderOffset->value() : Vector2D{});
         const auto SIZE = window->size(IGeometric::GEOMETRIC_CURRENT);
         return CBox{POS.x, POS.y - TOP, SIZE.x, TOP}.translate(-monitor->m_position).scale(monitor->m_scale).round();
     }
@@ -226,6 +237,13 @@ namespace {
     bool isBar(IHyprWindowDecoration* decoration) {
         const auto TYPE = decoration->getDecorationType();
         return TYPE == DECORATION_CUSTOM || TYPE == DECORATION_GROUPBAR;
+    }
+
+    // the window's border colours, as its border decoration draws them now
+    // (0.56 kept them on the window as m_realBorderColor)
+    Config::CGradientValueData borderColor(const PHLWINDOW& window) {
+        const auto BORDER = dynamicPointerCast<CHyprBorderDecoration>(window->presentation().decoration(DECORATION_BORDER));
+        return BORDER ? BORDER->m_gradient.renderState().current : Config::CGradientValueData{};
     }
 
     struct SBarCanvas {
@@ -246,9 +264,11 @@ namespace {
         canvas.drawn = false;
         if (!canvas.fb)
             canvas.fb = g_pHyprRenderer->createFB("kiwi bars");
-        if (!canvas.fb->isAllocated() || canvas.size != monitor->m_pixelSize) {
-            canvas.fb->alloc(monitor->m_pixelSize.x, monitor->m_pixelSize.y, DRM_FORMAT_ABGR8888);
-            canvas.size = monitor->m_pixelSize;
+        // the monitor's transformed size, as Hyprland's own snapshots: 0.57
+        // draws everything untransformed and turns it only on the way out
+        if (!canvas.fb->isAllocated() || canvas.size != monitor->m_transformedSize) {
+            canvas.fb->alloc(monitor->m_transformedSize.x, monitor->m_transformedSize.y, DRM_FORMAT_ABGR8888);
+            canvas.size = monitor->m_transformedSize;
         }
         canvas.fb->setImageDescription(monitor->workBufferImageDescription());
         CRegion damage{0, 0, monitor->m_transformedSize.x, monitor->m_transformedSize.y};
@@ -264,26 +284,29 @@ namespace {
         // one in view, and a desktop zoomed into had its windows' bars come
         // only once it was there.
         std::vector<std::pair<PHLWORKSPACEREF, Vector2D>> held;
-        std::vector<std::pair<PHLWINDOWREF, Vector2D>>    floating;
+        // (with where the offset came from: one a workspace's slide gave the
+        // window is worked out from the workspace again)
+        std::vector<std::tuple<PHLWINDOWREF, Vector2D, Desktop::View::eFloatingOffsetSource>> floating;
         for (const auto& window : windows) {
             const auto WORKSPACE = window->m_workspace;
-            if (window->m_pinned || !heldStill(WORKSPACE) || WORKSPACE->m_renderOffset->value() == Vector2D{} ||
+            if ((window->m_state & Desktop::View::WINDOW_STATE_PINNED) || !heldStill(WORKSPACE) || WORKSPACE->m_renderOffset->value() == Vector2D{} ||
                 std::ranges::any_of(held, [&](const auto& h) { return h.first == WORKSPACE; }))
                 continue;
             held.emplace_back(WORKSPACE, WORKSPACE->m_renderOffset->value());
             for (const auto& w : Desktop::windowState()->windows())
                 if (w->m_workspace == WORKSPACE)
-                    floating.emplace_back(w, w->m_floatingOffset);
+                    floating.emplace_back(w, w->presentation().floatingOffset(), w->presentation().floatingOffsetSource());
             *WORKSPACE->m_renderOffset = Vector2D{};
             WORKSPACE->m_renderOffset->warp(false);
         }
 
-        g_pHyprRenderer->draw(CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
-        g_pHyprRenderer->startRenderPass();
+        auto& ctx = g_pHyprRenderer->context();
+        g_pHyprRenderer->draw(ctx, CClearPassElement::SClearData{CHyprColor(0, 0, 0, 0)});
+        g_pHyprRenderer->startRenderPass(ctx);
         for (const auto& window : windows)
-            for (const auto& decoration : window->m_windowDecorations)
+            for (const auto& decoration : window->presentation().decorations())
                 if (isBar(decoration.get()))
-                    decoration->draw(monitor, 1.F);
+                    decoration->draw(ctx, monitor, 1.F, window->presentation().renderPresentation());
         g_pHyprRenderer->endRender();
         canvas.drawn = true;
 
@@ -292,9 +315,13 @@ namespace {
                 *WORKSPACE->m_renderOffset = offset;
                 WORKSPACE->m_renderOffset->warp(false);
             }
-        for (const auto& [ref, offset] : floating)
-            if (const auto W = ref.lock())
-                W->m_floatingOffset = offset;
+        for (const auto& [ref, offset, source] : floating)
+            if (const auto W = ref.lock()) {
+                if (source == Desktop::View::eFloatingOffsetSource::WORKSPACE)
+                    W->presentation().onWorkspaceAnimUpdate();
+                else
+                    W->presentation().setFloatingOffset(offset);
+            }
     }
 
     SP<Render::ITexture> barsOn(const PHLMONITOR& monitor) {
@@ -501,8 +528,8 @@ namespace {
             m_tiles(std::move(tiles)), m_rounding(rounding), m_squareTop(squareTop), m_barred(barred), m_bars(bars), m_alpha(alpha), m_badges(badges), m_shadow(shadow),
             m_decor(decor), m_outline(outline) {}
 
-        std::vector<UP<IPassElement>> draw() override {
-            const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        std::vector<UP<IPassElement>> draw(Render::CRenderContext& ctx) override {
+            const auto MONITOR = ctx.m_data.pMonitor.lock();
             if (!MONITOR || m_alpha <= 0.F)
                 return {};
 
@@ -541,26 +568,27 @@ namespace {
                 const double   FACTOR = std::max(tile.box.w / SIZE.x, tile.box.h / (SIZE.y + BAR));
                 const CBox     BODY{tile.box.x, tile.box.y + BAR * FACTOR, tile.box.w, tile.box.h - BAR * FACTOR};
                 const Vector2D OFFSET{BODY.x + (BODY.w - SIZE.x * FACTOR) / 2, BODY.y + (BODY.h - SIZE.y * FACTOR) / 2};
-                const int      ROUND = m_barred ? std::round(WINDOW->rounding() * FACTOR) : m_rounding;
+                const int      ROUND = m_barred ? std::round(WINDOW->presentation().rounding() * FACTOR) : m_rounding;
 
                 if (m_shadow && m_decor > 0.F) {
-                    g_pHyprRenderer->m_renderData.clipBox = reach(tile, DECOR_REACH * SCALE);
+                    ctx.m_data.clipBox = reach(tile, DECOR_REACH * SCALE);
                     const CBox SHADE = tile.box.copy().expand(SHADOW_RANGE * SCALE).translate(Vector2D{0.0, SHADOW_DROP * SCALE}).round();
-                    g_pHyprOpenGL->renderRoundedShadow(SHADE, ROUND, 2.F, std::round(SHADOW_RANGE * SCALE), CHyprColor(0.F, 0.F, 0.F, SHADOW_ALPHA), m_decor * tile.alpha);
+                    g_pHyprOpenGL->renderRoundedShadow(ctx, SHADE, ROUND, 2.F, std::round(SHADOW_RANGE * SCALE), CHyprColor(0.F, 0.F, 0.F, SHADOW_ALPHA), m_decor * tile.alpha,
+                                                       Render::SWindowRenderPresentation{});
                 }
 
                 // the bar first: the window goes over the corners it fills in
                 if (BARRED)
-                    drawBar(tile, CBox{tile.box.x, tile.box.y, tile.box.w, (BAR + WINDOW->rounding()) * FACTOR}.round(), FACTOR / SCALE, MONITOR, ALPHA * tile.barAlpha);
+                    drawBar(ctx, tile, CBox{tile.box.x, tile.box.y, tile.box.w, (BAR + WINDOW->presentation().rounding()) * FACTOR}.round(), FACTOR / SCALE, MONITOR, ALPHA * tile.barAlpha);
 
-                g_pHyprRenderer->m_renderData.clipBox = tile.clip;
+                ctx.m_data.clipBox = tile.clip;
 
                 // An X11 window Hyprland doesn't scale (xwayland:force_zero_scaling)
                 // has its surfaces in the display's own pixels: the window's
-                // size times m_X11SurfaceScaledBy, as Hyprland's own surface
-                // boxes have it (WLSurface.cpp). Taken as they were, Spotify's
+                // size times its backend's surfaceScale(), as Hyprland's own
+                // surface boxes have it (Subsurface.cpp). Taken as they were, Spotify's
                 // picture came out twice its tile, its top-left quarter shown.
-                const double PIXELS = WINDOW->m_isX11 ? 1.0 / WINDOW->m_X11SurfaceScaledBy : 1.0;
+                const double PIXELS = WINDOW->backend().isX11() ? 1.0 / WINDOW->backend().surfaceScale() : 1.0;
 
                 SURFACE->resource()->breadthfirst(
                     [&](SP<CWLSurfaceResource> surface, const Vector2D& offset, void*) {
@@ -580,7 +608,7 @@ namespace {
                         if (SHOWN.empty())
                             return;
                         if (surface != SURFACE->resource() && !reachesCorner(SHOWN, BODY)) {
-                            g_pHyprOpenGL->renderTexture(surface->m_current.texture, box, {.surface = surface, .a = ALPHA});
+                            g_pHyprOpenGL->renderTexture(ctx, surface->m_current.texture, box, {.surface = surface, .a = ALPHA});
                             return;
                         }
 
@@ -592,7 +620,7 @@ namespace {
                             SHOWN.y -= ROUND;
                             SHOWN.h += ROUND;
                         }
-                        g_pHyprOpenGL->renderTexture(surface->m_current.texture, SHOWN,
+                        g_pHyprOpenGL->renderTexture(ctx, surface->m_current.texture, SHOWN,
                                                      {
                                                          .surface                     = surface,
                                                          .a                           = ALPHA,
@@ -610,33 +638,33 @@ namespace {
                 // without it the window lost its edge in Mission Control and
                 // got it back as it landed.
                 if (m_barred) {
-                    const int BORDER = WINDOW->getRealBorderSize();
+                    const int BORDER = WINDOW->presentation().borderSize();
                     if (BORDER > 0) {
-                        const float POWER = WINDOW->roundingPower();
+                        const float POWER = WINDOW->presentation().roundingPower();
                         // (Hyprland's own outer corner, CHyprBorderDecoration)
                         const double CORRECTION = BORDER * (M_SQRT2 - 1) * std::max(2.0 - POWER, 0.0);
-                        g_pHyprRenderer->m_renderData.clipBox = reach(tile, (BORDER + 1) * SCALE);
-                        g_pHyprOpenGL->renderBorder(tile.box, WINDOW->m_realBorderColor,
+                        ctx.m_data.clipBox = reach(tile, (BORDER + 1) * SCALE);
+                        g_pHyprOpenGL->renderBorder(ctx, tile.box, borderColor(WINDOW),
                                                     {.round = ROUND, .roundingPower = POWER, .borderSize = BORDER, .a = ALPHA,
                                                      .outerRound = static_cast<int>(std::round(ROUND + (BORDER - CORRECTION) * SCALE))});
-                        g_pHyprRenderer->m_renderData.clipBox = tile.clip;
+                        ctx.m_data.clipBox = tile.clip;
                     }
                 }
 
                 if (!tile.badge.empty())
-                    drawBadge(tile, MONITOR->m_scale, ALPHA);
+                    drawBadge(ctx, tile, MONITOR->m_scale, ALPHA);
 
                 if (tile.outline > 0.F && m_outline && m_decor > 0.F) {
                     const int GAP   = std::round(OUTLINE_GAP * SCALE);
                     const int WIDTH = std::round(OUTLINE_WIDTH * SCALE);
-                    g_pHyprRenderer->m_renderData.clipBox = reach(tile, GAP + WIDTH);
+                    ctx.m_data.clipBox = reach(tile, GAP + WIDTH);
                     // the width logical (Hyprland scales it), the box and rounding
                     // physical; the outer corner is concentric with the inner
-                    g_pHyprOpenGL->renderBorder(tile.box.copy().expand(GAP).round(), Config::CGradientValueData(*m_outline),
+                    g_pHyprOpenGL->renderBorder(ctx, tile.box.copy().expand(GAP).round(), Config::CGradientValueData(*m_outline),
                                                 {.round = ROUND + GAP, .roundingPower = 2.F, .borderSize = OUTLINE_WIDTH, .a = m_decor * tile.outline * tile.alpha});
                 }
 
-                g_pHyprRenderer->m_renderData.clipBox = {};
+                ctx.m_data.clipBox = {};
             }
 
             return {};
@@ -675,7 +703,7 @@ namespace {
         // Hyprland rounds all four of a window's corners, and hyprbars fills
         // in behind the top two, under the bar. Drawn under the window, the
         // tile has them as the screen does.
-        void drawBar(const SDrawTile& tile, const CBox& target, double scale, const PHLMONITOR& monitor, float alpha) {
+        void drawBar(Render::CRenderContext& ctx, const SDrawTile& tile, const CBox& target, double scale, const PHLMONITOR& monitor, float alpha) {
             const auto& BAR = *tile.bar;
             const CBox  CANVAS{target.x - BAR.x * scale, target.y - BAR.y * scale, monitor->m_transformedSize.x * scale, monitor->m_transformedSize.y * scale};
             // A bar cut off whole (a desktop zoomed into growing over its
@@ -685,15 +713,15 @@ namespace {
             const CBox  CLIP = target.intersection(tile.clip);
             if (CLIP.empty())
                 return;
-            g_pHyprRenderer->m_renderData.clipBox = CLIP;
-            g_pHyprRenderer->pushMonitorTransformEnabled(true);
-            g_pHyprOpenGL->renderTexture(m_bars, CANVAS, {.a = alpha});
-            g_pHyprRenderer->popMonitorTransformEnabled();
-            g_pHyprRenderer->m_renderData.clipBox = tile.clip;
+            ctx.m_data.clipBox = CLIP;
+            // (0.56 turned the canvas with the monitor here; 0.57 draws both
+            // the canvas and the frame untransformed)
+            g_pHyprOpenGL->renderTexture(ctx, m_bars, CANVAS, {.a = alpha});
+            ctx.m_data.clipBox = tile.clip;
         }
 
         // in the picture's bottom-right corner, still cut off by the clip
-        void drawBadge(const SDrawTile& tile, double scale, float alpha) {
+        void drawBadge(Render::CRenderContext& ctx, const SDrawTile& tile, double scale, float alpha) {
             const int  PX      = std::round(BADGE_SIZE * scale);
             const auto TEXTURE = loadBadge(m_badges, tile.badge, PX, scale);
             if (!TEXTURE)
@@ -702,14 +730,14 @@ namespace {
             const double EDGE = (BADGE_SIZE + BADGE_MARGIN) * scale;
             CBox         box{tile.clip.x + tile.clip.w - EDGE - PAD, tile.clip.y + tile.clip.h - EDGE - PAD, PX + 2 * PAD, PX + 2 * PAD};
             box.round();
-            g_pHyprOpenGL->renderTexture(TEXTURE, box, {.a = alpha, .allowDim = false});
+            g_pHyprOpenGL->renderTexture(ctx, TEXTURE, box, {.a = alpha, .allowDim = false});
         }
 
-        bool needsLiveBlur() override {
+        bool needsLiveBlur(Render::CRenderContext&) override {
             return false;
         }
 
-        bool needsPrecomputeBlur() override {
+        bool needsPrecomputeBlur(Render::CRenderContext&) override {
             return false;
         }
 
@@ -721,8 +749,8 @@ namespace {
             return EK_CUSTOM;
         }
 
-        std::optional<CBox> boundingBox() override {
-            const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        std::optional<CBox> boundingBox(Render::CRenderContext& ctx) override {
+            const auto MONITOR = ctx.m_data.pMonitor.lock();
             if (!MONITOR || m_tiles.empty())
                 return {};
 
@@ -1102,11 +1130,11 @@ namespace {
                     .alpha   = LAYER->alpha()[Desktop::View::LS_ALPHA_FADE]->value(),
                     .surface = LAYER->wlSurface() ? LAYER->wlSurface()->resource() : nullptr,
                 };
-            if (!LAYER->m_popupHead)
+            if (!LAYER->popupHead())
                 return std::nullopt;
 
             std::optional<SAnchor> found;
-            LAYER->m_popupHead->breadthfirst(
+            LAYER->popupHead()->breadthfirst(
                 [&found](SP<CPopup> node, void*) {
                     if (found || !node || !node->mapped() || node->inert() || !node->wlSurface() || !node->wlSurface()->resource())
                         return;
@@ -1133,7 +1161,7 @@ namespace {
                 auto       box        = ON_MONITOR(tile.rect);
                 auto       clip       = ON_MONITOR(tile.clip);
                 float      alpha      = tile.alpha;
-                if (SHOWN < 1.F && (!WINDOW->m_workspace || !WINDOW->m_workspace->isVisible())) {
+                if (SHOWN < 1.F && (!WINDOW->m_workspace || !WINDOW->m_workspace->visible())) {
                     // a window of a desktop not on screen (Mission Control
                     // has slid away from it) has nowhere to fly to: it fades
                     // where it is
@@ -1193,7 +1221,7 @@ namespace {
             const bool LAYERED = !Kiwi::Stacking::active();
             std::ranges::stable_sort(tiles, {}, [&order, LAYERED](const SDrawTile& tile) {
                 const auto WINDOW = tile.window.lock();
-                return std::pair{LAYERED && WINDOW && WINDOW->m_isFloating, WINDOW ? order[WINDOW.get()] : 0};
+                return std::pair{LAYERED && WINDOW && WINDOW->isFloating(), WINDOW ? order[WINDOW.get()] : 0};
             });
             return tiles;
         }
@@ -1208,7 +1236,7 @@ namespace {
         }
 
         // just after the layer (or its popups) has been added to the frame
-        void afterLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool popups) {
+        void afterLayer(Render::CRenderContext& ctx, const PHLLS& layer, const PHLMONITOR& monitor, bool popups) {
             if (m_tiles.empty() || popups != popup || layer->m_namespace != namespace_)
                 return;
             const auto ANCHOR = anchorOn(monitor);
@@ -1220,8 +1248,8 @@ namespace {
             const float ALPHA = fly ? 1.F : ANCHOR->alpha;
             const float DECOR = fly ? shown() : ANCHOR->alpha;
             const auto  OUTLINE = m_selected.lock() || m_previous.lock() ? std::optional<CHyprColor>{m_selectColor} : std::nullopt;
-            g_pHyprRenderer->m_renderPass.add(makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), squareTop, ALPHA, m_badges, shadow,
-                                                                              DECOR, OUTLINE, bars, bars ? barsOn(monitor) : nullptr));
+            g_pHyprRenderer->addPassElement(ctx, makeUnique<CPreviewPassElement>(std::move(tiles), std::round(rounding * monitor->m_scale), squareTop, ALPHA, m_badges, shadow,
+                                                                                 DECOR, OUTLINE, bars, bars ? barsOn(monitor) : nullptr));
         }
 
         // A window nobody can see is suspended and never drawn, so it would
@@ -1337,7 +1365,7 @@ namespace {
                 if (WINDOW && std::ranges::any_of(m_tiles, [&](const STile& tile) { return tile.window == hidden.window; }))
                     return false;
                 if (WINDOW)
-                    WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW));
+                    WINDOW->presentation().alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW));
                 return true;
             });
             for (const auto& tile : m_tiles) {
@@ -1355,7 +1383,7 @@ namespace {
         void showWindows() {
             for (const auto& hidden : m_hidden) {
                 if (const auto WINDOW = hidden.window.lock())
-                    WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW));
+                    WINDOW->presentation().alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW));
             }
             m_hidden.clear();
         }
@@ -1386,7 +1414,7 @@ namespace {
                 const float LEFT = SHOWN <= 0.F ? 1.F : 0.F;
                 for (const auto& hidden : m_hidden) {
                     if (const auto WINDOW = hidden.window.lock())
-                        WINDOW->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW) * LEFT);
+                        WINDOW->presentation().alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(fullscreenAlpha(WINDOW) * LEFT);
                 }
             }
             if (LAYER && LAYER->alpha()[Desktop::View::LS_ALPHA_FADE]->value() != SHOWN)
@@ -1423,7 +1451,7 @@ namespace {
                 const auto WINDOW = ref.lock();
                 if (!WINDOW || !WINDOW->mapped())
                     continue;
-                WINDOW->setSuspended(WINDOW->isHidden() || !WINDOW->m_workspace || !WINDOW->m_workspace->isVisible());
+                WINDOW->setSuspended(WINDOW->isHidden() || !WINDOW->m_workspace || !WINDOW->m_workspace->visible());
             }
             m_woken.clear();
         }
@@ -1478,16 +1506,16 @@ namespace {
             if (!Kiwi::Layers::available())
                 return false;
             m_command = HyprlandAPI::registerHyprCtlCommand(handle,
-                                                            SHyprCtlCommand{
+                                                            IPC::Socket1::SCommand{
                                                                 .name = "kiwi-previews",
                                                                 // the arguments are part of the request, so it can
                                                                 // only be matched by its start
-                                                                .exact = false,
-                                                                .fn    = [this](eHyprCtlOutputFormat, std::string request) { return take(request); },
+                                                                .match   = IPC::Socket1::COMMAND_MATCH_PREFIX,
+                                                                .handler = [this](const IPC::Socket1::SRequest& request) -> IPC::Socket1::SResponse { return take(request.command); },
                                                             });
             if (!m_command)
                 return false;
-            Kiwi::Layers::afterLayer([this](const PHLLS& layer, const PHLMONITOR& monitor, bool popups) { afterLayer(layer, monitor, popups); });
+            Kiwi::Layers::afterLayer([this](Render::CRenderContext& ctx, const PHLLS& layer, const PHLMONITOR& monitor, bool popups) { afterLayer(ctx, layer, monitor, popups); });
             // damage and frame callbacks belong outside the render itself
             m_preListener = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) {
                 m_rendering = monitor;
@@ -1504,10 +1532,10 @@ namespace {
                 drawBars(monitor, barred);
             });
             // damage from here on is the next frame's (as the genie has it)
-            m_stageListener = Event::bus()->m_events.render.stage.listen([this](eRenderStage stage) {
-                if (stage != RENDER_POST)
+            m_stageListener = Event::bus()->m_events.render.stage.listen([this](const Event::SRenderStageEvent& event) {
+                if (event.stage != RENDER_POST)
                     return;
-                const auto MONITOR = m_rendering.lock();
+                const auto MONITOR = event.monitor ? event.monitor : m_rendering.lock();
                 for (auto& [_, set] : m_sets)
                     set->afterFrame(MONITOR);
             });
@@ -1536,7 +1564,7 @@ namespace {
         }
 
         // just after a layer, or its popups, has been added to the frame
-        void afterLayer(const PHLLS& layer, const PHLMONITOR& monitor, bool popups) {
+        void afterLayer(Render::CRenderContext& ctx, const PHLLS& layer, const PHLMONITOR& monitor, bool popups) {
             if (!layer || !monitor)
                 return;
             // flying tiles last: a window dragged over Mission Control's bar
@@ -1544,14 +1572,14 @@ namespace {
             for (const bool FLY : {false, true})
                 for (auto& [_, set] : m_sets)
                     if (set->fly == FLY)
-                        set->afterLayer(layer, monitor, popups);
+                        set->afterLayer(ctx, layer, monitor, popups);
         }
 
       private:
         std::map<std::string, UP<CTileSet>, std::less<>> m_sets;
         SCounters                                        m_counters;
         BadgeTextures                                    m_badges;
-        SP<SHyprCtlCommand>                              m_command;
+        SP<IPC::Socket1::SCommand>                       m_command;
         CHyprSignalListener                              m_preListener;
         CHyprSignalListener                              m_stageListener;
         CHyprSignalListener                              m_openedListener;
@@ -1586,7 +1614,7 @@ namespace {
                                                               .update = [this](float travel, float accelerated, uint32_t ms) { swipeUpdate(travel, accelerated, ms); },
                                                               .end    = [this](bool cancelled, uint32_t ms) { swipeEnd(cancelled, ms); },
                                                           }),
-                                                          m_gestureFingers, TRACKPAD_GESTURE_DIR_VERTICAL, 0, 1.F, false);
+                                                          m_gestureFingers, TRACKPAD_GESTURE_DIR_VERTICAL, Input::HL_MODIFIER_NONE, 1.F, false);
             if (!result)
                 return result.error();
             m_gestureAdded = true;
@@ -1596,7 +1624,7 @@ namespace {
         // only ever ours: one the config has on the same fingers stays
         void removeGesture() {
             if (m_gestureAdded)
-                (void)g_pTrackpadGestures->removeGesture(m_gestureFingers, TRACKPAD_GESTURE_DIR_VERTICAL, 0, 1.F, false);
+                (void)g_pTrackpadGestures->removeGesture(m_gestureFingers, TRACKPAD_GESTURE_DIR_VERTICAL, Input::HL_MODIFIER_NONE, 1.F, false);
             m_gestureAdded = false;
         }
 

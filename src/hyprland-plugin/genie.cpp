@@ -40,14 +40,17 @@
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/LayerSurface.hpp>
 #include <desktop/view/window/Window.hpp>
+#include <desktop/view/window/WindowPresentation.hpp>
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
+#include <ipc/s1/S1.hpp>
 #include <ipc/s2/S2.hpp>
 #include <managers/fullscreen/FullscreenController.hpp>
 #include <output/Monitor.hpp>
 #include <render/Framebuffer.hpp>
 #include <render/OpenGL.hpp>
 #include <render/Renderer.hpp>
+#include <render/Context.hpp>
 #include <render/Shader.hpp>
 #include <render/pass/PassElement.hpp>
 
@@ -56,6 +59,7 @@
 #include <chrono>
 #include <format>
 #include <optional>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -225,9 +229,9 @@ void main() {
             m_shader(std::move(shader)), m_uniforms(uniforms), m_snapshot(genie.snapshot), m_window(genie.from), m_icon(genie.icon.value_or(genie.from)), m_quad(extentOf(genie)),
             m_scale(genie.monitor ? genie.monitor->m_scale : 1.0), m_shape(shapeAt(progressOf(genie), m_window, m_icon)) {}
 
-        std::vector<UP<IPassElement>> draw() override {
+        std::vector<UP<IPassElement>> draw(Render::CRenderContext& ctx) override {
             const auto TEXTURE = m_snapshot ? m_snapshot->getTexture() : nullptr;
-            if (!TEXTURE || g_pHyprRenderer->m_renderData.damage.empty() || m_shape.bottom - m_shape.top < 0.5F)
+            if (!TEXTURE || ctx.m_data.damage.empty() || m_shape.bottom - m_shape.top < 0.5F)
                 return {};
 
             glActiveTexture(GL_TEXTURE0);
@@ -237,7 +241,7 @@ void main() {
 
             g_pHyprOpenGL->blend(true);
             const auto SHADER = g_pHyprOpenGL->useShader(m_shader);
-            SHADER->setUniformMatrix3fv(SHADER_PROJ, 1, GL_TRUE, g_pHyprRenderer->projectBoxToTarget(m_quad).getMatrix());
+            SHADER->setUniformMatrix3fv(SHADER_PROJ, 1, GL_TRUE, g_pHyprRenderer->projectBoxToTarget(ctx, m_quad).getMatrix());
             SHADER->setUniformInt(SHADER_TEX, 0);
 
             const auto PAIR = [](GLint at, const Vector2D& value) { glUniform2f(at, value.x, value.y); };
@@ -254,21 +258,21 @@ void main() {
             glUniform1f(m_uniforms.alpha, m_shape.alpha);
 
             glBindVertexArray(SHADER->getUniformLocation(SHADER_SHADER_VAO));
-            g_pHyprRenderer->m_renderData.damage.forEachRect([](const auto& RECT) {
-                g_pHyprOpenGL->scissor(&RECT, g_pHyprRenderer->m_renderData.transformDamage);
+            ctx.m_data.damage.forEachRect([&ctx](const auto& RECT) {
+                g_pHyprOpenGL->scissor(ctx, &RECT, ctx.m_data.transformDamage);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             });
-            g_pHyprOpenGL->scissor(nullptr);
+            g_pHyprOpenGL->disableScissor();
             glBindVertexArray(0);
             TEXTURE->unbind();
             return {};
         }
 
-        bool needsLiveBlur() override {
+        bool needsLiveBlur(Render::CRenderContext&) override {
             return false;
         }
 
-        bool needsPrecomputeBlur() override {
+        bool needsPrecomputeBlur(Render::CRenderContext&) override {
             return false;
         }
 
@@ -280,7 +284,7 @@ void main() {
             return EK_CUSTOM;
         }
 
-        std::optional<CBox> boundingBox() override {
+        std::optional<CBox> boundingBox(Render::CRenderContext&) override {
             // the pass wants it unscaled
             return m_quad.copy().scale(1.0 / m_scale).round();
         }
@@ -303,10 +307,10 @@ void main() {
 
         bool init(HANDLE handle) {
             m_command = HyprlandAPI::registerHyprCtlCommand(handle,
-                                                            SHyprCtlCommand{
-                                                                .name  = "kiwi-genie",
-                                                                .exact = false,
-                                                                .fn    = [this](eHyprCtlOutputFormat, std::string request) { return take(request); },
+                                                            IPC::Socket1::SCommand{
+                                                                .name    = "kiwi-genie",
+                                                                .match   = IPC::Socket1::COMMAND_MATCH_PREFIX,
+                                                                .handler = [this](const IPC::Socket1::SRequest& request) -> IPC::Socket1::SResponse { return take(request.command); },
                                                             });
             if (!m_command)
                 return false;
@@ -320,11 +324,11 @@ void main() {
             });
             // among the windows, under the dock and everything else the
             // shell shows: the window goes into the dock, behind its pill
-            m_stageListener = Event::bus()->m_events.render.stage.listen([this](eRenderStage stage) {
-                if (stage == RENDER_POST_WINDOWS)
-                    render();
+            m_stageListener = Event::bus()->m_events.render.stage.listen([this](const Event::SRenderStageEvent& event) {
+                if (event.stage == RENDER_POST_WINDOWS && event.context)
+                    render(event.context->get());
                 // damage from here on is the next frame's
-                else if (stage == RENDER_POST)
+                else if (event.stage == RENDER_POST)
                     advance(m_rendering.lock());
             });
             m_moveListener = Event::bus()->m_events.window.moveToWorkspace.listen([this](PHLWINDOW window, PHLWORKSPACE workspace) { moved(window, workspace); });
@@ -350,7 +354,7 @@ void main() {
         SP<CShader>               m_shader;
         SUniforms                 m_uniforms;
         bool                      m_shaderFailed = false;
-        SP<SHyprCtlCommand>       m_command;
+        SP<IPC::Socket1::SCommand> m_command;
         CHyprSignalListener       m_stageListener;
         CHyprSignalListener       m_preListener;
         CHyprSignalListener       m_moveListener;
@@ -382,7 +386,7 @@ void main() {
                 m_watched = std::string{WORDS[1]};
                 m_inside.clear();
                 for (const auto& window : Desktop::windowState()->windows()) {
-                    if (window->mapped() && window->m_workspace && window->m_workspace->m_name == m_watched)
+                    if (window->mapped() && window->m_workspace && window->m_workspace->displayName() == m_watched)
                         m_inside.emplace_back(window);
                 }
                 return "ok";
@@ -451,13 +455,13 @@ void main() {
             // its workspace keeps that offset wherever it is moved: drawn off
             // to the side of where it takes input, until a drag snaps it
             // back. On screen it is worked out again for where it has landed.
-            if (workspace->isVisible())
-                window->onWorkspaceAnimUpdate();
+            if (workspace->visible())
+                window->presentation().onWorkspaceAnimUpdate();
 
             if (m_watched.empty())
                 return;
 
-            const bool INTO = workspace->m_name == m_watched;
+            const bool INTO = workspace->displayName() == m_watched;
             const bool OUT  = std::ranges::find(m_inside, window) != m_inside.end();
             std::erase_if(m_inside, [&](const PHLWINDOWREF& ref) { return ref.expired() || ref == window; });
             if (INTO)
@@ -482,11 +486,11 @@ void main() {
             // Leaving a workspace on screen, Hyprland is fading the window out
             // and still draws it, so this is the last chance to picture it;
             // the fade itself is cut, or the window would show twice.
-            if (INTO && window->m_monitorMovedFrom != -1) {
+            if (INTO && window->presentation().movingFromMonitor()) {
                 auto snapshot = pictureLeaving(window);
                 if (!snapshot)
                     return;
-                window->alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(0.F);
+                window->presentation().alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(0.F);
                 m_genies.emplace_back(SGenie{
                     .window   = window,
                     .monitor  = MONITOR,
@@ -504,7 +508,7 @@ void main() {
             // Coming back onto a workspace on screen: the layout places the
             // window after this, so it is pictured before the next frame
             // (pictureRestored) and hidden until the genie has put it back.
-            if (OUT && !INTO && workspace->isVisible()) {
+            if (OUT && !INTO && workspace->visible()) {
                 m_genies.emplace_back(SGenie{.window = window, .monitor = MONITOR, .restore = true, .since = Time::steadyNow()});
                 post("restore", window, MONITOR);
                 g_pHyprRenderer->damageMonitor(MONITOR);
@@ -521,7 +525,7 @@ void main() {
             if (!genie || !genie->icon || !genie->snapshot || genie->restore != into)
                 return false;
             // (Hyprland gives the window its new monitor after telling of the move)
-            if (!into && (!workspace->isVisible() || workspace->m_monitor != genie->monitor))
+            if (!into && (!workspace->visible() || workspace->m_monitor != genie->monitor))
                 return false;
 
             const float PROGRESS = progressOf(*genie);
@@ -533,8 +537,8 @@ void main() {
             genie->since    = NOW - std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<float>(DURATION) * RUN);
 
             if (into) {
-                window->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
-                window->alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(0.F);
+                window->presentation().alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
+                window->presentation().alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(0.F);
             } else
                 genie->snapshot.reset();
             damage(*genie);
@@ -557,10 +561,10 @@ void main() {
             if (offset->isBeingAnimated())
                 return nullptr; // sliding somewhere already; not ours to hold
 
-            std::vector<std::pair<PHLWINDOWREF, Vector2D>> floating;
+            std::vector<std::tuple<PHLWINDOWREF, Vector2D, Desktop::View::eFloatingOffsetSource>> floating;
             for (const auto& w : Desktop::windowState()->windows())
                 if (w->m_workspace == WORKSPACE)
-                    floating.emplace_back(w, w->m_floatingOffset);
+                    floating.emplace_back(w, w->presentation().floatingOffset(), w->presentation().floatingOffsetSource());
 
             const bool     FORCED = WORKSPACE->m_forceRendering;
             const Vector2D OFFSET = offset->value();
@@ -573,9 +577,16 @@ void main() {
             *offset = OFFSET;
             offset->warp(false);
             WORKSPACE->m_forceRendering = FORCED;
-            for (const auto& [ref, value] : floating)
-                if (const auto W = ref.lock())
-                    W->m_floatingOffset = value;
+            // one the workspace's slide gave is worked out again from the
+            // offset just put back, as Hyprland would; only that keeps it
+            // marked as the workspace's
+            for (const auto& [ref, value, source] : floating)
+                if (const auto W = ref.lock()) {
+                    if (source == Desktop::View::eFloatingOffsetSource::WORKSPACE)
+                        W->presentation().onWorkspaceAnimUpdate();
+                    else
+                        W->presentation().setFloatingOffset(value);
+                }
             return snapshot;
         }
 
@@ -594,11 +605,11 @@ void main() {
                 WINDOW->sizeAnimation()->warp();
                 genie.covered = coveredBy(WINDOW);
                 cover(genie);
-                WINDOW->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
+                WINDOW->presentation().alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
                 genie.snapshot = g_pHyprRenderer->makeSnapshotFB(WINDOW);
                 genie.from     = onMonitor(monitor, WINDOW->getFullWindowBoundingBox());
                 if (genie.snapshot)
-                    WINDOW->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(0.F);
+                    WINDOW->presentation().alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(0.F);
                 else
                     genie.since = Time::steadyNow() - DURATION - HOLD; // just appears
             }
@@ -610,7 +621,7 @@ void main() {
             const auto WINDOW = genie.window.lock();
             if (!genie.restore || !WINDOW)
                 return;
-            WINDOW->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
+            WINDOW->presentation().alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.F);
             g_pHyprRenderer->damageWindow(WINDOW);
         }
 
@@ -627,11 +638,11 @@ void main() {
         static std::vector<PHLWINDOWREF> uncoveredBy(const PHLWINDOW& window, const PHLMONITOR& monitor) {
             std::vector<PHLWINDOWREF> covered;
             for (const auto& w : Desktop::windowState()->windows()) {
-                if (w == window || !Desktop::View::validMapped(w) || w->m_pinned || !w->m_workspace)
+                if (w == window || !Desktop::View::validMapped(w) || (w->m_state & Desktop::View::WINDOW_STATE_PINNED) || !w->m_workspace)
                     continue;
-                if (w->m_workspace->m_monitor != monitor || !w->m_workspace->isVisible())
+                if (w->m_workspace->m_monitor != monitor || !w->m_workspace->visible())
                     continue;
-                if (w->alphaValue(WINDOW_ALPHA_FULLSCREEN) >= 1.F && !w->alpha(WINDOW_ALPHA_FULLSCREEN)->isBeingAnimated())
+                if (w->presentation().alphaValue(WINDOW_ALPHA_FULLSCREEN) >= 1.F && !w->presentation().alpha(WINDOW_ALPHA_FULLSCREEN)->isBeingAnimated())
                     continue;
                 covered.emplace_back(w);
             }
@@ -661,7 +672,7 @@ void main() {
             const float ALPHA = progressOf(genie);
             for (const auto& ref : genie.covered)
                 if (const auto W = ref.lock())
-                    W->alpha(WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(ALPHA);
+                    W->presentation().alpha(WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(ALPHA);
         }
 
         // back to what Hyprland would have them at
@@ -670,7 +681,7 @@ void main() {
                 const auto W = ref.lock();
                 if (!W)
                     continue;
-                W->alpha(WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(W->isBlockedByFullscreen() ? 0.F : 1.F);
+                W->presentation().alpha(WINDOW_ALPHA_FULLSCREEN)->setValueAndWarp(W->isBlockedByFullscreen() ? 0.F : 1.F);
                 g_pHyprRenderer->damageWindow(W);
             }
             genie.covered.clear();
@@ -698,15 +709,15 @@ void main() {
             return true;
         }
 
-        void render() {
-            const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        void render(Render::CRenderContext& ctx) {
+            const auto MONITOR = ctx.m_data.pMonitor.lock();
             if (m_genies.empty() || !MONITOR || !ensureShader())
                 return;
             for (auto& genie : m_genies) {
                 // a restored window waiting for its icon stays hidden
                 if (genie.monitor != MONITOR || !genie.snapshot || (!genie.icon && genie.restore))
                     continue;
-                g_pHyprRenderer->m_renderPass.add(makeUnique<CGeniePassElement>(m_shader, m_uniforms, genie));
+                g_pHyprRenderer->addPassElement(ctx, makeUnique<CGeniePassElement>(m_shader, m_uniforms, genie));
             }
         }
 

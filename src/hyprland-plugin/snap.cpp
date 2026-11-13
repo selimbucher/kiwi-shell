@@ -44,6 +44,7 @@
 #include <desktop/state/ViewState.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/window/Window.hpp>
+#include <desktop/view/window/WindowGroupMembership.hpp>
 #include <workspace/HLWorkspace.hpp>
 #include <event/EventBus.hpp>
 #include <helpers/time/Time.hpp>
@@ -52,6 +53,7 @@
 #include <layout/space/Space.hpp>
 #include <layout/supplementary/DragController.hpp>
 #include <layout/target/Target.hpp>
+#include <ipc/s1/S1.hpp>
 #include <ipc/s2/S2.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <managers/fullscreen/FullscreenController.hpp>
@@ -61,6 +63,7 @@
 #include <output/Monitor.hpp>
 #include <protocols/LayerShell.hpp>
 #include <render/OpenGL.hpp>
+#include <render/Context.hpp>
 #include <render/Renderer.hpp>
 #include <render/pass/PassElement.hpp>
 #include <state/MonitorState.hpp>
@@ -145,7 +148,7 @@ namespace {
     CFunctionHook* g_layerHook  = nullptr;
     CFunctionHook* g_beginHook  = nullptr;
 
-    SP<SHyprCtlCommand> g_command;
+    SP<IPC::Socket1::SCommand> g_command;
 
     // ─── What Hyprland keeps of a drag to itself ──────────────────────────────
     // A window given another size under the pointer is dragged on from there.
@@ -256,7 +259,7 @@ namespace {
     // ─── Where it goes ────────────────────────────────────────────────────────
 
     bool tiledHere(const PHLWINDOW& w, const PHLWORKSPACE& workspace, const PHLWINDOW& but) {
-        return w != but && !w->m_isFloating && w->mapped() && !w->isHidden() && w->m_workspace == workspace;
+        return w != but && !w->isFloating() && w->mapped() && !w->isHidden() && w->m_workspace == workspace;
     }
 
     bool anyTiled(const PHLWORKSPACE& workspace, const PHLWINDOW& but) {
@@ -297,9 +300,9 @@ namespace {
     };
 
     std::optional<SPlace> placeFor(eZone zone, const PHLWORKSPACE& workspace, const PHLWINDOW& window, const Vector2D& pointer) {
-        if (zone == ZONE_NONE || !workspace || !workspace->m_space)
+        if (zone == ZONE_NONE || !workspace || !workspace->space())
             return std::nullopt;
-        const CBox AREA = workspace->m_space->workArea();
+        const CBox AREA = workspace->space()->workArea();
         if (zone == ZONE_TOP || !anyTiled(workspace, window))
             return SPlace{.outer = zoneIn(zone, AREA)};
 
@@ -416,24 +419,24 @@ namespace {
       public:
         CSnapPreviewElement(CBox box, float alpha) : m_box(box), m_alpha(alpha) {}
 
-        std::vector<UP<IPassElement>> draw() override {
-            const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        std::vector<UP<IPassElement>> draw(Render::CRenderContext& ctx) override {
+            const auto MONITOR = ctx.m_data.pMonitor.lock();
             if (!MONITOR || m_alpha <= 0.F)
                 return {};
             const double SCALE = MONITOR->m_scale;
             const CBox   BOX   = m_box.copy().translate(-MONITOR->m_position).scale(SCALE).round();
             const int    ROUND = std::round(PREVIEW_ROUNDING * SCALE);
-            g_pHyprOpenGL->renderRect(BOX, CHyprColor(1.F, 1.F, 1.F, 0.14F * m_alpha), {.round = ROUND});
-            g_pHyprOpenGL->renderBorder(BOX, Config::CGradientValueData(CHyprColor(1.F, 1.F, 1.F, 0.45F)),
+            g_pHyprOpenGL->renderRect(ctx, BOX, CHyprColor(1.F, 1.F, 1.F, 0.14F * m_alpha), {.round = ROUND});
+            g_pHyprOpenGL->renderBorder(ctx, BOX, Config::CGradientValueData(CHyprColor(1.F, 1.F, 1.F, 0.45F)),
                                         {.round = ROUND, .roundingPower = 2.F, .borderSize = PREVIEW_BORDER, .a = m_alpha});
             return {};
         }
 
-        bool needsLiveBlur() override {
+        bool needsLiveBlur(Render::CRenderContext&) override {
             return false;
         }
 
-        bool needsPrecomputeBlur() override {
+        bool needsPrecomputeBlur(Render::CRenderContext&) override {
             return false;
         }
 
@@ -445,8 +448,8 @@ namespace {
             return EK_CUSTOM;
         }
 
-        std::optional<CBox> boundingBox() override {
-            const auto MONITOR = g_pHyprRenderer->m_renderData.pMonitor.lock();
+        std::optional<CBox> boundingBox(Render::CRenderContext& ctx) override {
+            const auto MONITOR = ctx.m_data.pMonitor.lock();
             if (!MONITOR)
                 return {};
             // the pass wants it unscaled: it scales it itself
@@ -527,8 +530,8 @@ namespace {
         const auto TARGET = self->target();
         const auto WINDOW = TARGET ? TARGET->window() : nullptr;
         g_untile          = {};
-        if (!WINDOW || self->mode() != MBIND_MOVE || TARGET->floating() || Fullscreen::controller()->isFullscreen(WINDOW) || WINDOW->m_group ||
-            g_pInputManager->getModsFromAllKBs() != 0)
+        if (!WINDOW || self->mode() != MBIND_MOVE || TARGET->floating() || Fullscreen::controller()->isFullscreen(WINDOW) || WINDOW->grouping().group() ||
+            sc<bool>(g_pInputManager->getModsFromAllKBs()))
             return reinterpret_cast<FUpdate>(g_updateHook->m_original)(self);
 
         // Hyprland floats it here once the drag is far enough, and guesses
@@ -750,7 +753,7 @@ namespace {
         const auto       placed    = [](const SSnapped& s) {
             const auto WINDOW = s.window.lock();
             const auto TARGET = WINDOW ? WINDOW->layoutTarget() : nullptr;
-            return WINDOW && WINDOW->m_workspace && WINDOW->m_workspace->isVisible() && TARGET && TARGET->floating() && sameBox(TARGET->position(), s.box) ? WINDOW
+            return WINDOW && WINDOW->m_workspace && WINDOW->m_workspace->visible() && TARGET && TARGET->floating() && sameBox(TARGET->position(), s.box) ? WINDOW
                                                                                                                                                                : nullptr;
         };
         for (const auto& upper : g_snapped) {
@@ -841,7 +844,7 @@ namespace {
         if (WINDOW && self->mode() == MBIND_RESIZE)
             resizeBeside(TARGET, WINDOW);
         // a pinned window is on every desktop, and has nowhere to go on one
-        if (!WINDOW || self->mode() != MBIND_MOVE || !self->dragThresholdReached() || g_untile.active || WINDOW->onSpecialWorkspace() || WINDOW->m_pinned)
+        if (!WINDOW || self->mode() != MBIND_MOVE || !self->dragThresholdReached() || g_untile.active || WINDOW->onSpecialWorkspace() || (WINDOW->m_state & Desktop::View::WINDOW_STATE_PINNED))
             return leave();
         const auto MONITOR = State::monitorState()->query().vec(pointer).run();
         if (!MONITOR || MONITOR->m_activeSpecialWorkspace)
@@ -963,7 +966,7 @@ namespace {
         const auto WINDOW  = target->window();
         const auto SPACE   = target->space();
         const auto MONITOR = WINDOW ? WINDOW->m_monitor.lock() : nullptr;
-        if (!validMapped(WINDOW) || !target->floating() || WINDOW->m_pinned || !SPACE || !MONITOR || Fullscreen::controller()->isFullscreen(WINDOW))
+        if (!validMapped(WINDOW) || !target->floating() || (WINDOW->m_state & Desktop::View::WINDOW_STATE_PINNED) || !SPACE || !MONITOR || Fullscreen::controller()->isFullscreen(WINDOW))
             return;
         const CBox INNER = goalBox(WINDOW);
         const CBox OUTER = outerOf(INNER, WINDOW);
@@ -989,8 +992,8 @@ namespace {
     // As Hyprland ends it, then where the edge says: once the drop is done
     // with, and only for a drop. A key ends a drag too (Escape, to leave it
     // where it is), and so does the window closing.
-    void hkDragEnd(CDragStateController* self) {
-        using FDragEnd     = void (*)(CDragStateController*);
+    bool hkDragEnd(CDragStateController* self) {
+        using FDragEnd     = bool (*)(CDragStateController*);
         const auto ZONE    = g_preview.zone;
         const auto TARGET  = self->target();
         const bool MOVING  = self->mode() == MBIND_MOVE;
@@ -999,14 +1002,14 @@ namespace {
         g_untile           = {};
         leave();
 
-        reinterpret_cast<FDragEnd>(g_endHook->m_original)(self);
+        const bool ENDED = reinterpret_cast<FDragEnd>(g_endHook->m_original)(self);
 
         // (dropped into a group, it is the group's)
-        if (!MOVING || !TARGET || !TARGET->window() || TARGET->window()->m_group)
-            return;
+        if (!MOVING || !TARGET || !TARGET->window() || TARGET->window()->grouping().group())
+            return ENDED;
         g_pEventLoopManager->doLater([ZONE = KEYED ? ZONE_NONE : ZONE, WEAK = WP<Layout::ITarget>{TARGET}, POINTER] {
             const auto TARGET = WEAK.lock();
-            if (!TARGET || !validMapped(TARGET->window()) || TARGET->window()->m_group)
+            if (!TARGET || !validMapped(TARGET->window()) || TARGET->window()->grouping().group())
                 return;
             if (ZONE == ZONE_NONE)
                 return keepInReach(TARGET);
@@ -1015,6 +1018,7 @@ namespace {
             const auto BEFORE = TARGET->floating() ? TARGET->position().size() : TARGET->lastFloatingSize();
             snap(ZONE, TARGET, POINTER, BEFORE);
         });
+        return ENDED;
     }
 
     // ─── Minimized and back ───────────────────────────────────────────────────
@@ -1040,17 +1044,17 @@ namespace {
     void moving(const PHLWINDOW& window, const PHLWORKSPACE& to) {
         std::erase_if(g_away, [](const auto& a) { return a.window.expired(); });
         const auto MINIMIZED = Kiwi::Genie::minimizedWorkspace();
-        if (!window || !to || MINIMIZED.empty() || window->m_isFloating)
+        if (!window || !to || MINIMIZED.empty() || window->isFloating())
             return;
         // (the window's workspace is already the one it goes to: its box is
         // still where it was)
-        if (to->m_name == MINIMIZED) {
+        if (to->displayName() == MINIMIZED) {
             std::erase_if(g_away, [&](const auto& a) { return a.window == window; });
             g_away.emplace_back(SAway{.window = window, .outer = outerOf(goalBox(window), window)});
             return;
         }
         const auto IT = std::ranges::find_if(g_away, [&](const auto& a) { return a.window == window; });
-        if (IT == g_away.end() || to->m_isSpecialWorkspace)
+        if (IT == g_away.end() || to->type() == Workspace::eWorkspaceType::SPECIAL)
             return;
         const CBox OUTER = IT->outer;
         g_away.erase(IT);
@@ -1063,7 +1067,7 @@ namespace {
             g_pEventLoopManager->doLater([WEAK = PHLWINDOWREF{window}, INNER] {
                 const auto WINDOW = WEAK.lock();
                 const auto TARGET = WINDOW ? WINDOW->layoutTarget() : nullptr;
-                if (!validMapped(WINDOW) || WINDOW->m_isFloating || WINDOW->onSpecialWorkspace() || !TARGET || !TARGET->space())
+                if (!validMapped(WINDOW) || WINDOW->isFloating() || WINDOW->onSpecialWorkspace() || !TARGET || !TARGET->space())
                     return;
                 const auto KEPT = TARGET->lastFloatingSize();
                 g_layoutManager->changeFloatingMode(TARGET);
@@ -1075,9 +1079,9 @@ namespace {
         }
         // beside the tile that took its place, on the side it was
         const auto BESIDE = tiledAt(to, OUTER.middle(), window);
-        if (!BESIDE || !to->m_space)
+        if (!BESIDE || !to->space())
             return;
-        (void)to->m_space->layoutMsg(std::format("preselect {}", sideOf(OUTER, outerOf(goalBox(BESIDE), BESIDE))));
+        (void)to->space()->layoutMsg(std::format("preselect {}", sideOf(OUTER, outerOf(goalBox(BESIDE), BESIDE))));
         g_split = {.window = BESIDE, .active = true};
         // used by the layout in this move, or not at all
         g_pEventLoopManager->doLater([] {
@@ -1095,7 +1099,7 @@ namespace {
         if (WORDS.size() != 2 && WORDS.size() != 3)
             return "usage: kiwi-snap 0x<address> left|right|top|top-left|top-right|bottom-left|bottom-right [<x>,<y>,<w>,<h>]";
         const auto WINDOW = Kiwi::windowFrom(WORDS[0]);
-        if (!validMapped(WINDOW) || !WINDOW->m_workspace || WINDOW->onSpecialWorkspace() || WINDOW->m_pinned || Fullscreen::controller()->isFullscreen(WINDOW))
+        if (!validMapped(WINDOW) || !WINDOW->m_workspace || WINDOW->onSpecialWorkspace() || (WINDOW->m_state & Desktop::View::WINDOW_STATE_PINNED) || Fullscreen::controller()->isFullscreen(WINDOW))
             return "no such window on a desktop";
         const auto IT = std::ranges::find_if(ZONE_NAMES, [&](const auto& z) { return WORDS[1] == z.second; });
         if (IT == ZONE_NAMES.end())
@@ -1182,14 +1186,14 @@ namespace Kiwi::Snap {
         // (without it, a window's sides resize as its corners do)
         g_beginHook = hook(handle, "dragBegin", DRAG_BEGIN, reinterpret_cast<void*>(&hkDragBegin));
         g_command = HyprlandAPI::registerHyprCtlCommand(handle,
-                                                        SHyprCtlCommand{
-                                                            .name  = "kiwi-snap",
-                                                            .exact = false,
-                                                            .fn    = [](eHyprCtlOutputFormat, std::string request) { return take(request); },
+                                                        IPC::Socket1::SCommand{
+                                                            .name    = "kiwi-snap",
+                                                            .match   = IPC::Socket1::COMMAND_MATCH_PREFIX,
+                                                            .handler = [](const IPC::Socket1::SRequest& request) -> IPC::Socket1::SResponse { return take(request.command); },
                                                         });
         // the shape's next frame while it comes or goes
-        g_stageListener = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
-            if (stage == RENDER_POST && showing() && progress() < 1.F)
+        g_stageListener = Event::bus()->m_events.render.stage.listen([](const Event::SRenderStageEvent& event) {
+            if (event.stage == RENDER_POST && showing() && progress() < 1.F)
                 damage();
         });
         // (told before the keybinds are, which end the drag)
@@ -1227,7 +1231,8 @@ namespace Kiwi::Snap {
             return;
         float      alpha = 0.F;
         const CBox BOX   = shapeNow(alpha);
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CSnapPreviewElement>(BOX, alpha));
+        // (the one render session Hyprland keeps: the pass being drawn)
+        Render::IHyprRenderer::addPassElement(g_pHyprRenderer->context(), makeUnique<CSnapPreviewElement>(BOX, alpha));
     }
 
     void exit() {

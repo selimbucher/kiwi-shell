@@ -38,6 +38,8 @@
 
 #include <plugins/PluginAPI.hpp>
 #include <workspace/HLWorkspace.hpp>
+#include <workspace/RegularWorkspace.hpp>
+#include <ipc/s1/S1.hpp>
 #include <config/ConfigValue.hpp>
 #include <event/EventBus.hpp>
 #include <ipc/s2/S2.hpp>
@@ -63,10 +65,10 @@ namespace {
       public:
         bool init(HANDLE handle) {
             m_command = HyprlandAPI::registerHyprCtlCommand(handle,
-                                                            SHyprCtlCommand{
-                                                                .name  = "kiwi-desktops",
-                                                                .exact = false,
-                                                                .fn    = [this](eHyprCtlOutputFormat, std::string request) { return take(request); },
+                                                            IPC::Socket1::SCommand{
+                                                                .name    = "kiwi-desktops",
+                                                                .match   = IPC::Socket1::COMMAND_MATCH_PREFIX,
+                                                                .handler = [this](const IPC::Socket1::SRequest& request) -> IPC::Socket1::SResponse { return take(request.command); },
                                                             });
             if (!m_command)
                 return false;
@@ -77,6 +79,14 @@ namespace {
                 m_connected.emplace_back(monitor);
                 applySoon();
             });
+            // Hyprland keeps what a display showed when it went, but no longer
+            // tells: remember it here, as it did, before its workspaces move
+            m_goneListener = Event::bus()->m_events.monitor.preRemoved.listen([this](PHLMONITOR monitor) {
+                if (monitor && monitor->m_enabled && monitor->m_activeWorkspace) {
+                    if (const auto ID = monitor->m_activeWorkspace->numberedID())
+                        m_remembered[monitor->m_name] = *ID;
+                }
+            });
             m_frameListener     = Event::bus()->m_events.render.pre.listen([this](PHLMONITOR monitor) { tellSlide(monitor); });
             return true;
         }
@@ -85,6 +95,7 @@ namespace {
             m_connected.clear();
             m_refreshedListener.reset();
             m_monitorListener.reset();
+            m_goneListener.reset();
             m_frameListener.reset();
             m_command.reset();
             m_kept.clear();
@@ -93,15 +104,18 @@ namespace {
 
       private:
         // the desktops by monitor name, in the shell's order
-        std::map<std::string, std::vector<WORKSPACEID>> m_kept;
+        std::map<std::string, std::vector<Workspace::WorkspaceIDContainer>> m_kept;
+        // the desktop each display showed when it was disconnected
+        std::map<std::string, Workspace::WorkspaceIDContainer> m_remembered;
         // the workspaces marked persistent here
         std::vector<PHLWORKSPACEREF> m_ours;
         // monitors connected since the set was last applied
         std::vector<PHLMONITORREF> m_connected;
-        SP<SHyprCtlCommand>          m_command;
-        CHyprSignalListener          m_refreshedListener, m_monitorListener, m_frameListener;
+        SP<IPC::Socket1::SCommand>   m_command;
+        CHyprSignalListener          m_refreshedListener, m_monitorListener, m_goneListener, m_frameListener;
         // where each display's slide was last told to be, by monitor name
-        std::map<std::string, std::pair<WORKSPACEID, double>> m_slides;
+        // (a workspace by the name Hyprland's own events give it)
+        std::map<std::string, std::pair<std::string, double>> m_slides;
 
         // Only when it has moved: a display at rest sends nothing, and
         // one frame at rest after a slide says it has stopped.
@@ -115,12 +129,13 @@ namespace {
             auto&        last     = m_slides[monitor->m_name];
             // (at rest is said even after a step smaller than that: the shell
             // follows the slide until it hears it is over)
-            if (last.first == WS->m_id && (FRACTION == last.second || (FRACTION != 0.0 && std::abs(last.second - FRACTION) < 1e-4)))
+            const auto&  NAME     = WS->addressableName();
+            if (last.first == NAME && (FRACTION == last.second || (FRACTION != 0.0 && std::abs(last.second - FRACTION) < 1e-4)))
                 return;
-            const bool MOVED = last.first != WS->m_id || FRACTION != 0.0 || last.second != 0.0;
-            last             = {WS->m_id, FRACTION};
+            const bool MOVED = last.first != NAME || FRACTION != 0.0 || last.second != 0.0;
+            last             = {NAME, FRACTION};
             if (MOVED)
-                IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwidesk", .data = std::format("{},{},{:.4f}", monitor->m_name, WS->m_id, FRACTION)});
+                IPC::Socket2::sock()->postEvent(IPC::Socket2::SEvent{.event = "kiwidesk", .data = std::format("{},{},{:.4f}", monitor->m_name, NAME, FRACTION)});
         }
         bool                         m_applying = false;
 
@@ -139,13 +154,14 @@ namespace {
         }
 
         void showRemembered(const PHLMONITOR& monitor) {
-            const auto ID   = State::workspaceState()->rememberedWorkspaceForMonitor(monitor->m_name);
-            const auto KEPT = m_kept.find(monitor->m_name);
-            if (!ID || KEPT == m_kept.end() || !std::ranges::contains(KEPT->second, *ID))
+            const auto REMEMBERED = m_remembered.find(monitor->m_name);
+            const auto KEPT       = m_kept.find(monitor->m_name);
+            if (REMEMBERED == m_remembered.end() || KEPT == m_kept.end() || !std::ranges::contains(KEPT->second, REMEMBERED->second))
                 return;
-            if (monitor->m_activeWorkspace && monitor->m_activeWorkspace->m_id == *ID)
+            const auto ID = REMEMBERED->second;
+            if (monitor->m_activeWorkspace && monitor->m_activeWorkspace->numberedID() == ID)
                 return;
-            const auto WORKSPACE = State::workspaceState()->query().id(*ID).run();
+            const auto WORKSPACE = State::workspaceState()->query().numbered(Workspace::SWorkspaceNumberedID{ID}).run();
             if (WORKSPACE && WORKSPACE->m_monitor == monitor)
                 monitor->changeWorkspace(WORKSPACE, false, true, true);
         }
@@ -157,14 +173,18 @@ namespace {
                 if (!MONITOR)
                     continue;
                 for (const auto ID : ids) {
-                    auto workspace = State::workspaceState()->query().id(ID).run();
+                    auto workspace = State::workspaceState()->query().numbered(Workspace::SWorkspaceNumberedID{ID}).run();
                     // one on another monitor now was moved there: it stays
                     // where it was put, and the shell hears of it there
-                    if (!workspace)
-                        workspace = State::workspaceState()->create(ID, MONITOR->m_id, "", false);
-                    if (!workspace || workspace->m_isSpecialWorkspace)
+                    if (!workspace) {
+                        workspace = State::workspaceState()->createNumbered(Workspace::SWorkspaceNumberedID{ID}, MONITOR, "", false);
+                        if (workspace)
+                            workspace->ready();
+                    }
+                    const auto REGULAR = dynamicPointerCast<Workspace::CRegularWorkspace>(workspace);
+                    if (!REGULAR)
                         continue;
-                    workspace->setPersistent(true);
+                    REGULAR->setPersistent(true);
                     kept.emplace_back(workspace);
                 }
             }
@@ -175,8 +195,8 @@ namespace {
         void release(const std::vector<PHLWORKSPACE>& kept) {
             for (const auto& ref : m_ours) {
                 const auto WORKSPACE = ref.lock();
-                if (WORKSPACE && std::ranges::find(kept, WORKSPACE) == kept.end())
-                    WORKSPACE->setPersistent(false);
+                if (const auto REGULAR = dynamicPointerCast<Workspace::CRegularWorkspace>(WORKSPACE); REGULAR && std::ranges::find(kept, WORKSPACE) == kept.end())
+                    REGULAR->setPersistent(false);
             }
             m_ours.clear();
             for (const auto& workspace : kept)
@@ -194,15 +214,15 @@ namespace {
         // "<monitor>:<id>,<id> ..." or nothing
         std::string take(std::string_view request) {
             request.remove_prefix(std::string_view{"kiwi-desktops"}.size());
-            std::map<std::string, std::vector<WORKSPACEID>> kept;
+            std::map<std::string, std::vector<Workspace::WorkspaceIDContainer>> kept;
             for (const auto& word : split(request, ' ')) {
                 const auto COLON = word.rfind(':');
                 if (COLON == std::string_view::npos || COLON == 0)
                     return "a monitor's desktops are <monitor>:<id>[,<id>...]";
                 auto& ids = kept[std::string{word.substr(0, COLON)}];
                 for (const auto& field : split(word.substr(COLON + 1), ',')) {
-                    WORKSPACEID id = 0;
-                    if (!parse(field, id) || id <= 0)
+                    Workspace::WorkspaceIDContainer id = 0;
+                    if (!parse(field, id) || id == 0)
                         return "a desktop is a workspace id above 0";
                     ids.emplace_back(id);
                 }

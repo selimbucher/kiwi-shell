@@ -19,6 +19,10 @@
 
 #include <plugins/PluginAPI.hpp>
 
+namespace Render {
+    class CRenderContext;
+}
+
 #include <functional>
 #include <optional>
 #include <string>
@@ -34,7 +38,7 @@ namespace Kiwi {
 
     // right after a layer surface (or, with popups, its popups) is drawn
     namespace Layers {
-        using FAfterLayer = std::function<void(const PHLLS&, const PHLMONITOR&, bool popups)>;
+        using FAfterLayer = std::function<void(Render::CRenderContext& ctx, const PHLLS&, const PHLMONITOR&, bool popups)>;
         bool init(HANDLE handle);
         bool available();
         void afterLayer(FAfterLayer listener);

@@ -17,19 +17,24 @@
 
 namespace {
     constexpr auto RENDER_LAYER =
-        "Render::IHyprRenderer::renderLayer(Hyprutils::Memory::CSharedPointer<Desktop::View::CLayerSurface>, Hyprutils::Memory::CSharedPointer<Monitor::CMonitor>, "
-        "std::chrono::time_point<std::chrono::_V2::steady_clock, std::chrono::duration<long, std::ratio<1l, 1000000000l> > > const&, bool, bool)";
+        "Render::IHyprRenderer::renderLayer(Render::CRenderContext&, Hyprutils::Memory::CSharedPointer<Desktop::View::CLayerSurface>, "
+        "Hyprutils::Memory::CSharedPointer<Monitor::CMonitor>, "
+        "std::chrono::time_point<std::chrono::_V2::steady_clock, std::chrono::duration<long, std::ratio<1l, 1000000000l> > > const&, bool, bool, bool)";
 
     CFunctionHook*                          g_hook = nullptr;
     std::vector<Kiwi::Layers::FAfterLayer> g_listeners;
 
-    void hkRenderLayer(Render::IHyprRenderer* self, PHLLS layer, PHLMONITOR monitor, const Time::steady_tp& time, bool popups, bool lockscreen) {
-        using FRenderLayer = void (*)(Render::IHyprRenderer*, PHLLS, PHLMONITOR, const Time::steady_tp&, bool, bool);
-        reinterpret_cast<FRenderLayer>(g_hook->m_original)(self, layer, monitor, time, popups, lockscreen);
-        if (lockscreen || !layer || !monitor)
+    void hkRenderLayer(Render::IHyprRenderer* self, Render::CRenderContext& ctx, PHLLS layer, PHLMONITOR monitor, const Time::steady_tp& time, bool popups, bool lockscreen,
+                       bool workspaceScene) {
+        using FRenderLayer = void (*)(Render::IHyprRenderer*, Render::CRenderContext&, PHLLS, PHLMONITOR, const Time::steady_tp&, bool, bool, bool);
+        reinterpret_cast<FRenderLayer>(g_hook->m_original)(self, ctx, layer, monitor, time, popups, lockscreen, workspaceScene);
+        // (a workspace scene is a workspace drawn for something other than the
+        // monitor itself, a capture or an overview: nothing of the shell's goes
+        // over it)
+        if (lockscreen || workspaceScene || !layer || !monitor)
             return;
         for (const auto& listener : g_listeners)
-            listener(layer, monitor, popups);
+            listener(ctx, layer, monitor, popups);
     }
 }
 

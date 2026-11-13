@@ -22,6 +22,8 @@
 #include <desktop/state/ViewHitTester.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <desktop/view/window/Window.hpp>
+#include <desktop/view/window/WindowBackend.hpp>
+#include <desktop/view/window/WindowPresentation.hpp>
 #include <workspace/HLWorkspace.hpp>
 #include <desktop/state/FocusState.hpp>
 #include <config/ConfigValue.hpp>
@@ -30,7 +32,9 @@
 #include <managers/fullscreen/FullscreenController.hpp>
 #include <output/Monitor.hpp>
 #include <protocols/XDGShell.hpp>
+#include <render/Context.hpp>
 #include <render/Renderer.hpp>
+#include <render/scene/SceneSelection.hpp>
 #include <render/Framebuffer.hpp>
 #include <render/pass/RectPassElement.hpp>
 #include <render/pass/TexPassElement.hpp>
@@ -43,8 +47,9 @@
 
 namespace {
     constexpr auto RENDER_WORKSPACE_WINDOWS =
-        "Render::IHyprRenderer::renderWorkspaceWindows(Hyprutils::Memory::CSharedPointer<Monitor::CMonitor>, Hyprutils::Memory::CSharedPointer<CWorkspace>, "
-        "std::chrono::time_point<std::chrono::_V2::steady_clock, std::chrono::duration<long, std::ratio<1l, 1000000000l> > > const&)";
+        "Render::IHyprRenderer::renderWorkspaceWindows(Render::CRenderContext&, Hyprutils::Memory::CSharedPointer<Monitor::CMonitor>, "
+        "Hyprutils::Memory::CSharedPointer<Workspace::CHLWorkspace>, std::chrono::time_point<std::chrono::_V2::steady_clock, std::chrono::duration<long, "
+        "std::ratio<1l, 1000000000l> > > const&, Render::eSceneMode)";
     constexpr auto WINDOW_AT =
         "Desktop::CViewHitTester::windowAt(Hyprutils::Math::Vector2D const&, unsigned short, Hyprutils::Memory::CSharedPointer<Desktop::View::CWindow>) const";
 
@@ -58,8 +63,8 @@ namespace {
     constexpr auto RENDER_WINDOW = &SRenderer::renderWindow;
 
     // A closing window's fade, as Hyprland draws one (renderFadeouts).
-    void drawFadeout(Render::IHyprRenderer* self, const PHLMONITOR& monitor, const SP<Desktop::IFadeout>& fadeout) {
-        const auto FB = fadeout->framebuffer();
+    void drawFadeout(Render::CRenderContext& ctx, const PHLMONITOR& monitor, const SP<Desktop::IFadeout>& fadeout) {
+        const auto FB = fadeout->framebuffer(Render::eSceneMode::MONITOR);
         if (!FB || !FB->getTexture())
             return;
         const auto EFFECTS = fadeout->effects();
@@ -67,7 +72,7 @@ namespace {
             CRectPassElement::SRectData data;
             data.box   = {0, 0, monitor->m_transformedSize.x, monitor->m_transformedSize.y};
             data.color = CHyprColor(0, 0, 0, EFFECTS.dimAroundAlpha);
-            self->m_renderPass.add(makeUnique<CRectPassElement>(data));
+            Render::IHyprRenderer::addPassElement(ctx, makeUnique<CRectPassElement>(data));
         }
         if (EFFECTS.preBlur) {
             CRectPassElement::SRectData data;
@@ -78,10 +83,9 @@ namespace {
             data.round         = EFFECTS.preBlur->round;
             data.roundingPower = EFFECTS.preBlur->roundingPower;
             data.xray          = EFFECTS.preBlur->xray;
-            self->m_renderPass.add(makeUnique<CRectPassElement>(data));
+            Render::IHyprRenderer::addPassElement(ctx, makeUnique<CRectPassElement>(data));
         }
         CTexPassElement::SRenderData data;
-        data.flipEndFrame          = true;
         data.tex                   = FB->getTexture();
         data.box                   = fadeout->renderBox();
         data.a                     = fadeout->alpha();
@@ -89,9 +93,10 @@ namespace {
         data.blur                  = EFFECTS.textureBlur.enabled;
         data.blurA                 = EFFECTS.textureBlur.alpha;
         data.forceBlurBlend        = EFFECTS.textureBlur.forceBlend;
+        data.blurShapeInvalid      = true;
         data.ignoreAlpha           = EFFECTS.textureBlur.ignoreAlpha;
         data.blockBlurOptimization = EFFECTS.textureBlur.blockBlurOptimization;
-        self->m_renderPass.add(makeUnique<CTexPassElement>(std::move(data)));
+        Render::IHyprRenderer::addPassElement(ctx, makeUnique<CTexPassElement>(std::move(data)));
     }
 
     // Hyprland's pass, but one: every window of the desktop in the list's
@@ -100,8 +105,19 @@ namespace {
     // window belongs to the pass are Hyprland's. A window closing fades where
     // it was in the order — Hyprland keeps its place in the list (zIndex), the
     // windows above it moved down one since — not over all the others.
-    void hkRenderWorkspaceWindows(Render::IHyprRenderer* self, PHLMONITOR monitor, PHLWORKSPACE workspace, const Time::steady_tp& time) {
-        Event::bus()->m_events.render.stage.emit(RENDER_PRE_WINDOWS);
+    //
+    // Only the monitor's own picture: a workspace drawn on its own (a capture
+    // of its windows) is left to Hyprland.
+    void hkRenderWorkspaceWindows(Render::IHyprRenderer* self, Render::CRenderContext& ctx, PHLMONITOR monitor, PHLWORKSPACE workspace, const Time::steady_tp& time,
+                                  Render::eSceneMode mode) {
+        if (mode != Render::eSceneMode::MONITOR) {
+            using FRender = void (*)(Render::IHyprRenderer*, Render::CRenderContext&, PHLMONITOR, PHLWORKSPACE, const Time::steady_tp&, Render::eSceneMode);
+            reinterpret_cast<FRender>(g_renderHook->m_original)(self, ctx, monitor, workspace, time, mode);
+            return;
+        }
+
+        const bool SPECIAL = workspace->type() == Workspace::eWorkspaceType::SPECIAL;
+        Event::bus()->m_events.render.stage.emit({RENDER_PRE_WINDOWS, monitor, ctx});
 
         std::vector<PHLWINDOW> windows;
         windows.reserve(Desktop::windowState()->windows().size());
@@ -109,13 +125,13 @@ namespace {
             if (w->isHidden() || !w->mapped() || !self->shouldRenderWindow(w, monitor))
                 continue;
             // drawn with the pinned ones, over all of these
-            if (w->m_isFloating && w->m_pinned)
+            if (w->isFloating() && (w->m_state & Desktop::View::WINDOW_STATE_PINNED))
                 continue;
-            const bool IGNORE_SPECIAL_CHECK = w->m_monitorMovedFrom != -1 && (w->m_workspace && !w->m_workspace->isVisible());
-            if (!IGNORE_SPECIAL_CHECK && workspace->m_isSpecialWorkspace != w->onSpecialWorkspace())
+            const bool IGNORE_SPECIAL_CHECK = w->presentation().movingFromMonitor() && (w->m_workspace && !w->m_workspace->visible());
+            if (!IGNORE_SPECIAL_CHECK && SPECIAL != w->onSpecialWorkspace())
                 continue;
             // special ones on another monitor are drawn with its own desktop
-            if (w->m_isFloating && workspace->m_isSpecialWorkspace && w->m_monitor != workspace->m_monitor)
+            if (w->isFloating() && SPECIAL && w->m_monitor != workspace->m_monitor)
                 continue;
             windows.emplace_back(w);
         }
@@ -123,6 +139,8 @@ namespace {
         std::vector<SP<Desktop::IFadeout>> fadeouts;
         for (const auto& fadeout : Desktop::fadingOutState()->fadeouts()) {
             if (!fadeout || fadeout->monitor() != monitor || (fadeout->workspace() && fadeout->workspace() != workspace))
+                continue;
+            if (!ctx.shouldRenderContent(fadeout->source().noScreenShare))
                 continue;
             if (fadeout->plane() == Desktop::FADEOUT_PLANE_WINDOW_TILED || fadeout->plane() == Desktop::FADEOUT_PLANE_WINDOW_FLOATING)
                 fadeouts.emplace_back(fadeout);
@@ -138,16 +156,16 @@ namespace {
         for (const auto& w : windows) {
             if (faded < fadeouts.size())
                 for (const int AT = place[w.get()]; faded < fadeouts.size() && fadeouts[faded]->zIndex() <= AT; ++faded)
-                    drawFadeout(self, monitor, fadeouts[faded]);
+                    drawFadeout(ctx, monitor, fadeouts[faded]);
             // where a window dragged against an edge will go, under it (snap.cpp)
             Kiwi::Snap::underWindow(w, monitor);
-            (self->*RENDER_WINDOW)(w, monitor, time, true, Render::RENDER_PASS_MAIN, false, false);
+            (self->*RENDER_WINDOW)(ctx, w, monitor, w->presentation().renderPresentation(mode), time, true, Render::RENDER_PASS_MAIN, false, false);
         }
         for (; faded < fadeouts.size(); ++faded)
-            drawFadeout(self, monitor, fadeouts[faded]);
+            drawFadeout(ctx, monitor, fadeouts[faded]);
 
         for (const auto& w : windows)
-            (self->*RENDER_WINDOW)(w, monitor, time, true, Render::RENDER_PASS_POPUP, false, false);
+            (self->*RENDER_WINDOW)(ctx, w, monitor, w->presentation().renderPresentation(mode), time, true, Render::RENDER_PASS_POPUP, false, false);
     }
 
     // Hyprland's answer, unless it is a floating window with something of
@@ -162,7 +180,7 @@ namespace {
 
         using FWindowAt = PHLWINDOW (*)(const Desktop::CViewHitTester*, const Vector2D&, uint16_t, PHLWINDOW);
         const auto FOUND = reinterpret_cast<FWindowAt>(g_hitHook->m_original)(self, pos, properties, ignoreWindow);
-        if (!FOUND || !FOUND->m_isFloating || FOUND->m_pinned || !FOUND->m_workspace)
+        if (!FOUND || !FOUND->isFloating() || (FOUND->m_state & WINDOW_STATE_PINNED) || !FOUND->m_workspace)
             return FOUND;
         // floating windows asked for, or the windows that come before a lock
         // screen: as Hyprland has them
@@ -179,15 +197,15 @@ namespace {
         static auto PMODALPARENTBLOCKING = CConfigValue<Config::INTEGER>("general:modal_parent_blocking");
         static auto PFOLLOWMOUSESHRINK   = CConfigValue<Config::INTEGER>("input:follow_mouse_shrink");
         const auto  TAKES                = [&](const PHLWINDOW& w) {
-            return w->mapped() && !w->isHidden() && !w->m_pinned && w != ignoreWindow && w->m_workspace == WORKSPACE && w->acceptsInput() && !w->m_X11ShouldntFocus &&
-                !w->m_ruleApplicator->noFocus().valueOrDefault() &&
-                !(*PMODALPARENTBLOCKING && w->m_xdgSurface && w->m_xdgSurface->m_toplevel && w->m_xdgSurface->m_toplevel->anyChildModal());
+            return w->mapped() && !w->isHidden() && !(w->m_state & WINDOW_STATE_PINNED) && w != ignoreWindow && w->m_workspace == WORKSPACE && w->acceptsInput() &&
+                !w->shouldntFocus() && !w->m_ruleApplicator->noFocus().valueOrDefault() &&
+                !(*PMODALPARENTBLOCKING && !w->backend().isX11() && w->backend().traits().hasModalChild);
         };
         const auto& WINDOWS = Desktop::windowState()->windows();
 
         // a popup over it, the topmost window's first
         for (const auto& w : WINDOWS | std::views::reverse) {
-            if (!w->m_isX11 && (w == FOUND || TAKES(w)) && w->hasPopupAt(pos))
+            if (!w->backend().isX11() && (w == FOUND || TAKES(w)) && w->hasPopupAt(pos))
                 return w;
         }
 
@@ -195,7 +213,7 @@ namespace {
         const auto SHRINK = (properties & FOLLOW_MOUSE_CHECK) ? *PFOLLOWMOUSESHRINK : 0;
         for (auto it = WINDOWS.rbegin(); it != WINDOWS.rend() && *it != FOUND; ++it) {
             const auto& w = *it;
-            if (w->m_isFloating || !TAKES(w))
+            if (w->isFloating() || !TAKES(w))
                 continue;
             CBox box = (properties & USE_PROP_TILED) ? w->getWindowBoxUnified(properties) : w->layoutBox();
             if (SHRINK > 0 && w != Desktop::focusState()->window())

@@ -19,10 +19,11 @@
 #include <desktop/view/window/Window.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <event/EventBus.hpp>
-#include <keybinds/Manager.hpp>
+#include <desktop/view/window/WaylandBackend.hpp>
+#include <desktop/view/window/WindowBackend.hpp>
+#include <config/shared/actions/ConfigActions.hpp>
 #include <managers/eventLoop/EventLoopManager.hpp>
 #include <protocols/XDGShell.hpp>
-#include <xwayland/XSurface.hpp>
 
 #include <algorithm>
 #include <format>
@@ -43,6 +44,18 @@ namespace {
         friend type field(SToplevelResource);
     };
     template struct SField<SToplevelResource, &CXDGToplevelResource::m_resource>;
+    // and a Wayland window's xdg surface, which its backend keeps as well
+    struct SBackendSurface {
+        using type = WP<CXDGSurfaceResource> Desktop::View::CWaylandBackend::*;
+        friend type field(SBackendSurface);
+    };
+    template struct SField<SBackendSurface, &Desktop::View::CWaylandBackend::m_resource>;
+
+    SP<CXDGToplevelResource> toplevelOf(const PHLWINDOW& window) {
+        const auto BACKEND = dynamic_cast<Desktop::View::CWaylandBackend*>(&window->backend());
+        const auto XDG     = BACKEND ? ((*BACKEND).*field(SBackendSurface{})).lock() : nullptr;
+        return XDG ? XDG->m_toplevel.lock() : nullptr;
+    }
 
     // where the shell minimizes to, if it hasn't said (genie.cpp)
     constexpr auto MINIMIZED = "special:minimized";
@@ -69,9 +82,8 @@ namespace {
             auto workspace = Kiwi::Genie::minimizedWorkspace();
             if (workspace.empty())
                 workspace = MINIMIZED;
-            const auto MOVE = g_pKeybindManager->m_dispatchers.find("movetoworkspacesilent");
-            if (MOVE != g_pKeybindManager->m_dispatchers.end())
-                MOVE->second(std::format("{},address:0x{:x}", workspace, reinterpret_cast<uintptr_t>(WINDOW.get())));
+            // as the movetoworkspacesilent dispatcher did
+            (void)Config::Actions::moveToWorkspace(workspace, true, WINDOW);
         });
     }
 
@@ -97,25 +109,21 @@ namespace {
         watched                 = SWatched{.window = window};
         const PHLWINDOWREF WEAK = window;
 
-        if (const auto XDG = window->m_xdgSurface.lock(); XDG && XDG->m_toplevel.lock()) {
-            const auto TOPLEVEL = XDG->m_toplevel.lock();
+        // Hyprland hands both kinds of window's state requests on through the
+        // window's backend (which has already cleared an X11 window's)
+        if (const auto TOPLEVEL = toplevelOf(window)) {
             advertise(TOPLEVEL);
-            watched.stateChanged = TOPLEVEL->m_events.stateChanged.listen([WEAK] {
-                const auto WINDOW   = WEAK.lock();
-                const auto XDG      = WINDOW ? WINDOW->m_xdgSurface.lock() : nullptr;
-                const auto TOPLEVEL = XDG ? XDG->m_toplevel.lock() : nullptr;
-                if (TOPLEVEL && TOPLEVEL->m_state.requestsMinimize.value_or(false))
+            watched.stateChanged = window->backend().m_events.stateRequest.listen([WEAK](const Desktop::View::SBackendStateRequest& request) {
+                if (request.minimized.value_or(false))
                     minimize(WEAK);
             });
-        } else if (const auto X = window->m_xwaylandSurface.lock()) {
-            watched.stateChanged = X->m_events.stateChanged.listen([WEAK] {
+        } else if (window->backend().isX11()) {
+            watched.stateChanged = window->backend().m_events.stateRequest.listen([WEAK](const Desktop::View::SBackendStateRequest& request) {
                 const auto WINDOW = WEAK.lock();
-                const auto X      = WINDOW ? WINDOW->m_xwaylandSurface.lock() : nullptr;
-                if (!X || !X->m_state.requestsMinimize.value_or(false))
+                if (!WINDOW || !request.minimized.value_or(false))
                     return;
                 // answered at once, or some X11 apps wait for it to happen
-                X->m_state.requestsMinimize.reset();
-                X->setMinimized(false);
+                WINDOW->backend().setMinimized(false);
                 minimize(WEAK);
             });
         }

@@ -28,6 +28,9 @@
 #include <plugins/PluginAPI.hpp>
 #include <plugins/PluginSystem.hpp>
 #include <desktop/view/window/Window.hpp>
+#include <desktop/view/window/WindowBackend.hpp>
+#include <desktop/view/window/WindowMetadata.hpp>
+#include <desktop/view/window/WindowPresentation.hpp>
 #include <desktop/state/WindowState.hpp>
 #include <desktop/state/FocusState.hpp>
 #include <workspace/HLWorkspace.hpp>
@@ -72,7 +75,7 @@ namespace {
     };
 
     std::string appOf(const PHLWINDOW& w) {
-        return w->m_initialClass;
+        return w->metadata().initialAppID();
     }
 
     CBox boxOf(const PHLWINDOW& w) {
@@ -92,7 +95,7 @@ namespace {
     // window.open.
     SBoxExtents extentsOf(const PHLWINDOW& w) {
         SBoxExtents ext;
-        for (const auto& deco : w->m_windowDecorations) {
+        for (const auto& deco : w->presentation().decorations()) {
             const auto info = deco->getPositioningInfo();
             if (!info.reserved)
                 continue;
@@ -111,7 +114,7 @@ namespace {
     // Where a window may be put: the work area, kept off every edge. On a
     // small output the gap gives way rather than eat the screen.
     CBox placeArea(const PHLWINDOW& w) {
-        const auto   area = w->m_workspace->m_space->workArea(true);
+        const auto   area = w->m_workspace->space()->workArea(true);
         const double gap  = std::min({EDGE_GAP, area.w / 8, area.h / 8});
         return {area.x + gap, area.y + gap, area.w - 2 * gap, area.h - 2 * gap};
     }
@@ -121,13 +124,19 @@ namespace {
         return {area.w - ext.topLeft.x - ext.bottomRight.x - size.x, area.h - ext.topLeft.y - ext.bottomRight.y - size.y};
     }
 
+    // An X11 modal dialog, as Hyprland's own CWindow::isModal() was (it never
+    // counted an xdg dialog as modal)
+    bool isModal(const PHLWINDOW& w) {
+        return w->backend().isX11() && w->backend().traits().modal;
+    }
+
     // Main windows only: no dialogs, X11 or rule-placed windows.
     bool eligible(const PHLWINDOW& w) {
-        if (!w || w->m_isX11 || !w->m_isFloating || appOf(w).empty())
+        if (!w || w->backend().isX11() || !w->isFloating() || appOf(w).empty())
             return false;
-        if (w->parent() || w->isModal())
+        if (w->backend().parent() || isModal(w))
             return false;
-        if (!w->m_workspace || !w->m_workspace->m_space || !w->layoutTarget())
+        if (!w->m_workspace || !w->m_workspace->space() || !w->layoutTarget())
             return false;
 
         const auto& rules = w->m_ruleApplicator->static_;
@@ -138,7 +147,7 @@ namespace {
     std::vector<PHLWINDOW> siblingsOf(const PHLWINDOW& w) {
         std::vector<PHLWINDOW> siblings;
         for (const auto& other : Desktop::windowState()->windows()) {
-            if (other == w || !other->mapped() || other->isHidden() || !other->m_isFloating || other->parent() || other->isModal())
+            if (other == w || !other->mapped() || other->isHidden() || !other->isFloating() || other->backend().parent() || isModal(other))
                 continue;
             if (other->m_workspace == w->m_workspace && appOf(other) == appOf(w))
                 siblings.push_back(other);
@@ -312,7 +321,7 @@ namespace {
         bool remember(const PHLWINDOW& w, const CBox& placed) {
             // Tiled, fullscreen or maximised: the floating frame isn't what's
             // on screen, so keep the old one.
-            if (!w->m_isFloating || Fullscreen::controller()->isFullscreen(w) || !w->m_workspace || !w->m_workspace->m_space)
+            if (!w->isFloating() || Fullscreen::controller()->isFullscreen(w) || !w->m_workspace || !w->m_workspace->space())
                 return false;
 
             // Snapped (to a half, a quarter, the whole screen): the frame is
