@@ -219,7 +219,8 @@ function OptionButtons(){
 // played nothing. Named as macOS names them (outputName): the computer's own
 // by what they are, any other by the device's own name — never the sound
 // card's long name, which said nothing before the part that tells them apart
-// and was cut off there.
+// and was cut off there. A filter WirePlumber puts in front of an output by
+// itself (an equaliser kept on the speakers) is no output to choose.
 //
 // A card that is one device with several outputs (an Intel laptop's speaker
 // and its HDMI connectors) has a port for each, described as the output's
@@ -241,15 +242,38 @@ function portOf(speaker: AstalWp.Endpoint, ports: AstalWp.Route[]): AstalWp.Rout
 // name, which unlike its description isn't translated; a display by the name
 // it gives the card (the port's description then), else its connector. Any
 // other output — AirPods, a USB DAC — by the device's name, not its port's
-// ("Headset", "Analog Stereo").
-function outputName(speaker: AstalWp.Endpoint, ports: AstalWp.Route[]): string {
+// ("Headset", "Analog Stereo"); one of several on its device (an audio
+// interface's main and second pair) by its own description, which names
+// both ("MiniFuse 4 Main Output 1L/2R").
+function outputName(
+  speaker: AstalWp.Endpoint,
+  ports: AstalWp.Route[],
+  speakers: AstalWp.Endpoint[],
+): string {
   const port = portOf(speaker, ports)
   const builtIn = ["pci", "platform"].includes(speaker.get_pw_property("device.bus") ?? "")
-  if (!builtIn) return speaker.device?.description || speaker.description || speaker.name || "Unknown Device"
+  if (!builtIn) {
+    const ownName = speaker.description || speaker.name || "Unknown Device"
+    if (sharesDevice(speaker, speakers)) return ownName
+    return speaker.device?.description || ownName
+  }
   const kind = (port?.name || speaker.get_pw_property("node.nick") || "").toLowerCase()
   if (kind.includes("speaker")) return "Built-in Speakers"
   if (kind.includes("headphone")) return "Headphones"
   return port?.description || speaker.get_pw_property("node.nick") || speaker.description || "Unknown Device"
+}
+
+function sharesDevice(speaker: AstalWp.Endpoint, speakers: AstalWp.Endpoint[]): boolean {
+  const device = speaker.get_pw_property("device.id")
+  if (!device) return false
+  return speakers.some(other => other.id !== speaker.id && other.get_pw_property("device.id") === device)
+}
+
+// WirePlumber links a smart filter in front of its output whatever is chosen
+// here; only one that says it can be targeted is an output of its own.
+function insertedFilter(speaker: AstalWp.Endpoint): boolean {
+  return speaker.get_pw_property("filter.smart") === "true"
+    && speaker.get_pw_property("filter.smart.targetable") !== "true"
 }
 
 function outputPorts(speaker: AstalWp.Endpoint, get: <T>(a: Accessor<T>) => T): AstalWp.Route[] {
@@ -277,12 +301,13 @@ function AudioDevices({ close }) {
         // the one in use always shows, whatever its port says
         const there = createComputed(get => {
           if (get(isDefault)) return true
+          if (insertedFilter(spk)) return false
           const ports = outputPorts(spk, get)
           const port = portOf(spk, ports)
           if (port) return get(createBinding(port, "available")) !== UNPLUGGED
           return ports.length === 0 || ports.some(p => get(createBinding(p, "available")) !== UNPLUGGED)
         })
-        const name = createComputed(get => outputName(spk, outputPorts(spk, get)))
+        const name = createComputed(get => outputName(spk, outputPorts(spk, get), get(speakersBinding)))
         return (
           <button
             class={isDefault.as(d => d ? "menu-item active" : "menu-item")}
