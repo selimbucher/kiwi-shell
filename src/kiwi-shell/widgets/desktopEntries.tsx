@@ -20,8 +20,11 @@ const GENERIC_EXECUTABLES = new Set([
 ])
 
 // the executable a desktop entry actually runs: Exec= with env/VAR=/flag
-// prefixes stripped, reduced to its basename
-function execName(appInfo: GioUnix.DesktopAppInfo): string | null {
+// prefixes stripped, reduced to its basename. `own` when it's run with
+// nothing but what is opened with it (%U): the app's own launcher, where one
+// with arguments starts something inside it (a Steam game's
+// `steam steam://rungameid/…`, a browser's web app `brave --app-id=…`).
+function execName(appInfo: GioUnix.DesktopAppInfo): { name: string; own: boolean } | null {
     const commandline = appInfo.get_commandline()
     if (!commandline) return null
     let argv: string[]
@@ -36,7 +39,8 @@ function execName(appInfo: GioUnix.DesktopAppInfo): string | null {
     const word = argv[i]
     if (!word) return null
     const base = GLib.path_get_basename(word).toLowerCase()
-    return GENERIC_EXECUTABLES.has(base) ? null : base
+    if (GENERIC_EXECUTABLES.has(base)) return null
+    return { name: base, own: argv.slice(i + 1).every(arg => /^%[a-zA-Z]$/.test(arg)) }
 }
 
 /**
@@ -69,6 +73,7 @@ export function buildClassMap() {
     titleMatchers.length = 0
 
     const apps = Gio.AppInfo.get_all() as GioUnix.DesktopAppInfo[]
+    const ownExec = new Set<string>()
 
     for (const appInfo of apps) {
         const id = appInfo.get_id()
@@ -89,9 +94,12 @@ export function buildClassMap() {
             }
         }
 
+        // the app's own launcher, wherever it comes among the others for the
+        // same executable: Steam's processes were the first game's found
         const exec = execName(appInfo)
-        if (exec && !execToEntry.has(exec)) {
-            execToEntry.set(exec, id)
+        if (exec && (!execToEntry.has(exec.name) || (exec.own && !ownExec.has(exec.name)))) {
+            execToEntry.set(exec.name, id)
+            if (exec.own) ownExec.add(exec.name)
         }
 
         const titleMatchRaw = appInfo.get_string("X-Kiwi-TitleMatch")
