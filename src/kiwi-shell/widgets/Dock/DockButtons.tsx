@@ -6,6 +6,7 @@ import GLib from "gi://GLib"
 import { conf } from "../config"
 import { playSound } from "../sound"
 import { HOME, launchBounce, dockIconSize, type Hop, type MenuSlot } from "./dock-state"
+import { Lifted } from "./Lift"
 import { openUri, openPath, emptyTrash, letGoOnClose } from "./dock-utils"
 import { ContextMenu } from "../ContextMenu"
 import { openChoicePrompt } from "../prompts"
@@ -81,11 +82,13 @@ export function HomeFolderButton({ menuSlot }: { menuSlot: MenuSlot }) {
             >
                 <box orientation={Gtk.Orientation.VERTICAL}>
                     {menu}
-                    <ZoomImage
-                        iconName="user-home"
-                        pixelSize={dockIconSize}
-                        class="dock-app-icon"
-                    />
+                    <Lifted>
+                        <ZoomImage
+                            iconName="user-home"
+                            pixelSize={dockIconSize}
+                            class="dock-app-icon"
+                        />
+                    </Lifted>
                 </box>
             </button>
         </box>
@@ -211,11 +214,13 @@ export function TrashButton({ menuSlot }: { menuSlot: MenuSlot }) {
             >
                 <box orientation={Gtk.Orientation.VERTICAL}>
                     {menu}
-                    <ZoomImage
-                        iconName={trashEmpty.as(e => e ? "user-trash" : "user-trash-full")}
-                        pixelSize={dockIconSize}
-                        class="dock-app-icon"
-                    />
+                    <Lifted>
+                        <ZoomImage
+                            iconName={trashEmpty.as(e => e ? "user-trash" : "user-trash-full")}
+                            pixelSize={dockIconSize}
+                            class="dock-app-icon"
+                        />
+                    </Lifted>
                 </box>
             </button>
         </box>

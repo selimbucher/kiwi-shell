@@ -14,6 +14,7 @@ import { livePreviews, LiveTiles, PreviewPane } from "../services/previews"
 import { LAYER } from "../services/theme"
 import { conf } from "../config"
 import { ZoomImage, Zoomed } from "../zoom"
+import { Lifted } from "./Lift"
 import { logger } from "../../log"
 const log = logger("dock")
 
@@ -254,7 +255,7 @@ export function AppIcon({ entry, menuSlot }: { entry: string, menuSlot: MenuSlot
                     {menu}
                     {previews}
                     <overlay>
-                        <AppIconImage entry={entry} pixelSize={dockIconSize} />
+                        <Lifted><AppIconImage entry={entry} pixelSize={dockIconSize} /></Lifted>
                         <box $type="overlay" class="dots-container" orientation={Gtk.Orientation.VERTICAL}>
                             <box vexpand={true}></box>
                             <box class="client-dots" halign={Gtk.Align.CENTER}>

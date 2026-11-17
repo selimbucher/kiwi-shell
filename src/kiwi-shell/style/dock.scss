@@ -79,15 +79,19 @@
     border: none;
     box-shadow: none;
 
+    // (the rise itself is on a spring: widgets/Dock/Lift.tsx)
     &:hover {
         .dock-app-icon {
-            transform: translateY(var(--icon-lift));
             filter: var(--icon-shadow-lift);
         }
     }
 }
 
-.dock-app-icon, .app-context-menu {
+.dock-app-icon {
+    transition: filter 175ms ease-out;
+}
+
+.app-context-menu {
     transition: all 175ms ease-out;
 }
 

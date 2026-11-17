@@ -9,6 +9,7 @@ import { createState, createComputed, createBinding, onCleanup } from "ags"
 import { conf } from "../config"
 import { hyprland, clientsBinding, list, unpinnedList, restoring, setDockOverlap, setDockBand, registerDockShowing, DOCK_HIDE_TIMEOUT, DOCK_SLIDE_DURATION, DOCK_SLIDE_OUT_DURATION, dockSlideDistance, dockIconSize, setDockIconSize, HOP_MS, SETTLE, SETTLE_MS } from "./dock-state"
 import { AppIcon } from "./AppIcon"
+import { liftFor } from "./Lift"
 import { HomeFolderButton, TrashButton } from "./DockButtons"
 import { KeyedList } from "../KeyedList"
 import { themeClasses, LAYER } from "../services/theme"
@@ -130,7 +131,6 @@ const DOCK = {
     radius: 0.46,     // a third of the pill's height, the way Tahoe rounds it
     shadowY: 0.045,
     shadowBlur: 0.1,
-    lift: 0.115,      // how far an icon rises under the pointer
     hop: 0.5,         // how high it hops while its app starts (launchBounce)
     liftBlur: 0.1,
     bottom: 0.1,      // the pill's own gap to the screen edge
@@ -154,7 +154,7 @@ const px = (icon: number, fraction: number, min = 0) =>
 // off at the top. It is transparent and outside the input region, so the
 // strip of screen it covers stays clickable, and the exclusive zone leaves
 // it out, so windows don't make room for it either.
-const headroomFor = (icon: number) => px(icon, DOCK.hop) + px(icon, DOCK.lift, 3)
+const headroomFor = (icon: number) => px(icon, DOCK.hop) + liftFor(icon)
 
 // (zoom: kiwi's size on the display, widgets/zoom.tsx. The headroom is the
 // window's padding, outside the zoomed pill, so it's grown here)
@@ -182,8 +182,7 @@ function dockCss(icon: number, margin: number, primary: string, zoom: number) {
     --dock-radius: ${px(icon, DOCK.radius, 6)}px;
     --dock-bottom: ${px(icon, DOCK.bottom, 2)}px;
     --icon-shadow: ${shadow(px(icon, DOCK.shadowY, 1), px(icon, DOCK.shadowBlur, 2))};
-    --icon-lift: -${px(icon, DOCK.lift, 3)}px;
-    --icon-shadow-lift: ${shadow(px(icon, DOCK.lift, 3), px(icon, DOCK.liftBlur, 2))};
+    --icon-shadow-lift: ${shadow(liftFor(icon), px(icon, DOCK.liftBlur, 2))};
     --dot-size: ${px(icon, DOCK.dot, 3)}px;
     --dot-gap: ${px(icon, DOCK.dotGap, 2)}px;
     --dot-drop: ${px(icon, DOCK.dotDrop, 2)}px;
