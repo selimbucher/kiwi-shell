@@ -97,15 +97,21 @@ $bar-height: 30px;
 
 // ─── Acrylic: dense glass ─────────────────────────────────────────────────────
 
+// The pane on its own, as Tinted Glass's below: Granite's dock borrows it
+// where nothing is blurred.
+@mixin acrylic-pane($p: "") {
+    --k-#{$p}panel: rgba(13, 13, 18, 0.80);
+    --k-#{$p}menu: rgba(13, 13, 18, 0.89);
+    --k-#{$p}sheen: none;
+    --k-#{$p}border: rgba(255, 255, 255, 0.08);
+    --k-#{$p}highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
 @mixin acrylic {
     @include text;
+    @include acrylic-pane;
     --k-shadow: 0 0 0 0 transparent;
-    --k-panel: rgba(13, 13, 18, 0.80);
-    --k-menu: rgba(13, 13, 18, 0.89);
     --k-panel-hover: rgba(24, 24, 31, 0.84);
-    --k-sheen: none;
-    --k-border: rgba(255, 255, 255, 0.08);
-    --k-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
     --k-preview-bar: rgba(0, 0, 0, 0.6);
     --k-stack-1: rgba(44, 44, 48, 0.9);
     --k-stack-2: rgba(36, 36, 40, 0.85);
@@ -190,7 +196,7 @@ window.theme-granite, window.theme-acrylic {
 
 // Without blur (kiwi_blur off) glass is a tint over whatever is behind it, and
 // the thin ones stop being readable: every style but Granite then wears
-// Acrylic's pane, Spotlight and the dock included.
+// Acrylic's pane, Spotlight and the dock included (in Granite, only those).
 window.no-blur:not(.theme-granite) {
     @include acrylic;
 }
@@ -203,6 +209,13 @@ window.no-blur {
     --k-float-highlight: var(--k-highlight);
     --k-float-shadow: var(--k-shadow);
     --k-float-text-shadow: var(--k-text-shadow);
+}
+
+// Granite's own pane is all but black, and afloat over the desktop a slab
+// cut out of the screen (above): Spotlight and the dock wear Acrylic's there
+// too, over Granite's shadow.
+window.no-blur.theme-granite {
+    @include acrylic-pane("float-");
 }
 
 // a panel: tokens only, per component radius and padding stay with it
