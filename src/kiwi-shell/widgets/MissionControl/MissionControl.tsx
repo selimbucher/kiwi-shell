@@ -2179,6 +2179,13 @@ export default function MissionControl({ gdkmonitor }: { gdkmonitor: Gdk.Monitor
         const scale = m.get_scale() / 2
         loadThumbnail(path, Math.round(width * scale), Math.round(height * scale))
             .then(t => { if (wallpaperPath.get() === path) setWallpaperTexture(t) })
+        // and at the size of the desktops' pictures in the bar: decoded as
+        // it first opened, the photo took the frames the windows fly in
+        const shown = monitorNamed(m.get_connector() ?? "")
+        if (shown) {
+            const thumb = thumbSize(shown, desktopsOn(shown.name).length)
+            void loadThumbnail(path, thumb.width, thumb.height)
+        }
     }
     // Ready before it is first needed: decoding a 4K photo takes a while,
     // and opening without it, the wallpaper came in once the windows had
