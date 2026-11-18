@@ -1,15 +1,22 @@
 @use 'theme' as *;
 
+// a disc as high as the pill's buttons, lit as the system menu's is
 .powermenu-toggle {
-    padding: 0 3px;
-    border-radius: 50%;
+    padding: 0;
     background: none;
-    &:hover {
-        background-color: var(--k-fill);
-    }
     > button {
         padding: 0;
+        min-width: 24px;
+        min-height: 24px;
+        border-radius: 12px;
         background: none;
+        box-shadow: none;
+        &:hover {
+            background-color: var(--k-fill);
+        }
+        &:checked {
+            background-color: var(--k-fill-hover);
+        }
     }
 }
 .power-icon {

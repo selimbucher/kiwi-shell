@@ -20,8 +20,10 @@ window.Bar {
   .MenuButtons, .Tray {
     @include panel;
     @include pill-ends($bar-height);
-    // a button's 24px high inside, $bar-height in all
-    padding: ($bar-height - 2px - 24px) * 0.5 4px;
+    // a button's 24px high inside, $bar-height in all; as far from the ends
+    // as from the top and bottom, so what's lit under the pointer sits evenly
+    // in the pill
+    padding: ($bar-height - 2px - 24px) * 0.5;
     font-weight: 400;
     font-size: $callout;
 
