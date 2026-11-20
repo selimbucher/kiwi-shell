@@ -357,9 +357,17 @@ export function windowsByDesktop(): Map<number, Window[]> {
 }
 
 /** A new empty desktop at the end of the monitor's row; its id. */
+/**
+ * Ids of Hyprland's numbered workspaces. Special and named workspaces have no
+ * id in hyprctl's JSON (since 0.57), which would turn Math.max() into NaN.
+ */
+function numberedWorkspaces(): number[] {
+    return query("workspaces").map(w => w.id).filter((id): id is number => Number.isInteger(id) && id > 0)
+}
+
 export function addDesktop(monitor: string): number {
     reconcile()
-    const taken = [...query("workspaces").map(w => w.id), ...[...desktops.values()].flat()]
+    const taken = [...numberedWorkspaces(), ...[...desktops.values()].flat()]
     const id = Math.max(0, ...taken) + 1
     desktops.set(monitor, [...(desktops.get(monitor) ?? []), id])
     sync()
@@ -403,7 +411,7 @@ export async function moveDesktop(monitor: string, from: number, to: number): Pr
     const [moved] = order.splice(from, 1)
     order.splice(to, 0, moved)
 
-    const existing = new Set(query("workspaces").map(w => w.id))
+    const existing = new Set(numberedWorkspaces())
     const spare = Math.max(0, ...existing, ...ids) + 1000
     const renames = order
         .map((workspace, place) => ({ workspace, id: ids[place] }))
